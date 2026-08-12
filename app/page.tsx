@@ -9,7 +9,7 @@ const featureCards = [
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6 py-12 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <main className="flex min-h-screen items-center justify-center bg-transparent px-6 py-12 text-slate-900 dark:bg-transparent dark:text-slate-100">
       <div className="w-full max-w-6xl overflow-hidden rounded-[2rem] border border-slate-200 bg-white/80 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-cyan-900/10">
         <div className="grid gap-10 px-8 py-10 md:grid-cols-[1.2fr_0.8fr] md:px-12 md:py-16">
           <div>
