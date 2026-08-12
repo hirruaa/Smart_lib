@@ -15,14 +15,6 @@
       "static/css/007d17e1765473f9.css",
       "static/chunks/app/layout-7bd1df62a76b7504.js"
     ],
-    "/page": [
-      "static/chunks/webpack-b9bef45de1771ed0.js",
-      "static/chunks/fd9d1056-0f49bee9b51d62a0.js",
-      "static/chunks/117-5c04469a1d70411b.js",
-      "static/chunks/main-app-0d610e99585b6116.js",
-      "static/chunks/972-825ea91e24d8156d.js",
-      "static/chunks/app/page-74f8d059e15620ba.js"
-    ],
     "/login/page": [
       "static/chunks/webpack-b9bef45de1771ed0.js",
       "static/chunks/fd9d1056-0f49bee9b51d62a0.js",
@@ -31,7 +23,15 @@
       "static/chunks/44530001-3d82f5dd4c68b950.js",
       "static/chunks/434-e3000e1272edfcbe.js",
       "static/chunks/689-6fc20cb5f6c2860d.js",
-      "static/chunks/app/login/page-4471d46e1ca4f758.js"
+      "static/chunks/app/login/page-f63c4433820219ab.js"
+    ],
+    "/page": [
+      "static/chunks/webpack-b9bef45de1771ed0.js",
+      "static/chunks/fd9d1056-0f49bee9b51d62a0.js",
+      "static/chunks/117-5c04469a1d70411b.js",
+      "static/chunks/main-app-0d610e99585b6116.js",
+      "static/chunks/972-825ea91e24d8156d.js",
+      "static/chunks/app/page-74f8d059e15620ba.js"
     ],
     "/reader/[bookId]/page": [
       "static/chunks/webpack-b9bef45de1771ed0.js",
@@ -48,7 +48,7 @@
       "static/chunks/44530001-3d82f5dd4c68b950.js",
       "static/chunks/434-e3000e1272edfcbe.js",
       "static/chunks/689-6fc20cb5f6c2860d.js",
-      "static/chunks/app/dashboard/page-afce71fbae78b2de.js"
+      "static/chunks/app/dashboard/page-b6d9368df4ae7232.js"
     ],
     "/dashboard/layout": [
       "static/chunks/webpack-b9bef45de1771ed0.js",
@@ -65,7 +65,7 @@
       "static/chunks/44530001-3d82f5dd4c68b950.js",
       "static/chunks/434-e3000e1272edfcbe.js",
       "static/chunks/689-6fc20cb5f6c2860d.js",
-      "static/chunks/app/dashboard/admin/page-8079f8733999b9be.js"
+      "static/chunks/app/dashboard/admin/page-f963e107a042c935.js"
     ],
     "/dashboard/student/page": [
       "static/chunks/webpack-b9bef45de1771ed0.js",
@@ -75,7 +75,7 @@
       "static/chunks/44530001-3d82f5dd4c68b950.js",
       "static/chunks/434-e3000e1272edfcbe.js",
       "static/chunks/689-6fc20cb5f6c2860d.js",
-      "static/chunks/app/dashboard/student/page-57f07484c76512c8.js"
+      "static/chunks/app/dashboard/student/page-b93aa93a287b71a6.js"
     ]
   }
 }
