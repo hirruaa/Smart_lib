@@ -7,10 +7,11 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 
 const navItems = [
-  { label: 'Overview', href: '/dashboard/admin' },
-  { label: 'Books', href: '/dashboard/admin?section=books' },
-  { label: 'Requests', href: '/dashboard/admin?section=requests' },
-  { label: 'Users', href: '/dashboard/admin?section=users' },
+  { label: 'Overview', section: 'overview' },
+  { label: 'Books', section: 'books' },
+  { label: 'Requests', section: 'requests' },
+  { label: 'Users', section: 'users' },
+  { label: 'Materials', section: 'materials' },
 ]
 
 type Book = {
@@ -20,8 +21,17 @@ type Book = {
   isbn: string | null
   category: string
   description: string | null
+  pdf_url: string | null
   total_copies: number
   available_copies: number
+  created_at: string | null
+}
+
+type Material = {
+  id: number
+  title: string
+  description: string | null
+  resource_url: string | null
   created_at: string | null
 }
 
@@ -64,9 +74,12 @@ export default function AdminPage() {
     author: '',
     category: '',
     isbn: '',
+    pdf_url: '',
     total_copies: '1',
     description: '',
   })
+  const [pdfBookId, setPdfBookId] = useState<number | null>(null)
+  const [pdfUrl, setPdfUrl] = useState('')
 
   const loadData = async () => {
     setError(null)
@@ -145,6 +158,19 @@ export default function AdminPage() {
 
   const bookMap = useMemo(() => new Map(books.map((book) => [book.id, book])), [books])
   const studentMap = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const materials = useMemo(
+    () =>
+      books
+        .filter((book) => !!book.pdf_url)
+        .map((book) => ({
+          id: book.id,
+          title: book.title,
+          description: book.description,
+          resource_url: book.pdf_url,
+          created_at: book.created_at,
+        })),
+    [books]
+  )
 
   const pendingRequests = requests.filter((request) => request.status === 'pending')
   const overdueLoans = requests.filter(
@@ -216,6 +242,7 @@ export default function AdminPage() {
         author: newBook.author,
         category: newBook.category,
         isbn: newBook.isbn || null,
+        pdf_url: newBook.pdf_url || null,
         description: newBook.description || null,
         total_copies: Number(newBook.total_copies) || 1,
         available_copies: Number(newBook.total_copies) || 1,
@@ -226,7 +253,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New book added to inventory.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', total_copies: '1', description: '' })
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', total_copies: '1', description: '' })
       await loadData()
     }
 
@@ -253,22 +280,20 @@ export default function AdminPage() {
             <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
           </div>
           <nav className="space-y-2">
-            {navItems.map((item) => {
-              const itemSection = item.href.includes('section=') ? item.href.split('section=')[1] : 'overview'
-              return (
-                <a
-                  key={item.href}
-                  href={item.href}
-                  className={`block rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                    section === itemSection
-                      ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
-                      : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
-                  }`}
-                >
-                  {item.label}
-                </a>
-              )
-            })}
+            {navItems.map((item) => (
+              <button
+                key={item.section}
+                type="button"
+                onClick={() => setSection(item.section)}
+                className={`w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                  section === item.section
+                    ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
+                    : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </nav>
           <button
             type="button"
@@ -405,6 +430,15 @@ export default function AdminPage() {
                   />
                 </label>
                 <label className="mt-4 block">
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">PDF URL</span>
+                  <input
+                    value={newBook.pdf_url}
+                    onChange={(event) => setNewBook({ ...newBook, pdf_url: event.target.value })}
+                    className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    placeholder="https://..."
+                  />
+                </label>
+                <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Description</span>
                   <textarea
                     value={newBook.description}
@@ -477,6 +511,108 @@ export default function AdminPage() {
                   </tbody>
                 </table>
               </div>
+            </section>
+          )}
+
+          {section === 'materials' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Published materials</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage e-book and PDF links for library materials.</p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
+                  <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Title</th>
+                      <th className="px-4 py-3 font-semibold">PDF URL</th>
+                      <th className="px-4 py-3 font-semibold">Published</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                    {materials.length > 0 ? (
+                      materials.map((material) => (
+                        <tr key={material.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
+                          <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{material.title}</td>
+                          <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
+                            <a href={material.resource_url ?? '#'} target="_blank" rel="noreferrer" className="text-sky-600 hover:text-sky-500 dark:text-sky-300">
+                              Open PDF
+                            </a>
+                          </td>
+                          <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{material.created_at ? new Date(material.created_at).toLocaleDateString() : 'Unknown'}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-8 text-center text-slate-600 dark:text-slate-300">
+                          No published PDF materials found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault()
+                  if (!pdfBookId || !pdfUrl) {
+                    setError('Please select a book and provide a PDF URL.')
+                    return
+                  }
+                  setSaving(true)
+                  setError(null)
+                  const supabase = createClient()
+                  const { error } = await supabase.from('books').update({ pdf_url: pdfUrl }).eq('id', pdfBookId)
+                  if (error) {
+                    setError(error.message)
+                  } else {
+                    setActionMessage('PDF URL published successfully.')
+                    setPdfBookId(null)
+                    setPdfUrl('')
+                    await loadData()
+                  }
+                  setSaving(false)
+                }}
+                className="mt-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6 dark:border-slate-700 dark:bg-slate-800/60"
+              >
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Select book</span>
+                    <select
+                      value={pdfBookId ?? ''}
+                      onChange={(event) => setPdfBookId(Number(event.target.value) || null)}
+                      required
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select a book</option>
+                      {books.map((book) => (
+                        <option key={book.id} value={book.id}>
+                          {book.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">PDF URL</span>
+                    <input
+                      value={pdfUrl}
+                      onChange={(event) => setPdfUrl(event.target.value)}
+                      required
+                      placeholder="https://..."
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </label>
+                </div>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="mt-6 inline-flex w-full items-center justify-center rounded-3xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
+                >
+                  {saving ? 'Publishing...' : 'Publish PDF'}
+                </button>
+              </form>
             </section>
           )}
 

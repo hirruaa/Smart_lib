@@ -40,6 +40,7 @@ type UserProfile = {
 export default function StudentPage() {
   const router = useRouter()
   const [query, setQuery] = useState('')
+  const [searchInput, setSearchInput] = useState('')
   const [availability, setAvailability] = useState('all')
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
@@ -265,29 +266,43 @@ export default function StudentPage() {
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search books, filter availability, and request the ones you need.</p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr]">
-                  <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Search</span>
+                <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setQuery(searchInput)
+                }}
+                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr]"
+              >
+                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
+                  <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Search</span>
+                  <div className="mt-2 flex gap-2">
                     <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      value={searchInput}
+                      onChange={(event) => setSearchInput(event.target.value)}
+                      className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       placeholder="Title, author or category"
                     />
-                  </label>
-                  <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Filter</span>
-                    <select
-                      value={availability}
-                      onChange={(event) => setAvailability(event.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    <button
+                      type="submit"
+                      className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
                     >
-                      <option value="all">All copies</option>
-                      <option value="available">In stock only</option>
-                      <option value="all-out">Out of stock only</option>
-                    </select>
-                  </label>
-                </div>
+                      Search
+                    </button>
+                  </div>
+                </label>
+                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
+                  <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Filter</span>
+                  <select
+                    value={availability}
+                    onChange={(event) => setAvailability(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    <option value="all">All copies</option>
+                    <option value="available">In stock only</option>
+                    <option value="all-out">Out of stock only</option>
+                  </select>
+                </label>
+              </form>
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
