@@ -25,7 +25,7 @@ export default function Home() {
 
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link href="/login" className="rounded-full bg-sky-500 px-6 py-3 font-semibold text-white transition hover:bg-sky-400">Sign in</Link>
-              <Link href="/login" className="rounded-full border border-slate-300 bg-transparent px-6 py-3 font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-500 dark:border-slate-700 dark:text-slate-200">Create account</Link>
+              <Link href="/register" className="rounded-full border border-slate-300 bg-transparent px-6 py-3 font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-500 dark:border-slate-700 dark:text-slate-200">Create account</Link>
             </div>
           </div>
 

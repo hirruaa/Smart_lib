@@ -295,13 +295,22 @@ export default function AdminPage() {
               </button>
             ))}
           </nav>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="mt-8 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
-          >
-            Logout
-          </button>
+          <div className="mt-8 space-y-3">
+            <button
+              type="button"
+              onClick={() => router.push('/profile')}
+              className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              Profile
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
+            >
+              Logout
+            </button>
+          </div>
         </aside>
 
         <main className="space-y-6">
