@@ -1,22 +1,38 @@
 "use client"
 import React, { useEffect, useState } from 'react'
-import { createClient as createBrowserClient } from '@/utils/supabase/client'
-import { Document, Page, pdfjs } from 'react-pdf'
 import NotesPanel from './NotesPanel'
 import HighlightsPanel from './HighlightsPanel'
-
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: string }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
   const [selectedText, setSelectedText] = useState<string | null>(null)
   const [selectedPage, setSelectedPage] = useState<number | null>(null)
-  const supabase = createBrowserClient()
+  const [pdfModules, setPdfModules] = useState<{
+    Document: any
+    Page: any
+    pdfjs: any
+  } | null>(null)
 
   function onDocumentLoadSuccess({ numPages }: any) {
     setNumPages(numPages)
   }
+
+  useEffect(() => {
+    let mounted = true
+
+    import('react-pdf').then((mod) => {
+      if (!mounted) return
+      mod.pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${mod.pdfjs.version}/pdf.worker.min.js`
+      setPdfModules({ Document: mod.Document, Page: mod.Page, pdfjs: mod.pdfjs })
+    }).catch((error) => {
+      console.error('Failed to load react-pdf on client:', error)
+    })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   useEffect(() => {
     function onMouseUp() {
@@ -31,6 +47,9 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
     window.addEventListener('mouseup', onMouseUp)
     return () => window.removeEventListener('mouseup', onMouseUp)
   }, [bookId, pageNumber])
+
+  const Document = pdfModules?.Document
+  const Page = pdfModules?.Page
 
   return (
     <div className="min-h-[calc(100vh-3rem)] px-4 py-8 sm:px-6 lg:px-8">
@@ -65,9 +84,15 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
             <div className="mb-4 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">
               Select text anywhere on the page to capture it as a highlight or note.
             </div>
-            <Document file={pdfUrl} onLoadSuccess={onDocumentLoadSuccess}>
-              <Page pageNumber={pageNumber} width={960} />
-            </Document>
+            {Document && Page ? (
+              <Document file={pdfUrl} onLoadSuccess={onDocumentLoadSuccess}>
+                <Page pageNumber={pageNumber} width={960} />
+              </Document>
+            ) : (
+              <div className="flex min-h-[480px] items-center justify-center rounded-[1.5rem] border border-slate-200 bg-slate-50 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">
+                Loading reader...
+              </div>
+            )}
           </div>
 
           <aside className="space-y-6">

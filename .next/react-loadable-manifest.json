@@ -4,5 +4,14 @@
     "files": [
       "static/chunks/886.75e9094b464a5789.js"
     ]
+  },
+  "components\\EReader.tsx -> react-pdf": {
+    "id": 1480,
+    "files": [
+      "static/chunks/7a49ec60.267a882800469226.js",
+      "static/chunks/434-e3000e1272edfcbe.js",
+      "static/chunks/47.76d6efdf23436d53.js",
+      "static/chunks/895.a164825d6c812bd3.js"
+    ]
   }
 }
