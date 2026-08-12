@@ -3,12 +3,15 @@ import React, { useEffect, useState } from 'react'
 import { createClient as createBrowserClient } from '@/utils/supabase/client'
 import { Document, Page, pdfjs } from 'react-pdf'
 import NotesPanel from './NotesPanel'
+import HighlightsPanel from './HighlightsPanel'
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: string }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
+  const [selectedText, setSelectedText] = useState<string | null>(null)
+  const [selectedPage, setSelectedPage] = useState<number | null>(null)
   const supabase = createBrowserClient()
 
   function onDocumentLoadSuccess({ numPages }: any) {
@@ -17,34 +20,86 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
 
   useEffect(() => {
     function onMouseUp() {
-      const sel = window.getSelection()?.toString() ?? ''
-      if (sel && sel.trim().length > 0) {
-        // Open an inline create editor by dispatching a custom event
-        const evt = new CustomEvent('smartlib:selection', { detail: { selection: sel, page: pageNumber } })
-        window.dispatchEvent(evt)
+      const rawSelection = window.getSelection()?.toString() ?? ''
+      const trimmed = rawSelection.trim()
+      if (trimmed.length > 0) {
+        setSelectedText(trimmed)
+        setSelectedPage(pageNumber)
       }
     }
+
     window.addEventListener('mouseup', onMouseUp)
     return () => window.removeEventListener('mouseup', onMouseUp)
   }, [bookId, pageNumber])
 
   return (
-    <div className="ereader">
-      <div style={{ marginBottom: 8 }}>
-        <button onClick={() => setPageNumber((p) => Math.max(1, p - 1))}>Prev</button>
-        <span style={{ margin: '0 8px' }}>Page {pageNumber}{numPages ? ` / ${numPages}` : ''}</span>
-        <button onClick={() => setPageNumber((p) => (numPages ? Math.min(numPages, p + 1) : p + 1))}>Next</button>
-      </div>
-      <div>
-        <Document file={pdfUrl} onLoadSuccess={onDocumentLoadSuccess}>
-          <Page pageNumber={pageNumber} width={800} />
-        </Document>
-      </div>
-      <div style={{ marginTop: 8 }}>
-        <small>Select text on the page and release the mouse to save a note. Use the Notes panel to edit or view notes.</small>
-      </div>
-      <div style={{ marginTop: 16 }}>
-        <NotesPanel bookId={bookId} />
+    <div className="min-h-[calc(100vh-3rem)] px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-col gap-4 rounded-[2rem] border border-slate-200 bg-white/90 p-4 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40 sm:p-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">E-Study room</p>
+            <h1 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">PDF reader</h1>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Select text to save highlights and notes while you study.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+            <button
+              type="button"
+              onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
+              className="rounded-2xl border border-slate-300 bg-slate-100 px-4 py-2 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+            >
+              Previous
+            </button>
+            <span className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-700 dark:bg-slate-800">Page {pageNumber}{numPages ? ` / ${numPages}` : ''}</span>
+            <button
+              type="button"
+              onClick={() => setPageNumber((p) => (numPages ? Math.min(numPages, p + 1) : p + 1))}
+              className="rounded-2xl border border-slate-300 bg-slate-100 px-4 py-2 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-[1.5fr_0.9fr]">
+          <div className="rounded-[2rem] border border-slate-200 bg-white/90 p-4 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+            <div className="mb-4 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">
+              Select text anywhere on the page to capture it as a highlight or note.
+            </div>
+            <Document file={pdfUrl} onLoadSuccess={onDocumentLoadSuccess}>
+              <Page pageNumber={pageNumber} width={960} />
+            </Document>
+          </div>
+
+          <aside className="space-y-6">
+            <HighlightsPanel
+              bookId={bookId}
+              selectedText={selectedText ?? undefined}
+              selectedPage={selectedPage ?? undefined}
+              onClearSelection={() => {
+                setSelectedText(null)
+                setSelectedPage(null)
+              }}
+            />
+            <div className="rounded-[2rem] border border-slate-200 bg-white/90 p-5 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Notes</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review and edit study notes for this book.</p>
+                </div>
+                {selectedText ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedText(null)}
+                    className="rounded-full bg-slate-100 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                  >
+                    Clear selection
+                  </button>
+                ) : null}
+              </div>
+              <NotesPanel bookId={bookId} selectedText={selectedText ?? undefined} selectedPage={selectedPage ?? undefined} />
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   )

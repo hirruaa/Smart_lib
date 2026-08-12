@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}"
+self.__REACT_LOADABLE_MANIFEST='{"app\\\\dashboard\\\\student\\\\page.tsx -> @/components/BookAssistant":{"id":5886,"files":["static/chunks/886.75e9094b464a5789.js"]}}';

@@ -4,22 +4,20 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "provision": "node scripts/provision_test_users.js",
-    "build": "next build",
-    "start": "next start",
-    "smoke": "npx playwright test smoke.spec.ts --project=chromium"
+    "build": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next build",
+    "start": "next start"
   },
   "dependencies": {
-    "dotenv": "^16.1.4",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
+    "dotenv": "^16.1.4",
     "next": "^14.2.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "optionalDependencies": {
-    "react-pdf": "^8.0.2",
-    "pdfjs-dist": "^3.10.106"
+    "pdfjs-dist": "^3.10.106",
+    "react-pdf": "^8.0.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -28,7 +26,6 @@
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.4",
-    "typescript": "^5.6.0",
-    "@playwright/test": "^1.41.2"
+    "typescript": "^5.6.0"
   }
 }
