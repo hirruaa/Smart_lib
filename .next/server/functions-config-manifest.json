@@ -1,1 +1,1 @@
-{"version":1,"functions":{"/dashboard/admin":{},"/dashboard/student":{}}}
+{"version":1,"functions":{"/reader/[bookId]":{},"/dashboard/admin":{},"/dashboard/student":{}}}

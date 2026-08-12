@@ -82,12 +82,16 @@ export default function StudentPage() {
         .eq('id', currentUser.id)
         .maybeSingle()
 
-      const role = profileData?.role ?? (currentUser.user_metadata?.role as string | undefined)
+      const role = (profileData?.role ? String(profileData.role).trim().toLowerCase() : (currentUser.user_metadata?.role as string | undefined)?.trim().toLowerCase())
       const email = profileData?.email ?? currentUser.email
       const fullName = profileData?.full_name ?? ''
 
-      if (!role || role !== 'student') {
-        router.replace('/dashboard')
+      if (role !== 'student') {
+        if (role === 'admin') {
+          router.replace('/dashboard/admin')
+        } else {
+          router.replace('/dashboard')
+        }
         return
       }
 
@@ -131,30 +135,30 @@ export default function StudentPage() {
 
   const filteredBooks = useMemo(
     () =>
-      books.map((book) => ({
-        ...book,
-        status: book.available_copies > 0 ? 'Available' : 'All Out',
-      }))
-      .filter((book) => {
-        const lowerQuery = query.toLowerCase()
-        const matchesQuery =
-          book.title.toLowerCase().includes(lowerQuery) ||
-          book.author.toLowerCase().includes(lowerQuery) ||
-          book.category.toLowerCase().includes(lowerQuery)
+      books
+        .map((book) => ({
+          ...book,
+          status: book.available_copies > 0 ? 'Available' : 'All Out',
+        }))
+        .filter((book) => {
+          const lowerQuery = query.toLowerCase()
+          const matchesQuery =
+            book.title.toLowerCase().includes(lowerQuery) ||
+            book.author.toLowerCase().includes(lowerQuery) ||
+            book.category.toLowerCase().includes(lowerQuery)
 
-        const matchesAvailability =
-          availability === 'all' ||
-          (availability === 'available' && book.available_copies > 0) ||
-          (availability === 'all-out' && book.available_copies === 0)
+          const matchesAvailability =
+            availability === 'all' ||
+            (availability === 'available' && book.available_copies > 0) ||
+            (availability === 'all-out' && book.available_copies === 0)
 
-        return matchesQuery && matchesAvailability
-      }),
+          return matchesQuery && matchesAvailability
+        }),
     [books, query, availability]
   )
 
   const activeLoans = useMemo(
-    () =>
-      borrowRequests.filter((request) => request.status === 'approved' && !request.returned_date),
+    () => borrowRequests.filter((request) => request.status === 'approved' && !request.returned_date),
     [borrowRequests]
   )
 
@@ -215,37 +219,37 @@ export default function StudentPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl mb-6">
+      <div className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 lg:px-8">
+        <div className="mx-auto mb-6 max-w-3xl">
           <BookAssistant />
         </div>
-        <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-10 shadow-sm text-center">
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">Loading</p>
-          <h1 className="mt-4 text-3xl font-semibold text-slate-900">Preparing your student dashboard...</h1>
+        <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white/80 p-10 text-center shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Loading</p>
+          <h1 className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">Preparing your student dashboard...</h1>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-8">
-        <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <header className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-600">Student Dashboard</p>
-              <h1 className="mt-3 text-3xl font-semibold text-slate-900">Hello, {profile?.full_name ?? profile?.email}</h1>
-              <p className="mt-2 text-sm text-slate-600">Browse the library, track active loans, and manage your requests in one place.</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Student Dashboard</p>
+              <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name ?? profile?.email}</h1>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active loans, and manage your requests in one place.</p>
             </div>
-            <div className="flex flex-col gap-3 rounded-3xl bg-slate-50 p-4 text-sm text-slate-700 shadow-sm sm:flex-row sm:items-center">
-              <div className="rounded-3xl bg-white px-4 py-3 shadow-sm">
-                <p className="text-slate-500">Active alerts</p>
-                <p className="mt-1 text-xl font-semibold text-slate-900">{alertCount}</p>
+            <div className="flex flex-col gap-3 rounded-[1.75rem] bg-slate-100 p-4 text-sm text-slate-700 shadow-sm dark:bg-slate-800/80 dark:text-slate-200 sm:flex-row sm:items-center">
+              <div className="rounded-[1.5rem] bg-white/90 px-4 py-3 shadow-sm dark:bg-slate-900/60">
+                <p className="text-slate-500 dark:text-slate-400">Active alerts</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{alertCount}</p>
               </div>
               <button
                 type="button"
                 onClick={handleLogout}
-                className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
               >
                 Logout
               </button>
@@ -255,28 +259,28 @@ export default function StudentPage() {
 
         <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-slate-900">Book catalog & discovery</h2>
-                  <p className="mt-1 text-sm text-slate-500">Search books, filter availability, and request the ones you need.</p>
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search books, filter availability, and request the ones you need.</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr]">
-                  <label className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Search</span>
+                  <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
+                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Search</span>
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       placeholder="Title, author or category"
                     />
                   </label>
-                  <label className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Filter</span>
+                  <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
+                    <span className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Filter</span>
                     <select
                       value={availability}
                       onChange={(event) => setAvailability(event.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     >
                       <option value="all">All copies</option>
                       <option value="available">In stock only</option>
@@ -289,36 +293,36 @@ export default function StudentPage() {
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 {filteredBooks.length > 0 ? (
                   filteredBooks.map((book) => (
-                    <div key={book.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+                    <div key={book.id} className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800/60">
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">{book.category}</p>
-                          <h3 className="mt-2 text-lg font-semibold text-slate-900">{book.title}</h3>
-                          <p className="mt-2 text-sm text-slate-600">by {book.author}</p>
+                          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600 dark:text-sky-300">{book.category}</p>
+                          <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
+                          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
                         </div>
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${book.available_copies > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${book.available_copies > 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'}`}>
                           {book.available_copies > 0 ? 'Available' : 'All Out'}
                         </span>
                       </div>
-                      <p className="mt-4 text-sm text-slate-600">{book.description}</p>
+                      <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">{book.description}</p>
                       <div className="mt-4 grid gap-3 sm:grid-cols-3">
                         <div>
-                          <p className="text-xs text-slate-500">ISBN</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{book.isbn ?? 'N/A'}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">ISBN</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.isbn ?? 'N/A'}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500">Total copies</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{book.total_copies}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Total copies</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.total_copies}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500">Available</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900">{book.available_copies}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Available</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.available_copies}</p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleRequestBorrow(book)}
-                        className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                        className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 disabled:dark:bg-slate-700"
                         disabled={book.available_copies === 0 || requestLoading}
                       >
                         {book.available_copies === 0 ? 'Out of stock' : requestLoading ? 'Requesting...' : 'Request borrow'}
@@ -326,46 +330,46 @@ export default function StudentPage() {
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                  <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     No matching books were found.
                   </div>
                 )}
               </div>
 
               {requestStatus ? (
-                <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <div className="mt-6 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
                   {requestStatus}
                 </div>
               ) : null}
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-semibold text-slate-900">My books</h2>
-                  <p className="mt-1 text-sm text-slate-500">Currently borrowed books and return deadlines.</p>
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">My books</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Currently borrowed books and return deadlines.</p>
                 </div>
-                <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{activeLoans.length} items</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:bg-slate-800 dark:text-slate-300">{activeLoans.length} items</span>
               </div>
 
               <div className="mt-6 space-y-4">
                 {activeLoans.length > 0 ? (
                   activeLoans.map((loan) => (
-                    <div key={loan.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                    <div key={loan.id} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <p className="font-semibold text-slate-900">{loan.title ?? `Book #${loan.book_id}`}</p>
-                          <p className="mt-1 text-sm text-slate-500">Checked out {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'}</p>
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</p>
+                          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Checked out {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'}</p>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm text-slate-500">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'N/A'}</p>
-                          <p className="mt-1 text-sm font-semibold text-rose-700">Due soon</p>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'N/A'}</p>
+                          <p className="mt-1 text-sm font-semibold text-rose-700 dark:text-rose-300">Due soon</p>
                         </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     You have no active loans right now.
                   </div>
                 )}
@@ -374,24 +378,24 @@ export default function StudentPage() {
           </div>
 
           <aside className="space-y-6">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Borrow requests</h2>
-              <p className="mt-1 text-sm text-slate-500">Track the status of your active requests.</p>
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track the status of your active requests.</p>
               <ul className="mt-6 space-y-3">
                 {borrowRequests.length > 0 ? (
                   borrowRequests.map((request) => (
-                    <li key={request.id} className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <li key={request.id} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-700 dark:bg-slate-800/60">
                       <div className="flex items-center justify-between gap-4">
                         <div>
-                          <p className="font-semibold text-slate-900">{request.title ?? `Book #${request.book_id}`}</p>
-                          <p className="text-sm text-slate-500">Requested {request.request_date ? new Date(request.request_date).toLocaleDateString() : 'N/A'}</p>
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">{request.title ?? `Book #${request.book_id}`}</p>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">Requested {request.request_date ? new Date(request.request_date).toLocaleDateString() : 'N/A'}</p>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
                           request.status === 'approved'
-                            ? 'bg-emerald-100 text-emerald-700'
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                             : request.status === 'rejected'
-                            ? 'bg-rose-100 text-rose-700'
-                            : 'bg-amber-100 text-amber-700'
+                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
                         }`}>
                           {request.status}
                         </span>
@@ -399,38 +403,38 @@ export default function StudentPage() {
                     </li>
                   ))
                 ) : (
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     No borrow requests found yet.
                   </div>
                 )}
               </ul>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Reading history</h2>
-              <p className="mt-1 text-sm text-slate-500">Most recent returned and rejected book requests.</p>
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Reading history</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Most recent returned and rejected book requests.</p>
               <div className="mt-6 space-y-3">
                 {readingHistory.length > 0 ? (
                   readingHistory.map((event) => (
-                    <div key={`${event.title}-${event.date}`} className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
-                      <p className="font-semibold text-slate-900">{event.title}</p>
-                      <p className="mt-1 text-sm text-slate-500">{event.action} • {event.date}</p>
+                    <div key={`${event.title}-${event.date}`} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-700 dark:bg-slate-800/60">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100">{event.title}</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{event.action} • {event.date}</p>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     No reading history to show yet.
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-semibold text-slate-900">Notifications</h2>
-              <p className="mt-1 text-sm text-slate-500">Important alerts for your borrowed books.</p>
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Notifications</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
               <ul className="mt-6 space-y-3">
-                <li className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">Check your due dates regularly to avoid overdue fees.</li>
-                <li className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">Pending requests will appear here once submitted.</li>
+                <li className="rounded-[1.5rem] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">Check your due dates regularly to avoid overdue fees.</li>
+                <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Pending requests will appear here once submitted.</li>
               </ul>
             </div>
           </aside>
