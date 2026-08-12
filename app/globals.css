@@ -44,6 +44,16 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+html:not(.dark) body {
+  background-color: #ffffff;
+  background-image: none !important;
+}
+
+html.dark body {
+  background-color: #020817;
+  background-image: none !important;
+}
+
 button,
 input,
 select,
