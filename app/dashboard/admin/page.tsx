@@ -249,6 +249,24 @@ export default function AdminPage() {
     setSaving(false)
   }
 
+  const handleRoleChange = async (userId: string, role: 'student' | 'admin') => {
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+
+    const supabase = createClient()
+    const { error } = await supabase.from('profiles').update({ role }).eq('id', userId)
+
+    if (error) {
+      setError(error.message)
+    } else {
+      setActionMessage('User role updated.')
+      await loadData()
+    }
+
+    setSaving(false)
+  }
+
   const handleAddBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSaving(true)
@@ -712,7 +730,18 @@ export default function AdminPage() {
                     {studentDetails.map((student) => (
                       <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
                         <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{student.email}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
+                          <select
+                            value={student.role}
+                            onChange={(event) => handleRoleChange(student.id, event.target.value as 'student' | 'admin')}
+                            disabled={saving}
+                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+                            aria-label={`Role for ${student.email}`}
+                          >
+                            <option value="student">student</option>
+                            <option value="admin">admin</option>
+                          </select>
+                        </td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.overdue_loans}</td>
                       </tr>
