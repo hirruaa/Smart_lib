@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +44,7 @@ type RequestItem = {
   due_date: string | null
   returned_date: string | null
   notes: string | null
+  duration_days?: number | null
 }
 
 type Profile = {
@@ -65,7 +66,6 @@ export default function AdminPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -80,6 +80,23 @@ export default function AdminPage() {
   })
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
+  const [bookSearch, setBookSearch] = useState('')
+  const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+
+  const handleDeleteBook = async (bookId: number, title: string) => {
+    if (!confirm(`Are you sure you want to remove "${title}" from the catalog?`)) return
+    setSaving(true)
+    setError(null)
+    const supabase = createClient()
+    const { error: delError } = await supabase.from('books').delete().eq('id', bookId)
+    if (delError) {
+      setError(delError.message)
+    } else {
+      setActionMessage(`"${title}" was removed from the catalog.`)
+      await loadData()
+    }
+    setSaving(false)
+  }
 
   const loadData = async () => {
     setError(null)
@@ -87,22 +104,10 @@ export default function AdminPage() {
     const supabase = createClient()
 
     const { data: { user }, error } = await supabase.auth.getUser()
-    let currentUser = user
+    const currentUser = user
     if (!currentUser) {
-      let sessionResult = await supabase.auth.getSession()
-      let waited = 0
-      while ((!sessionResult.data?.session?.user || !sessionResult.data?.session) && waited < 3000) {
-        await new Promise((r) => setTimeout(r, 200))
-        waited += 200
-        sessionResult = await supabase.auth.getSession()
-      }
-
-      if (sessionResult.error || !sessionResult.data?.session?.user) {
-        router.replace('/login')
-        return
-      }
-
-      currentUser = sessionResult.data.session.user
+      router.replace('/login')
+      return
     }
 
     const { data: profileData } = await supabase
@@ -134,8 +139,14 @@ export default function AdminPage() {
     setProfile({ email: email ?? '', role })
 
     const [booksRes, requestsRes, studentsRes] = await Promise.all([
-      supabase.from('books').select('*').order('title', { ascending: true }),
-      supabase.from('borrow_requests').select('*').order('request_date', { ascending: false }),
+      supabase
+        .from('books')
+        .select('id, title, author, isbn, category, description, pdf_url, total_copies, available_copies, created_at')
+        .order('title', { ascending: true }),
+      supabase
+        .from('borrow_requests')
+        .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days')
+        .order('request_date', { ascending: false }),
       supabase
         .from('profiles')
         .select('id, email, role, created_at')
@@ -153,11 +164,28 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    loadData().finally(() => setLoading(false))
+    loadData()
   }, [router])
 
   const bookMap = useMemo(() => new Map(books.map((book) => [book.id, book])), [books])
   const studentMap = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const filteredBooks = useMemo(() => {
+    if (!bookSearch.trim()) return books
+    const q = bookSearch.toLowerCase()
+    return books.filter(
+      (b) =>
+        b.title.toLowerCase().includes(q) ||
+        b.author.toLowerCase().includes(q) ||
+        b.category.toLowerCase().includes(q) ||
+        (b.isbn && b.isbn.toLowerCase().includes(q))
+    )
+  }, [books, bookSearch])
+
+  const filteredRequests = useMemo(() => {
+    if (requestFilter === 'all') return requests
+    return requests.filter((r) => r.status === requestFilter)
+  }, [requests, requestFilter])
+
   const materials = useMemo(
     () =>
       books
@@ -195,7 +223,7 @@ export default function AdminPage() {
     router.replace('/login')
   }
 
-  const handleApprove = async (requestId: number, bookId: number) => {
+  const handleApprove = async (requestId: number, durationDays: number | null | undefined) => {
     setSaving(true)
     const supabase = createClient()
 
@@ -203,17 +231,9 @@ export default function AdminPage() {
       .from('borrow_requests')
       .update({
         status: 'approved',
-        due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        due_date: new Date(Date.now() + (durationDays ?? 14) * 24 * 60 * 60 * 1000).toISOString(),
       })
       .eq('id', requestId)
-
-    const book = bookMap.get(bookId)
-    if (book) {
-      await supabase
-        .from('books')
-        .update({ available_copies: Math.max(book.available_copies - 1, 0) })
-        .eq('id', bookId)
-    }
 
     await loadData()
     setActionMessage('Request approved and inventory updated.')
@@ -260,19 +280,8 @@ export default function AdminPage() {
     setSaving(false)
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white/80 p-10 text-center shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Loading</p>
-          <h1 className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">Loading admin dashboard...</h1>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 lg:px-8">
+    <div className="admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
           <div className="mb-8 space-y-2">
@@ -362,7 +371,24 @@ export default function AdminPage() {
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage the library inventory.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage the library inventory, stock, and PDF attachments.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={bookSearch}
+                    onChange={(e) => setBookSearch(e.target.value)}
+                    placeholder="Search books by title, author, category..."
+                    className="w-64 rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  {bookSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setBookSearch('')}
+                      className="rounded-xl border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                    >
+                      ✕
+                    </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -372,17 +398,40 @@ export default function AdminPage() {
                     <tr>
                       <th className="px-4 py-3 font-semibold">Title</th>
                       <th className="px-4 py-3 font-semibold">Author</th>
-                      <th className="px-4 py-3 font-semibold">Copies</th>
-                      <th className="px-4 py-3 font-semibold">Available</th>
+                      <th className="px-4 py-3 font-semibold">Category</th>
+                      <th className="px-4 py-3 font-semibold">Stock</th>
+                      <th className="px-4 py-3 font-semibold">PDF</th>
+                      <th className="px-4 py-3 font-semibold text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                    {books.map((book) => (
+                    {filteredBooks.map((book) => (
                       <tr key={book.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
-                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{book.title}</td>
+                        <td className="px-4 py-4 font-medium text-slate-800 dark:text-slate-100">{book.title}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.total_copies}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.available_copies}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
+                          {book.available_copies} / {book.total_copies}
+                        </td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
+                          {book.pdf_url ? (
+                            <span className="rounded-md bg-pine-100 px-2 py-0.5 text-xs font-semibold text-pine-700 dark:bg-forest-700 dark:text-pine-200">
+                              Attached
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">None</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => handleDeleteBook(book.id, book.title)}
+                            className="rounded-xl border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                          >
+                            Delete
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -469,9 +518,27 @@ export default function AdminPage() {
 
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review student borrow requests and approve or reject them.</p>
+              <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review student borrow requests and approve or reject them.</p>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
+                  {(['all', 'pending', 'approved', 'rejected'] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setRequestFilter(st)}
+                      className={`rounded-xl px-3 py-1 text-xs font-semibold capitalize transition ${
+                        requestFilter === st
+                          ? 'bg-slate-900 text-white dark:bg-sky-500 dark:text-slate-950 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                      }`}
+                    >
+                      {st} {st === 'pending' ? `(${pendingRequests.length})` : ''}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
@@ -485,7 +552,7 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                    {requests.map((request) => (
+                    {filteredRequests.map((request) => (
                       <tr key={request.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
                         <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td>
@@ -498,7 +565,7 @@ export default function AdminPage() {
                                 type="button"
                                 disabled={saving}
                                 className="rounded-2xl bg-emerald-700 px-3 py-2 text-white transition hover:bg-emerald-600 disabled:opacity-60"
-                                onClick={() => handleApprove(request.id, request.book_id)}
+                                onClick={() => handleApprove(request.id, request.duration_days)}
                               >
                                 Approve
                               </button>

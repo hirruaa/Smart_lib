@@ -14,7 +14,6 @@ function normalizeRole(value: unknown): 'admin' | 'student' | null {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -98,21 +97,10 @@ export default function DashboardPage() {
       }
     }
 
-    checkAuth().finally(() => setLoading(false))
+    checkAuth()
   }, [router])
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8 dark:bg-slate-950">
-      <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white/80 p-10 text-center shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Redirecting</p>
-        <h1 className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">Checking your access...</h1>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-300">Please wait while we send you to the correct dashboard.</p>
-        {authError ? (
-          <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
-            {authError}
-          </div>
-        ) : null}
-      </div>
-    </div>
+    authError ? <div className="p-8 text-sm text-rose-700">{authError}</div> : null
   )
 }

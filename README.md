@@ -34,6 +34,22 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 npm run dev
 ```
 
+## New Supabase project
+
+1. Create the project and copy its URL and anon key into `.env.local`.
+2. Open Supabase **SQL Editor** and run [`supabase/BASE_SCHEMA.sql`](supabase/BASE_SCHEMA.sql).
+3. Run the SQL files in [`supabase/migrations`](supabase/migrations) in filename order.
+4. Create and verify a normal account through `/register`.
+5. Promote that account to the initial administrator from the SQL Editor:
+
+```sql
+update public.profiles
+set role = 'admin'
+where email = 'your-admin-email@example.com';
+```
+
+Public registration intentionally creates student accounts only. Do not expose administrator promotion in the application UI.
+
 ## Available scripts
 
 - `npm run dev` — start the development server

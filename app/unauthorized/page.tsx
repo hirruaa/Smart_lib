@@ -7,8 +7,8 @@ export const metadata = {
 
 export default function UnauthorizedPage() {
   return (
-    <div className="min-h-screen bg-transparent px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
-      <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white/90 p-10 text-center shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+    <div className="surface-page min-h-screen px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
+      <div className="surface-card mx-auto max-w-3xl p-10 text-center">
         <p className="text-sm font-semibold uppercase tracking-[0.24em] text-rose-600 dark:text-rose-300">Access denied</p>
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">You do not have permission to view this page.</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
