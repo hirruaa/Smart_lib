@@ -1,5 +1,4 @@
 import './globals.css'
-import ThemeToggle from '@/components/ThemeToggle'
 import CookieConsent from '@/components/CookieConsent'
 
 export const metadata = {
@@ -15,9 +14,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-paper-100 text-slate-900 antialiased transition-colors duration-300 dark:bg-forest-900 dark:text-paper-100">
-        <div className="fixed right-4 top-4 z-50">
-          <ThemeToggle />
-        </div>
         {children}
         <CookieConsent />
       </body>

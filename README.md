@@ -26,7 +26,10 @@ npm install
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` is required for administrators to create student accounts. Keep it server-only and never prefix it with `NEXT_PUBLIC_`.
 
 3. Run the app locally:
 

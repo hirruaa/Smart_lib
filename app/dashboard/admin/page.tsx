@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import ThemeToggle from '@/components/ThemeToggle'
 
 const navItems = [
   { label: 'Overview', section: 'overview' },
@@ -59,6 +60,18 @@ type AdminProfile = {
   role: string
 }
 
+function AdminNavIcon({ section }: { section: string }) {
+  const paths: Record<string, React.ReactNode> = {
+    overview: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
+    books: <><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v17H7.5A2.5 2.5 0 0 0 5 22V5.5Z" /><path d="M5 20.5A2.5 2.5 0 0 1 7.5 18H19M9 7h6M9 10h4" /></>,
+    requests: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 12h6M9 16h4" /></>,
+    users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
+    materials: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+  }
+
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{paths[section]}</svg>
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
@@ -82,6 +95,9 @@ export default function AdminPage() {
   const [pdfUrl, setPdfUrl] = useState('')
   const [bookSearch, setBookSearch] = useState('')
   const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '' })
 
   const handleDeleteBook = async (bookId: number, title: string) => {
     if (!confirm(`Are you sure you want to remove "${title}" from the catalog?`)) return
@@ -225,13 +241,10 @@ export default function AdminPage() {
     setError(null)
     const supabase = createClient()
 
-    const { error } = await supabase
-      .from('borrow_requests')
-      .update({
-        status: 'approved',
-        due_date: new Date(Date.now() + (durationDays ?? 14) * 24 * 60 * 60 * 1000).toISOString(),
-      })
-      .eq('id', requestId)
+    const { error } = await supabase.rpc('admin_decide_borrow_request', {
+      request_id: requestId,
+      decision: 'approved',
+    })
 
     if (error) {
       setError(error.message)
@@ -245,9 +258,15 @@ export default function AdminPage() {
   const handleReject = async (requestId: number) => {
     setSaving(true)
     const supabase = createClient()
-    await supabase.from('borrow_requests').update({ status: 'rejected' }).eq('id', requestId)
-    await loadData()
-    setActionMessage('Request rejected.')
+    const { error } = await supabase.rpc('admin_decide_borrow_request', {
+      request_id: requestId,
+      decision: 'rejected',
+    })
+    if (error) setError(error.message)
+    else {
+      await loadData()
+      setActionMessage('Request rejected.')
+    }
     setSaving(false)
   }
 
@@ -257,7 +276,10 @@ export default function AdminPage() {
     setActionMessage(null)
 
     const supabase = createClient()
-    const { error } = await supabase.from('profiles').update({ role }).eq('id', userId)
+    const { error } = await supabase.rpc('admin_set_profile_role', {
+      target_user_id: userId,
+      new_role: role,
+    })
 
     if (error) {
       setError(error.message)
@@ -266,6 +288,27 @@ export default function AdminPage() {
       await loadData()
     }
 
+    setSaving(false)
+  }
+
+  const handleCreateStudent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const response = await fetch('/api/admin/students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newStudent),
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      setError(data.error || 'Unable to create student account.')
+    } else {
+      setActionMessage(`Student account created for ${data.email}.`)
+      setNewStudent({ email: '', password: '', fullName: '' })
+      await loadData()
+    }
     setSaving(false)
   }
 
@@ -302,48 +345,53 @@ export default function AdminPage() {
 
   return (
     <div className="admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[280px_1fr]">
-        <aside className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+      {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
+      <div className={`admin-layout mx-auto max-w-7xl ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
+        <aside className={`admin-sidebar ${sidebarOpen ? 'admin-sidebar-open' : ''}`}>
           <div className="mb-8 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
             <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
           </div>
+          <button type="button" className="admin-sidebar-toggle" onClick={() => { setSidebarCollapsed((current) => !current); setSidebarOpen(false) }} aria-label={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><span aria-hidden="true">☰</span></button>
           <nav className="space-y-2">
             {navItems.map((item) => (
               <button
                 key={item.section}
                 type="button"
                 onClick={() => setSection(item.section)}
-                className={`w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${
                   section === item.section
                     ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
                     : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
                 }`}
               >
-                {item.label}
+                <span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span>
+                <span>{item.label}</span>
               </button>
             ))}
           </nav>
-          <div className="mt-8 space-y-3">
+          <div className="admin-sidebar-footer mt-8 space-y-3">
+            <div className="admin-theme-control"><ThemeToggle /><span>Appearance</span></div>
             <button
               type="button"
               onClick={() => router.push('/profile')}
               className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             >
-              Profile
+              <span>Profile</span>
             </button>
             <button
               type="button"
               onClick={handleLogout}
               className="inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
             >
-              Logout
+              <span>Logout</span>
             </button>
           </div>
         </aside>
 
-        <main className="space-y-6">
+        <main className="admin-workspace space-y-6">
           <header className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+            <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Admin</p>
@@ -355,7 +403,7 @@ export default function AdminPage() {
             </div>
           </header>
 
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="admin-metrics-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-[1.75rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
               <p className="text-sm text-slate-500 dark:text-slate-400">Total students</p>
               <p className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">{students.length}</p>
@@ -718,6 +766,18 @@ export default function AdminPage() {
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Student management</h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review student loan activity.</p>
               </div>
+              <form onSubmit={handleCreateStudent} className="mb-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
+                <div className="mb-4">
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Create student account</h3>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">The account is created as a student and can sign in immediately.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <input type="text" value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="student@example.com" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input type="password" required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                </div>
+                <button type="submit" disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Creating...' : 'Create student account'}</button>
+              </form>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
                   <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
