@@ -6,7 +6,6 @@ import { createClient } from '@/utils/supabase/client'
 
 export default function ProfilePage() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<{ full_name?: string; email: string; role?: string } | null>(null)
   const [fullName, setFullName] = useState('')
   const [message, setMessage] = useState<string | null>(null)
@@ -40,7 +39,6 @@ export default function ProfilePage() {
         setProfile(profileData)
         setFullName(profileData.full_name ?? '')
       }
-      setLoading(false)
     }
 
     loadProfile()
@@ -66,7 +64,6 @@ export default function ProfilePage() {
       id: user.id,
       full_name: fullName || null,
       email: profile?.email,
-      role: profile?.role ?? 'student',
     })
 
     if (updateError) {
@@ -76,20 +73,9 @@ export default function ProfilePage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-transparent px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
-        <div className="mx-auto max-w-xl rounded-[2rem] border border-slate-200 bg-white/90 p-10 text-center shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Loading profile</p>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight">Please wait...</h1>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="min-h-screen bg-transparent px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
-      <div className="mx-auto max-w-3xl rounded-[2rem] border border-slate-200 bg-white/90 p-10 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+    <div className="surface-page min-h-screen px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
+      <div className="surface-card mx-auto max-w-3xl p-8 sm:p-10">
         <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Your Profile</h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Update your name and review your account role.</p>
 
@@ -112,34 +98,34 @@ export default function ProfilePage() {
               <input
                 value={fullName}
                 onChange={(event) => setFullName(event.target.value)}
-                className="mt-2 w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none"
               />
             </label>
             <div className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Email</span>
-              <p className="mt-2 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">{profile?.email}</p>
+              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">{profile?.email}</p>
             </div>
           </div>
 
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Role</span>
-              <p className="mt-2 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">{profile?.role}</p>
+              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">{profile?.role}</p>
             </div>
             <div className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Status</span>
-              <p className="mt-2 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Logged in</p>
+              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">Logged in</p>
             </div>
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button type="submit" className="inline-flex items-center justify-center rounded-3xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">
+            <button type="submit" className="pine-action inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold">
               Save profile
             </button>
             <button
               type="button"
               onClick={() => router.replace('/dashboard')}
-              className="inline-flex items-center justify-center rounded-3xl border border-slate-200 bg-transparent px-6 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-600"
+              className="secondary-action inline-flex items-center justify-center rounded-xl border px-6 py-3 text-sm font-semibold"
             >
               Back to Dashboard
             </button>

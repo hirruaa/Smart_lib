@@ -4,8 +4,8 @@ export const metadata = { title: 'Terms of Service | Smart Lib' }
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-slate-50 px-6 py-16 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <article className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:p-12">
+    <main className="surface-page min-h-screen px-6 py-16 text-slate-900 dark:text-slate-100">
+      <article className="surface-card mx-auto max-w-3xl p-8 sm:p-12">
         <Link href="/" className="text-sm font-semibold text-sky-600 dark:text-sky-300">Back to Smart Lib</Link>
         <h1 className="mt-8 text-4xl font-bold">Terms of Service</h1>
         <p className="mt-3 text-sm text-slate-500">Last updated: September 8, 2026</p>

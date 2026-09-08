@@ -23,12 +23,10 @@ export default function HighlightsPanel({
   onClearSelection?: () => void
 }) {
   const [highlights, setHighlights] = useState<Highlight[]>([])
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function loadHighlights() {
-    setLoading(true)
     setError(null)
     try {
       const res = await fetch(`/api/study/highlights?book_id=${bookId}`)
@@ -36,8 +34,6 @@ export default function HighlightsPanel({
       setHighlights(data || [])
     } catch (err: any) {
       setError(err?.message ?? 'Failed to load highlights')
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -110,9 +106,7 @@ export default function HighlightsPanel({
       ) : null}
 
       <div className="mt-5 space-y-3">
-        {loading ? (
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">Loading highlights…</div>
-        ) : highlights.length === 0 ? (
+        {highlights.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">
             You don’t have any highlights yet.
           </div>
