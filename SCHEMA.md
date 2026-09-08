@@ -224,8 +224,7 @@ erDiagram
 6. Highlighted quotes and notes are saved to `study_notes` / `highlights`.
 7. Borrow event triggers notification queue and later fines processing.
 
-## 10. Migration files used
+## 10. Initialization
 
-- `supabase/migrations/20260810_add_reader_reviews_wishlist_notifications_fines.sql`
-- `supabase/migrations/20260811_add_fulltext_search_books.sql`
-- `supabase/migrations/20260812_add_study_notes_highlights.sql`
+Run [`supabase/BASE_SCHEMA.sql`](supabase/BASE_SCHEMA.sql) once in a new Supabase project.
+It contains the complete schema, functions, triggers, indexes, and RLS policies.

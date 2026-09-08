@@ -38,9 +38,8 @@ npm run dev
 
 1. Create the project and copy its URL and anon key into `.env.local`.
 2. Open Supabase **SQL Editor** and run [`supabase/BASE_SCHEMA.sql`](supabase/BASE_SCHEMA.sql).
-3. Run the SQL files in [`supabase/migrations`](supabase/migrations) in filename order.
-4. Create and verify a normal account through `/register`.
-5. Promote that account to the initial administrator from the SQL Editor:
+3. Create and verify a normal account through `/register`.
+4. Promote that account to the initial administrator from the SQL Editor:
 
 ```sql
 update public.profiles
