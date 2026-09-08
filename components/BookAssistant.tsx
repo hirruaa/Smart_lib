@@ -12,10 +12,19 @@ type Book = {
   available_copies?: number
 }
 
+type Loan = {
+  id: number
+  status: string
+  due_date?: string | null
+  books?: { title?: string; author?: string } | null
+}
+
 export default function BookAssistant() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<Book[]>([])
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [loans, setLoans] = useState<Loan[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const handleSearch = async (e?: React.FormEvent) => {
@@ -27,7 +36,9 @@ export default function BookAssistant() {
       const res = await fetch('/api/recommend', { method: 'POST', body: JSON.stringify({ query }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Search failed')
+      setAnswer(data.answer || null)
       setResults(data.results || [])
+      setLoans(data.loans || [])
     } catch (err: any) {
       setError(err.message || String(err))
     } finally {
@@ -38,7 +49,7 @@ export default function BookAssistant() {
   return (
     <div className="rounded-lg border p-4 bg-white shadow-sm">
       <h3 className="text-lg font-semibold">Ask the Library Assistant</h3>
-      <p className="text-sm text-slate-500">Try: "machine learning" or "Shakespeare plays"</p>
+      <p className="text-sm text-slate-500">Ask about resources, research topics, or your current loans.</p>
       <form onSubmit={handleSearch} className="mt-3 flex gap-2">
         <input
           value={query}
@@ -52,6 +63,20 @@ export default function BookAssistant() {
       </form>
 
       {error ? <div className="mt-3 text-sm text-rose-600">{error}</div> : null}
+      {answer ? <p className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-700">{answer}</p> : null}
+
+      {loans.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {loans.map((loan) => (
+            <div key={loan.id} className="rounded-md border p-3 text-sm">
+              <div className="font-semibold">{loan.books?.title || 'Book'}</div>
+              <div className="text-slate-600">
+                {loan.status} {loan.due_date ? `· access expires ${new Date(loan.due_date).toLocaleDateString()}` : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="mt-4 space-y-3">
         {results.map((b) => (

@@ -2,6 +2,17 @@
 
 This is a Next.js app using Supabase for auth and user role handling.
 
+## Product scope
+
+Smart Lib is an AI-powered digital library for academic resource discovery and temporary e-book access. Its core experience combines:
+
+- **AI Library Assistant** for natural-language catalog, account, borrowing, and policy questions.
+- **AI Research Helper** for finding resources and refining research topics with subject-focused searches.
+- **Flexible digital lending** with tracked access periods, expiry, renewal, and borrowing history.
+- **Intelligent resource management** for e-books and future research papers, theses, journals, and repository content.
+
+Supporting capabilities include student profiles, saved resources, notifications, study notes, highlights, and administrator controls for users, resources, lending rules, and usage statistics.
+
 ## Setup
 
 1. Install dependencies:
