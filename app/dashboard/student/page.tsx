@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import dynamicImport from 'next/dynamic'
 import ProfileModal from '@/components/ProfileModal'
+import ThemeToggle from '@/components/ThemeToggle'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
@@ -32,6 +33,7 @@ type BorrowRequest = {
   returned_date: string | null
   notes: string | null
   duration_days?: number | null
+  renewal_count?: number | null
   title?: string
   pdf_url?: string | null
 }
@@ -40,6 +42,8 @@ type UserProfile = {
   full_name?: string
   email: string
 }
+
+type Fine = { id: number; amount: number; status: string; created_at: string | null }
 
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -54,6 +58,7 @@ function RequestIcon() { return <LineIcon><path d="M6 3h9l3 3v15H6z" /><path d="
 function HistoryIcon() { return <LineIcon><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" /><path d="M4 4v4.6h4.6M12 8v4l2.5 1.5" /></LineIcon> }
 function ProfileIcon() { return <LineIcon><circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0" /></LineIcon> }
 function LogoutIcon() { return <LineIcon><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></LineIcon> }
+function MenuIcon() { return <LineIcon><path d="M4 6h16M4 12h16M4 18h16" /></LineIcon> }
 
 export default function StudentPage() {
   const router = useRouter()
@@ -70,6 +75,14 @@ export default function StudentPage() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [loanActionId, setLoanActionId] = useState<number | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set())
+  const [fines, setFines] = useState<Fine[]>([])
+  const [reviewBookId, setReviewBookId] = useState<number | null>(null)
+  const [reviewRating, setReviewRating] = useState('5')
+  const [reviewComment, setReviewComment] = useState('')
 
   useEffect(() => {
     const supabase = createClient()
@@ -113,16 +126,18 @@ export default function StudentPage() {
       setProfile({ full_name: fullName, email: email ?? '' })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult] = await Promise.all([
+      const [booksResult, requestsResult, wishlistResult, finesResult] = await Promise.all([
         supabase
           .from('books')
           .select('id, title, author, category, description, isbn, total_copies, available_copies, pdf_url')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
-          .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days')
+          .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days, renewal_count')
           .eq('student_id', currentUser.id)
           .order('request_date', { ascending: false }),
+        supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
+        supabase.from('fines').select('id, amount, status, created_at').eq('student_id', currentUser.id).eq('status', 'unpaid').order('created_at', { ascending: false }),
       ])
 
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
@@ -138,6 +153,8 @@ export default function StudentPage() {
       }))
 
       setBooks(fetchedBooks)
+      setWishlistIds(new Set((wishlistResult.data ?? []).map((item: { book_id: number }) => item.book_id)))
+      setFines((finesResult.data ?? []) as Fine[])
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
         const matchingBook = fetchedBooks.find((b) => b.id === request.book_id)
         return {
@@ -239,7 +256,7 @@ export default function StudentPage() {
       const supabase = createClient()
       const { data: requestsResult } = await supabase
         .from('borrow_requests')
-        .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days')
+        .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days, renewal_count')
         .eq('student_id', userId)
         .order('request_date', { ascending: false })
       setBorrowRequests((requestsResult ?? []).map((request: BorrowRequest) => ({
@@ -249,6 +266,45 @@ export default function StudentPage() {
     }
 
     setRequestingBookId(null)
+  }
+
+  const handleLoanAction = async (loanId: number, action: 'renew' | 'return') => {
+    setLoanActionId(loanId)
+    setRequestStatus(null)
+    const supabase = createClient()
+    const rpc = action === 'renew' ? 'renew_digital_loan' : 'return_digital_loan'
+    const params = action === 'renew' ? { request_id: loanId, extension_days: 14 } : { request_id: loanId }
+    const { data, error } = await supabase.rpc(rpc, params)
+    if (error) {
+      setRequestStatus(error.message)
+    } else {
+      setBorrowRequests((current) => current.map((request) => request.id === loanId ? { ...request, ...data } : request))
+      setRequestStatus(action === 'renew' ? 'Access renewed for 14 more days.' : 'Digital access returned.')
+    }
+    setLoanActionId(null)
+  }
+
+  const handleWishlist = async (bookId: number) => {
+    if (!userId) return
+    const supabase = createClient()
+    if (wishlistIds.has(bookId)) {
+      const { error } = await supabase.from('wishlists').delete().eq('book_id', bookId).eq('student_id', userId)
+      if (!error) setWishlistIds((current) => { const next = new Set(current); next.delete(bookId); return next })
+    } else {
+      const { error } = await supabase.from('wishlists').insert({ book_id: bookId, student_id: userId })
+      if (!error) setWishlistIds((current) => new Set(current).add(bookId))
+    }
+  }
+
+  const handleReview = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!userId || reviewBookId === null) return
+    const { error } = await createClient().from('reviews').upsert({ book_id: reviewBookId, student_id: userId, rating: Number(reviewRating), comment: reviewComment.trim() || null }, { onConflict: 'book_id,student_id' })
+    setRequestStatus(error ? error.message : 'Your review was saved.')
+    if (!error) {
+      setReviewBookId(null)
+      setReviewComment('')
+    }
   }
 
   if (loadError) {
@@ -271,46 +327,34 @@ export default function StudentPage() {
 
   return (
     <div className="student-shell min-h-screen px-4 py-5 sm:px-6 lg:px-8">
-      <div className="student-layout mx-auto max-w-[1500px]">
-        <aside className="student-sidebar">
+      {sidebarOpen ? <button type="button" className="student-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} /> : null}
+      <div className={`student-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+        <aside className={`student-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
           <div className="student-brand"><span className="student-brand-mark"><BookMarkIcon /></span><span>Smart Lib</span></div>
+          <button type="button" className="student-sidebar-toggle" onClick={() => { setSidebarCollapsed((current) => !current); setSidebarOpen(false) }} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><MenuIcon /></button>
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label="Student workspace">
-            <a className="active" href="#overview"><DashboardIcon />Overview</a>
-            <a href="#research"><SparkIcon />Research desk</a>
-            <a href="#explore"><BookIcon />Explore resources</a>
-            <a href="#access"><AccessIcon />My access</a>
-            <a href="#requests"><RequestIcon />Requests</a>
-            <a href="#history"><HistoryIcon />Reading history</a>
+            <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
+            <a href="/assistant" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Research desk</span></a>
+            <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Explore resources</span></a>
+            <a href="#access" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>My access</span></a>
+            <a href="#requests" onClick={() => setSidebarOpen(false)}><RequestIcon /><span>Requests</span></a>
+            <a href="#history" onClick={() => setSidebarOpen(false)}><HistoryIcon /><span>Reading history</span></a>
           </nav>
           <div className="student-sidebar-footer">
-            <button type="button" onClick={() => setProfileOpen(true)}><ProfileIcon />Profile</button>
-            <button type="button" onClick={handleLogout}><LogoutIcon />Sign out</button>
+            <div className="student-theme-control"><ThemeToggle /><span>Appearance</span></div>
+            <button type="button" onClick={() => setProfileOpen(true)}><ProfileIcon /><span>Profile</span></button>
+            <button type="button" onClick={handleLogout}><LogoutIcon /><span>Sign out</span></button>
           </div>
         </aside>
         <main id="overview" className="student-workspace space-y-8">
         <header className="student-hero rounded-[2rem] p-6 lg:p-8">
+          <button type="button" className="student-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><MenuIcon /></button>
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-celadon">Student Dashboard</p>
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || 'student'}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active loans, and manage your requests in one place.</p>
-            </div>
-            <div className="student-account-actions flex gap-3 text-sm">
-              <button
-                type="button"
-                onClick={() => setProfileOpen(true)}
-                className="profile-action rounded-2xl border px-4 py-3 text-sm font-semibold transition"
-              >
-                Profile
-              </button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="logout-action rounded-2xl px-4 py-3 text-sm font-semibold transition"
-              >
-                Sign out
-              </button>
             </div>
           </div>
           <div className="student-hero-status mt-6">
@@ -464,6 +508,12 @@ export default function StudentPage() {
                       >
                         {`Request ${durationDays}-day access`}
                       </button>
+                      <div className="mt-3 flex gap-2">
+                        <button type="button" onClick={() => void handleWishlist(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">
+                          {wishlistIds.has(book.id) ? 'Saved' : 'Save to wishlist'}
+                        </button>
+                        <button type="button" onClick={() => setReviewBookId(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Review</button>
+                      </div>
                     </div>
                   ))
                 ) : dataReady ? (
@@ -540,6 +590,22 @@ export default function StudentPage() {
                                 Read Now &rarr;
                               </button>
                             ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void handleLoanAction(loan.id, 'renew')}
+                              disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2}
+                              className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleLoanAction(loan.id, 'return')}
+                              disabled={loanActionId !== null}
+                              className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Return
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -554,8 +620,8 @@ export default function StudentPage() {
             </div>
           </div>
 
-          <aside className="space-y-6">
-            <div id="requests" className="side-panel rounded-[2rem] p-6">
+          <aside className="student-side-bento grid gap-6 xl:grid-cols-2">
+            <div id="requests" className="side-panel rounded-[2rem] p-6 xl:col-start-1 xl:row-start-1">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track the status of your active requests.</p>
               <ul className="mt-6 space-y-3">
@@ -587,7 +653,7 @@ export default function StudentPage() {
               </ul>
             </div>
 
-            <div id="history" className="side-panel rounded-[2rem] p-6">
+            <div id="history" className="side-panel rounded-[2rem] p-6 xl:col-span-2 xl:row-start-2">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Reading history</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Most recent returned and rejected book requests.</p>
               <div className="mt-6 space-y-3">
@@ -606,19 +672,46 @@ export default function StudentPage() {
               </div>
             </div>
 
-            <div className="side-panel rounded-[2rem] p-6">
+            <div className="side-panel rounded-[2rem] p-6 xl:col-start-2 xl:row-start-1">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Notifications</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
               <ul className="mt-6 space-y-3">
-                <li className="status-pending rounded-[1.5rem] border px-4 py-4 text-sm">Check your due dates regularly to avoid overdue fees.</li>
-                <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Pending requests will appear here once submitted.</li>
+                {borrowRequests.filter((request) => request.status === 'pending' || request.status === 'approved').slice(0, 3).map((request) => {
+                  const dueDate = request.due_date ? new Date(request.due_date) : null
+                  const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null
+                  return <li key={`notification-${request.id}`} className={`${request.status === 'pending' ? 'status-pending' : 'status-approved'} rounded-[1.5rem] border px-4 py-4 text-sm`}>{request.status === 'pending' ? `Your access request for ${request.title ?? 'a resource'} is waiting for approval.` : daysLeft !== null && daysLeft <= 3 ? `${request.title ?? 'Your resource'} expires in ${Math.max(daysLeft, 0)} day${daysLeft === 1 ? '' : 's'}.` : `Digital access is active for ${request.title ?? 'your resource'}.`}</li>
+                })}
+                {borrowRequests.every((request) => request.status !== 'pending' && request.status !== 'approved') ? <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Your borrowing notifications will appear here.</li> : null}
               </ul>
+              {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>${fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong></div> : null}
             </div>
           </aside>
         </section>
         </main>
       </div>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {reviewBookId !== null ? (
+        <div className="review-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewBookId(null) }}>
+          <form className="review-modal" onSubmit={handleReview}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Book review</p>
+                <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share your perspective</h2>
+              </div>
+              <button type="button" className="review-modal-close" onClick={() => setReviewBookId(null)} aria-label="Close review">×</button>
+            </div>
+            <label className="mt-6 block text-sm font-semibold text-slate-700 dark:text-slate-200">Rating
+              <select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-3 py-2 text-sm">
+                {[5, 4, 3, 2, 1].map((rating) => <option key={rating} value={rating}>{rating} / 5</option>)}
+              </select>
+            </label>
+            <label className="mt-4 block text-sm font-semibold text-slate-700 dark:text-slate-200">Comment
+              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} className="workspace-input mt-2 w-full resize-y rounded-xl border px-3 py-2 text-sm" placeholder="What did you find useful?" />
+            </label>
+            <button type="submit" className="pine-action mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold">Save review</button>
+          </form>
+        </div>
+      ) : null}
     </div>
   )
 }
