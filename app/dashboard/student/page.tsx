@@ -638,7 +638,7 @@ export default function StudentPage() {
           </div>
 
           <aside className="student-side-bento grid gap-6 xl:grid-cols-2">
-            <div id="requests" className="side-panel rounded-[2rem] p-6 xl:col-start-1 xl:row-start-1">
+            <div id="requests" className="side-panel rounded-[2rem] p-6 xl:col-span-2 xl:col-start-1 xl:row-start-1">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track the status of your active requests.</p>
               <ul className="mt-6 space-y-3">
