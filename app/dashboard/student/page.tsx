@@ -69,6 +69,7 @@ export default function StudentPage() {
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -85,13 +86,18 @@ export default function StudentPage() {
         return
       }
 
-      const { data: profileData } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('role, email, full_name')
         .eq('id', currentUser.id)
         .maybeSingle()
 
-      const role = (profileData?.role ? String(profileData.role).trim().toLowerCase() : (currentUser.user_metadata?.role as string | undefined)?.trim().toLowerCase())
+      if (profileError) {
+        setLoadError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
+        return
+      }
+
+      const role = profileData?.role ? String(profileData.role).trim().toLowerCase() : ''
       const email = profileData?.email ?? currentUser.email
       const fullName = profileData?.full_name ?? ''
 
@@ -102,15 +108,6 @@ export default function StudentPage() {
           router.replace('/dashboard')
         }
         return
-      }
-
-      if (!profileData) {
-        await supabase.from('profiles').upsert({
-          id: currentUser.id,
-          role,
-          email,
-          full_name: fullName,
-        })
       }
 
       setProfile({ full_name: fullName, email: email ?? '' })
@@ -170,7 +167,7 @@ export default function StudentPage() {
       books
         .map((book) => ({
           ...book,
-          status: book.available_copies > 0 ? 'Available' : 'All Out',
+          status: 'Digital access',
         }))
         .filter((book) => {
           const lowerQuery = query.toLowerCase()
@@ -252,6 +249,24 @@ export default function StudentPage() {
     }
 
     setRequestingBookId(null)
+  }
+
+  if (loadError) {
+    return (
+      <main className="surface-page flex min-h-screen items-center justify-center px-6 py-12">
+        <section className="surface-card w-full max-w-lg p-8">
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Profile setup required</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="pine-action mt-6 rounded-xl px-4 py-3 text-sm font-semibold"
+          >
+            Try again
+          </button>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -360,8 +375,8 @@ export default function StudentPage() {
                     className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   >
                     <option value="all">All resources</option>
-                    <option value="available">Available now</option>
-                    <option value="all-out">Unavailable</option>
+                    <option value="available">Has physical copies</option>
+                    <option value="all-out">No physical copies</option>
                   </select>
                 </label>
               </form>
@@ -412,8 +427,8 @@ export default function StudentPage() {
                           <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
                           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
                         </div>
-                        <span className={`status-pill rounded-full px-3 py-1 text-xs font-semibold ${book.available_copies > 0 ? 'status-available' : 'status-unavailable'}`}>
-                          {book.available_copies > 0 ? 'Available' : 'Unavailable'}
+                        <span className="status-pill status-available rounded-full px-3 py-1 text-xs font-semibold">
+                          Digital access
                         </span>
                       </div>
                       <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">{book.description}</p>
@@ -433,7 +448,7 @@ export default function StudentPage() {
                       </div>
 
                       <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span>Stock: <strong className="text-slate-800 dark:text-slate-200">{book.available_copies}</strong> of {book.total_copies} copies</span>
+                        <span>Catalog copies: <strong className="text-slate-800 dark:text-slate-200">{book.available_copies}</strong> of {book.total_copies}</span>
                         {book.pdf_url ? (
                           <span className="rounded-md bg-pine-100 px-2 py-0.5 font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">
                             PDF Ready
@@ -445,9 +460,9 @@ export default function StudentPage() {
                         type="button"
                         onClick={() => handleRequestBorrow(book)}
                         className="pine-action mt-5 inline-flex w-full items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
-                        disabled={requestingBookId !== null || book.available_copies <= 0}
+                        disabled={requestingBookId !== null}
                       >
-                        {book.available_copies > 0 ? `Request ${durationDays}-day access` : 'Out of stock'}
+                        {`Request ${durationDays}-day access`}
                       </button>
                     </div>
                   ))

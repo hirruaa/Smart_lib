@@ -110,13 +110,18 @@ export default function AdminPage() {
       return
     }
 
-    const { data: profileData } = await supabase
+    const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('role, email')
       .eq('id', currentUser.id)
       .maybeSingle()
 
-    const role = (profileData?.role ? String(profileData.role).trim().toLowerCase() : (currentUser.user_metadata?.role as string | undefined)?.trim().toLowerCase())
+    if (profileError) {
+      setError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
+      return
+    }
+
+    const role = profileData?.role ? String(profileData.role).trim().toLowerCase() : ''
     const email = profileData?.email ?? currentUser.email
 
     if (role !== 'admin') {
@@ -126,14 +131,6 @@ export default function AdminPage() {
         router.replace('/dashboard')
       }
       return
-    }
-
-    if (!profileData) {
-      await supabase.from('profiles').upsert({
-        id: currentUser.id,
-        role,
-        email,
-      })
     }
 
     setProfile({ email: email ?? '', role })
@@ -225,9 +222,10 @@ export default function AdminPage() {
 
   const handleApprove = async (requestId: number, durationDays: number | null | undefined) => {
     setSaving(true)
+    setError(null)
     const supabase = createClient()
 
-    await supabase
+    const { error } = await supabase
       .from('borrow_requests')
       .update({
         status: 'approved',
@@ -235,8 +233,12 @@ export default function AdminPage() {
       })
       .eq('id', requestId)
 
-    await loadData()
-    setActionMessage('Request approved and inventory updated.')
+    if (error) {
+      setError(error.message)
+    } else {
+      await loadData()
+      setActionMessage('Request approved and digital access enabled.')
+    }
     setSaving(false)
   }
 

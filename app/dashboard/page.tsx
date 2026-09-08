@@ -44,6 +44,10 @@ export default function DashboardPage() {
         .select('role, email, full_name')
         .eq('id', user.id)
         .maybeSingle()
+      if (profileByIdRes.error) {
+        setAuthError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileByIdRes.error.message})`)
+        return
+      }
       const profileById = (profileByIdRes as any).data as { role?: string; email?: string; full_name?: string } | null
 
       const profileByEmail =
@@ -56,7 +60,7 @@ export default function DashboardPage() {
           : null
 
       const profile = profileById ?? profileByEmail
-      const normalizedRole = normalizeRole(profile?.role ?? user.user_metadata?.role)
+      const normalizedRole = normalizeRole(profile?.role)
       let role = normalizedRole
 
       if (!role && user.email) {
@@ -70,24 +74,6 @@ export default function DashboardPage() {
       if (!role) {
         setAuthError('Unable to determine your role. Please contact the administrator or use the app signup flow.')
         return
-      }
-
-      if (profile && normalizeRole(profile.role) !== role) {
-        await supabase.from('profiles').upsert({
-          id: user.id,
-          role,
-          email: user.email,
-          full_name: user.user_metadata?.full_name ?? profile.full_name ?? '',
-        })
-      }
-
-      if (!profile) {
-        await supabase.from('profiles').upsert({
-          id: user.id,
-          role,
-          email: user.email,
-          full_name: user.user_metadata?.full_name ?? '',
-        })
       }
 
       if (role === 'admin') {
