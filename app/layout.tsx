@@ -1,5 +1,6 @@
 import './globals.css'
 import ThemeToggle from '@/components/ThemeToggle'
+import CookieConsent from '@/components/CookieConsent'
 
 export const metadata = {
   title: 'Smart Lib',
@@ -18,6 +19,7 @@ export default function RootLayout({
           <ThemeToggle />
         </div>
         {children}
+        <CookieConsent />
       </body>
     </html>
   )
