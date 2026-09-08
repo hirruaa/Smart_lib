@@ -59,6 +59,7 @@ function HistoryIcon() { return <LineIcon><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6
 function ProfileIcon() { return <LineIcon><circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0" /></LineIcon> }
 function LogoutIcon() { return <LineIcon><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></LineIcon> }
 function MenuIcon() { return <LineIcon><path d="M4 6h16M4 12h16M4 18h16" /></LineIcon> }
+function BellIcon() { return <LineIcon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></LineIcon> }
 
 export default function StudentPage() {
   const router = useRouter()
@@ -356,12 +357,15 @@ export default function StudentPage() {
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || 'student'}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active loans, and manage your requests in one place.</p>
             </div>
-          </div>
-          <div className="student-hero-status mt-6">
-            <div className="student-alert px-4 py-3">
-              <p className="text-slate-500 dark:text-slate-400">Active alerts</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{alertCount}</p>
-            </div>
+            <a
+              href="#notifications"
+              className="student-notification-button"
+              aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'}
+              title="Notifications"
+            >
+              <BellIcon />
+              {alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}
+            </a>
           </div>
         </header>
         <BookAssistant />
@@ -672,7 +676,7 @@ export default function StudentPage() {
               </div>
             </div>
 
-            <div className="side-panel rounded-[2rem] p-6 xl:col-start-2 xl:row-start-1">
+            <div id="notifications" className="side-panel rounded-[2rem] p-6 xl:col-start-2 xl:row-start-1">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Notifications</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
               <ul className="mt-6 space-y-3">

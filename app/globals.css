@@ -360,6 +360,10 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
 .student-account-actions { display: none; }
 .student-hero-status { display: flex; }
 .student-hero-actions { border-radius: 16px; background: rgba(245, 241, 232, .09) !important; }
+.student-notification-button { position: relative; display: grid; width: 44px; height: 44px; place-items: center; flex: 0 0 auto; border: 1px solid rgba(245, 241, 232, .3); border-radius: 12px; background: rgba(245, 241, 232, .09); color: #f5f1e8; transition: background .2s ease, border-color .2s ease; }
+.student-notification-button:hover, .student-notification-button:focus-visible { border-color: rgba(245, 241, 232, .65); background: rgba(245, 241, 232, .17); outline: none; }
+.student-notification-button svg { width: 20px; height: 20px; }
+.student-notification-badge { position: absolute; top: -7px; right: -7px; display: grid; min-width: 20px; height: 20px; place-items: center; border: 2px solid #263f3a; border-radius: 999px; background: #d36d5c; color: #fff8f2; font-size: 10px; font-weight: 700; line-height: 1; }
 .student-alert { border-radius: 12px; background: rgba(0, 0, 0, .14) !important; }
 .student-alert p:first-child { color: #b5c9b8 !important; font-size: 11px; text-transform: uppercase; letter-spacing: .11em; }
 .student-alert p:last-child { color: #f5f1e8 !important; }
