@@ -364,6 +364,11 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
 .student-notification-button:hover, .student-notification-button:focus-visible { border-color: rgba(245, 241, 232, .65); background: rgba(245, 241, 232, .17); outline: none; }
 .student-notification-button svg { width: 20px; height: 20px; }
 .student-notification-badge { position: absolute; top: -7px; right: -7px; display: grid; min-width: 20px; height: 20px; place-items: center; border: 2px solid #263f3a; border-radius: 999px; background: #d36d5c; color: #fff8f2; font-size: 10px; font-weight: 700; line-height: 1; }
+.notification-modal-backdrop { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; background: rgba(24, 43, 39, .45); padding: 20px; }
+.notification-modal { width: min(100%, 520px); max-height: min(680px, calc(100vh - 40px)); overflow-y: auto; border: 1px solid #e2ded4; border-radius: 20px; background: #fcfbf7; padding: 24px; box-shadow: 0 24px 70px rgba(24, 43, 39, .24); }
+.notification-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.notification-modal-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; cursor: pointer; font-size: 21px; line-height: 1; }
+.notification-modal-close:hover, .notification-modal-close:focus-visible { border-color: #78938a; background: #eef3ee; outline: none; }
 .student-alert { border-radius: 12px; background: rgba(0, 0, 0, .14) !important; }
 .student-alert p:first-child { color: #b5c9b8 !important; font-size: 11px; text-transform: uppercase; letter-spacing: .11em; }
 .student-alert p:last-child { color: #f5f1e8 !important; }
@@ -418,6 +423,8 @@ html.dark .student-theme-control button { border-color: #63736a; background: #39
 html.dark .student-sidebar-toggle { border-color: #63736a; background: #39453d; color: #f5f1e8; }
 html.dark .review-modal { border-color: #52645a; background: #263f3a; }
 html.dark .review-modal-close { border-color: #63736a; color: #f5f1e8; }
+html.dark .notification-modal { border-color: #52645a; background: #263f3a; }
+html.dark .notification-modal-close { border-color: #63736a; color: #f5f1e8; }
 html.dark .student-shell .assistant-panel,
 html.dark .student-shell .catalog-panel,
 html.dark .student-shell .loans-panel,

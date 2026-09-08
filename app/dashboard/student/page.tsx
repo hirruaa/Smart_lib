@@ -74,6 +74,7 @@ export default function StudentPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loanActionId, setLoanActionId] = useState<number | null>(null)
@@ -84,6 +85,17 @@ export default function StudentPage() {
   const [reviewBookId, setReviewBookId] = useState<number | null>(null)
   const [reviewRating, setReviewRating] = useState('5')
   const [reviewComment, setReviewComment] = useState('')
+
+  useEffect(() => {
+    if (!notificationsOpen) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNotificationsOpen(false)
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [notificationsOpen])
 
   useEffect(() => {
     const supabase = createClient()
@@ -357,15 +369,16 @@ export default function StudentPage() {
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || 'student'}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active loans, and manage your requests in one place.</p>
             </div>
-            <a
-              href="#notifications"
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen(true)}
               className="student-notification-button"
               aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'}
               title="Notifications"
             >
               <BellIcon />
               {alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}
-            </a>
+            </button>
           </div>
         </header>
         <BookAssistant />
@@ -676,24 +689,34 @@ export default function StudentPage() {
               </div>
             </div>
 
-            <div id="notifications" className="side-panel rounded-[2rem] p-6 xl:col-start-2 xl:row-start-1">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Notifications</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
-              <ul className="mt-6 space-y-3">
-                {borrowRequests.filter((request) => request.status === 'pending' || request.status === 'approved').slice(0, 3).map((request) => {
-                  const dueDate = request.due_date ? new Date(request.due_date) : null
-                  const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null
-                  return <li key={`notification-${request.id}`} className={`${request.status === 'pending' ? 'status-pending' : 'status-approved'} rounded-[1.5rem] border px-4 py-4 text-sm`}>{request.status === 'pending' ? `Your access request for ${request.title ?? 'a resource'} is waiting for approval.` : daysLeft !== null && daysLeft <= 3 ? `${request.title ?? 'Your resource'} expires in ${Math.max(daysLeft, 0)} day${daysLeft === 1 ? '' : 's'}.` : `Digital access is active for ${request.title ?? 'your resource'}.`}</li>
-                })}
-                {borrowRequests.every((request) => request.status !== 'pending' && request.status !== 'approved') ? <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Your borrowing notifications will appear here.</li> : null}
-              </ul>
-              {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>${fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong></div> : null}
-            </div>
           </aside>
         </section>
         </main>
       </div>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {notificationsOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNotificationsOpen(false) }}>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">
+            <div className="notification-modal-header">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Updates</p>
+                <h2 id="notification-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Notifications</h2>
+              </div>
+              <button type="button" className="notification-modal-close" onClick={() => setNotificationsOpen(false)} aria-label="Close notifications">×</button>
+            </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
+            <ul className="mt-6 space-y-3">
+              {borrowRequests.filter((request) => request.status === 'pending' || request.status === 'approved').slice(0, 3).map((request) => {
+                const dueDate = request.due_date ? new Date(request.due_date) : null
+                const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null
+                return <li key={`notification-${request.id}`} className={`${request.status === 'pending' ? 'status-pending' : 'status-approved'} rounded-[1.5rem] border px-4 py-4 text-sm`}>{request.status === 'pending' ? `Your access request for ${request.title ?? 'a resource'} is waiting for approval.` : daysLeft !== null && daysLeft <= 3 ? `${request.title ?? 'Your resource'} expires in ${Math.max(daysLeft, 0)} day${daysLeft === 1 ? '' : 's'}.` : `Digital access is active for ${request.title ?? 'your resource'}.`}</li>
+              })}
+              {borrowRequests.every((request) => request.status !== 'pending' && request.status !== 'approved') ? <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Your borrowing notifications will appear here.</li> : null}
+            </ul>
+            {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>${fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong></div> : null}
+          </section>
+        </div>
+      ) : null}
       {reviewBookId !== null ? (
         <div className="review-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewBookId(null) }}>
           <form className="review-modal" onSubmit={handleReview}>
