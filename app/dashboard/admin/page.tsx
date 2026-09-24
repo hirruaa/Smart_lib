@@ -16,6 +16,7 @@ const navItems = [
   { label: 'Analytics', section: 'analytics' },
   { label: 'Books', section: 'books' },
   { label: 'Requests', section: 'requests' },
+  { label: 'Contributions', section: 'contributions' },
   { label: 'Users', section: 'users' },
   { label: 'Materials', section: 'materials' },
 ]
@@ -28,6 +29,7 @@ type Book = {
   category: string
   description: string | null
   pdf_url: string | null
+  access_points: number
   total_copies: number
   available_copies: number
   created_at: string | null
@@ -65,6 +67,17 @@ type AdminProfile = {
   role: string
 }
 
+type Contribution = {
+  id: number
+  user_id: string
+  title: string
+  author: string
+  description: string | null
+  pdf_url: string | null
+  status: string
+  created_at: string | null
+}
+
 function AdminNavIcon({ section }: { section: string }) {
   const paths: Record<string, React.ReactNode> = {
     overview: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
@@ -85,6 +98,7 @@ export default function AdminPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
+  const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -94,6 +108,7 @@ export default function AdminPage() {
     category: '',
     isbn: '',
     pdf_url: '',
+    access_points: '0',
     total_copies: '1',
     description: '',
   })
@@ -102,7 +117,7 @@ export default function AdminPage() {
   const [newBookFile, setNewBookFile] = useState<File | null>(null)
   const [materialFile, setMaterialFile] = useState<File | null>(null)
   const [bookSearch, setBookSearch] = useState('')
-  const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revoked'>('all')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '' })
@@ -159,10 +174,10 @@ export default function AdminPage() {
 
     setProfile({ email: email ?? '', role })
 
-    const [booksRes, requestsRes, studentsRes] = await Promise.all([
+    const [booksRes, requestsRes, studentsRes, contributionsRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, pdf_url, total_copies, available_copies, created_at')
+        .select('id, title, author, isbn, category, description, pdf_url, access_points, total_copies, available_copies, created_at')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -173,15 +188,20 @@ export default function AdminPage() {
         .select('id, email, role, created_at')
         .eq('role', 'student')
         .order('created_at', { ascending: false }),
+      supabase
+        .from('book_contributions')
+        .select('id, user_id, title, author, description, pdf_url, status, created_at')
+        .order('created_at', { ascending: false }),
     ])
 
-    if (booksRes.error || requestsRes.error || studentsRes.error) {
+    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error) {
       setError('Failed to load admin data.')
     }
 
     setBooks((booksRes.data ?? []) as Book[])
     setRequests((requestsRes.data ?? []) as RequestItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
+    setContributions((contributionsRes.data ?? []) as Contribution[])
   }
 
   useEffect(() => {
@@ -327,6 +347,22 @@ export default function AdminPage() {
     setSaving(false)
   }
 
+  const handleRevoke = async (requestId: number) => {
+    if (!window.confirm('Revoke this approved digital access? The student will lose access immediately.')) return
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const supabase = getSupabase()
+    const { error } = await supabase.rpc('revoke_digital_loan', { request_id: requestId })
+    if (error) {
+      setError(error.message)
+    } else {
+      await loadData()
+      setActionMessage('Digital access revoked.')
+    }
+    setSaving(false)
+  }
+
   const handleRoleChange = async (userId: string, role: 'student' | 'admin') => {
     setSaving(true)
     setError(null)
@@ -345,6 +381,34 @@ export default function AdminPage() {
       await loadData()
     }
 
+    setSaving(false)
+  }
+
+  const handleContributionReview = async (contributionId: number, decision: 'approved' | 'rejected') => {
+    const reward = decision === 'approved' ? Number(window.prompt('Points to award for this contribution?', '25') ?? '25') : 0
+    const accessPoints = decision === 'approved' ? Number(window.prompt('Points charged per 7 days of access?', '0') ?? '0') : 0
+    if (decision === 'approved' && (!Number.isInteger(reward) || reward < 0 || reward > 100)) {
+      setError('Reward must be a whole number between 0 and 100 points.')
+      return
+    }
+    if (decision === 'approved' && (!Number.isInteger(accessPoints) || accessPoints < 0)) {
+      setError('Access cost must be a whole number of 0 or more points.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const { error } = await getSupabase().rpc('admin_review_book_contribution', {
+      contribution_id: contributionId,
+      decision,
+      reward_points: reward,
+      access_points: accessPoints,
+    })
+    if (error) {
+      setError(error.message)
+    } else {
+      setActionMessage(decision === 'approved' ? `Contribution approved and ${reward} points awarded.` : 'Contribution rejected.')
+      await loadData()
+    }
     setSaving(false)
   }
 
@@ -398,6 +462,7 @@ export default function AdminPage() {
         isbn: newBook.isbn || null,
         pdf_url: finalPdfUrl || null,
         description: newBook.description || null,
+        access_points: Number(newBook.access_points) || 0,
         total_copies: Number(newBook.total_copies) || 1,
         available_copies: Number(newBook.total_copies) || 1,
       },
@@ -407,7 +472,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New book added to inventory successfully.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', total_copies: '1', description: '' })
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_points: '0', total_copies: '1', description: '' })
       setNewBookFile(null)
       await loadData()
     }
@@ -637,6 +702,18 @@ export default function AdminPage() {
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Points per 7 days</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newBook.access_points}
+                      onChange={(event) => setNewBook({ ...newBook, access_points: event.target.value })}
+                      required
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Use 0 for free access.</span>
+                  </label>
                 </div>
                 <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">ISBN</span>
@@ -682,7 +759,7 @@ export default function AdminPage() {
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review student borrow requests and approve or reject them.</p>
                 </div>
                 <div className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">
-                  {(['all', 'pending', 'approved', 'rejected'] as const).map((st) => (
+                  {(['all', 'pending', 'approved', 'rejected', 'revoked'] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -736,6 +813,15 @@ export default function AdminPage() {
                                 Reject
                               </button>
                             </div>
+                          ) : request.status === 'approved' && !request.returned_date ? (
+                            <button
+                              type="button"
+                              disabled={saving}
+                              className="rounded-2xl bg-rose-700 px-3 py-2 text-white transition hover:bg-rose-600 disabled:opacity-60"
+                              onClick={() => handleRevoke(request.id)}
+                            >
+                              Revoke access
+                            </button>
                           ) : (
                             <span className="rounded-2xl bg-slate-100 px-3 py-2 text-slate-700 dark:bg-slate-800 dark:text-slate-200">No actions</span>
                           )}
@@ -860,6 +946,35 @@ export default function AdminPage() {
                   {saving ? 'Publishing...' : 'Attach & Publish PDF'}
                 </button>
               </form>
+            </section>
+          )}
+
+          {section === 'contributions' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Community contributions</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review suggested resources and reward useful additions with points.</p>
+              </div>
+              <div className="space-y-3">
+                {contributions.filter((contribution) => contribution.status === 'pending').length > 0 ? contributions.filter((contribution) => contribution.status === 'pending').map((contribution) => (
+                  <article key={contribution.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <h3 className="font-semibold text-slate-900 dark:text-slate-100">{contribution.title}</h3>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {students.find((student) => student.id === contribution.user_id)?.email ?? 'Unknown student'}</p>
+                        {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
+                        {contribution.pdf_url ? <a href={contribution.pdf_url} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'rejected')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-300">Reject</button>
+                        <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'approved')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Approve</button>
+                      </div>
+                    </div>
+                  </article>
+                )) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">No pending contributions.</div>
+                )}
+              </div>
             </section>
           )}
 

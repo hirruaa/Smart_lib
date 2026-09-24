@@ -20,6 +20,7 @@ type Book = {
   isbn: string | null
   total_copies: number
   available_copies: number
+  access_points: number
   pdf_url?: string | null
 }
 
@@ -41,6 +42,7 @@ type BorrowRequest = {
 type UserProfile = {
   full_name?: string
   email: string
+  points_balance: number
 }
 
 type Fine = { id: number; amount: number; status: string; created_at: string | null }
@@ -72,6 +74,7 @@ export default function StudentPage() {
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -85,6 +88,10 @@ export default function StudentPage() {
   const [reviewBookId, setReviewBookId] = useState<number | null>(null)
   const [reviewRating, setReviewRating] = useState('5')
   const [reviewComment, setReviewComment] = useState('')
+  const [contributionOpen, setContributionOpen] = useState(false)
+  const [contributionSubmitting, setContributionSubmitting] = useState(false)
+  const [contributionStatus, setContributionStatus] = useState<string | null>(null)
+  const [contributionForm, setContributionForm] = useState({ title: '', author: '', description: '', pdfUrl: '' })
 
   useEffect(() => {
     if (!notificationsOpen) return
@@ -114,7 +121,7 @@ export default function StudentPage() {
 
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('role, email, full_name')
+        .select('role, email, full_name, points_balance')
         .eq('id', currentUser.id)
         .maybeSingle()
 
@@ -136,13 +143,13 @@ export default function StudentPage() {
         return
       }
 
-      setProfile({ full_name: fullName, email: email ?? '' })
+      setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0 })
       setUserId(currentUser.id)
 
       const [booksResult, requestsResult, wishlistResult, finesResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, total_copies, available_copies, pdf_url')
+          .select('id, title, author, category, description, isbn, total_copies, available_copies, access_points, pdf_url')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -162,6 +169,7 @@ export default function StudentPage() {
         isbn: book.isbn ?? null,
         total_copies: book.total_copies ?? 0,
         available_copies: book.available_copies ?? 0,
+        access_points: book.access_points ?? 0,
         pdf_url: book.pdf_url ?? null,
       }))
 
@@ -228,10 +236,10 @@ export default function StudentPage() {
   const readingHistory = useMemo(
     () =>
       borrowRequests
-        .filter((request) => request.status === 'returned' || request.status === 'rejected')
+        .filter((request) => request.status === 'returned' || request.status === 'revoked' || request.status === 'rejected')
         .map((request) => ({
           title: request.title ?? `Book #${request.book_id}`,
-          action: request.status === 'returned' ? 'Returned' : 'Rejected',
+          action: request.status === 'returned' ? 'Returned' : request.status === 'revoked' ? 'Revoked' : 'Rejected',
           date: request.request_date ? new Date(request.request_date).toLocaleDateString() : 'N/A',
         })),
     [borrowRequests]
@@ -250,7 +258,9 @@ export default function StudentPage() {
     router.replace('/login')
   }
 
-  const handleRequestBorrow = async (book: Book) => {
+  const submitAccessRequest = async () => {
+    if (!selectedBook) return
+    const book = selectedBook
     if (!userId) return
     setRequestingBookId(book.id)
     setRequestStatus(null)
@@ -266,6 +276,8 @@ export default function StudentPage() {
       setRequestStatus(data.error || 'Something went wrong while requesting digital access.')
     } else {
       setRequestStatus(`Digital access requested for ${book.title} for ${durationDays} days.`)
+      const pointsCost = Math.ceil(Number(durationDays) / 7) * book.access_points
+      setProfile((current) => current ? { ...current, points_balance: current.points_balance - pointsCost } : current)
       const supabase = getSupabase()
       const { data: requestsResult } = await supabase
         .from('borrow_requests')
@@ -279,6 +291,7 @@ export default function StudentPage() {
     }
 
     setRequestingBookId(null)
+    setSelectedBook(null)
   }
 
   const handleLoanAction = async (loanId: number, action: 'renew' | 'return') => {
@@ -318,6 +331,25 @@ export default function StudentPage() {
       setReviewBookId(null)
       setReviewComment('')
     }
+  }
+
+  const handleContributionSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setContributionSubmitting(true)
+    setContributionStatus(null)
+    const { error } = await getSupabase().rpc('submit_book_contribution', {
+      p_title: contributionForm.title,
+      p_author: contributionForm.author,
+      p_description: contributionForm.description || null,
+      p_pdf_url: contributionForm.pdfUrl || null,
+    })
+    if (error) {
+      setContributionStatus(error.message)
+    } else {
+      setContributionStatus('Resource submitted for review. Points are awarded only after administrator approval.')
+      setContributionForm({ title: '', author: '', description: '', pdfUrl: '' })
+    }
+    setContributionSubmitting(false)
   }
 
   if (loadError) {
@@ -367,7 +399,7 @@ export default function StudentPage() {
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-celadon">Student Dashboard</p>
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || 'student'}</h1>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active loans, and manage your requests in one place.</p>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active access, and manage your requests in one place.</p>
             </div>
             <button
               type="button"
@@ -387,7 +419,7 @@ export default function StudentPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Active Digital Loans
+              Active Access
             </span>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
@@ -453,6 +485,7 @@ export default function StudentPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Discover resources and request temporary digital access.</p>
+                  <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true) }} className="secondary-action mt-4 rounded-xl border px-3 py-2 text-xs font-semibold">Suggest a resource</button>
                 </div>
                 <form
                 onSubmit={(event) => {
@@ -525,17 +558,7 @@ export default function StudentPage() {
                 ))}
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-                <label className="block max-w-xs rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label text-[11px] font-semibold uppercase tracking-[0.2em]">Access Period</span>
-                  <select
-                    value={durationDays}
-                    onChange={(event) => setDurationDays(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    {[7, 14, 30, 45, 60, 90].map((days) => <option key={days} value={days}>{days} days access</option>)}
-                  </select>
-                </label>
+              <div className="mt-4 flex items-center justify-end">
                 <div className="text-xs text-slate-500 dark:text-slate-400">
                   Showing <span className="font-bold text-slate-900 dark:text-slate-100">{filteredBooks.length}</span> of {books.length} volumes
                 </div>
@@ -582,11 +605,15 @@ export default function StudentPage() {
 
                       <button
                         type="button"
-                        onClick={() => handleRequestBorrow(book)}
+                        onClick={() => {
+                          setDurationDays('30')
+                          setSelectedBook(book)
+                          setRequestStatus(null)
+                        }}
                         className="pine-action mt-5 inline-flex w-full items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={requestingBookId !== null}
                       >
-                        {`Request ${durationDays}-day access`}
+                        Request access
                       </button>
                       <div className="mt-3 flex gap-2">
                         <button type="button" onClick={() => void handleWishlist(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">
@@ -614,7 +641,7 @@ export default function StudentPage() {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">My books & active access</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Currently borrowed books, remaining reading time, and direct reader access.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Books you can currently read, remaining access time, and direct reader access.</p>
                 </div>
                 <span className="rounded-full bg-slate-100 px-3.5 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{activeLoans.length} active</span>
               </div>
@@ -716,7 +743,7 @@ export default function StudentPage() {
                         <span className={`status-pill rounded-full px-3 py-1 text-xs font-semibold ${
                           request.status === 'approved'
                             ? 'status-approved'
-                            : request.status === 'rejected'
+                            : request.status === 'rejected' || request.status === 'revoked'
                             ? 'status-rejected'
                             : 'status-pending'
                         }`}>
@@ -756,6 +783,78 @@ export default function StudentPage() {
         </section>
         </main>
       </div>
+      {selectedBook ? (
+        <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedBook(null) }}>
+          <section className="access-modal" role="dialog" aria-modal="true" aria-labelledby="access-modal-title">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Request access</p>
+                <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Choose how long you need this digital resource.</p>
+              </div>
+              <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              {[7, 14, 30, 45, 60, 90].map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => setDurationDays(String(days))}
+                  className={`rounded-2xl border px-4 py-3 text-left transition ${durationDays === String(days) ? 'border-forest-900 bg-forest-900 text-paper-100 dark:border-paper-100 dark:bg-paper-100 dark:text-forest-900' : 'border-paper-300 bg-paper-50 text-slate-700 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100'}`}
+                >
+                  <span className="block text-sm font-semibold">{days} days</span>
+                  <span className={`mt-1 block text-xs ${durationDays === String(days) ? 'text-paper-100/75 dark:text-forest-900/70' : 'text-slate-500 dark:text-slate-300'}`}>Temporary digital access</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
+                <span className="font-semibold text-pine-700 dark:text-pine-200">
+                  {Math.ceil(Number(durationDays) / 7) * selectedBook.access_points === 0 ? 'Free access' : `${Math.ceil(Number(durationDays) / 7) * selectedBook.access_points} points`}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access costs are set by the library and increase with longer periods.</p>
+              {Math.ceil(Number(durationDays) / 7) * selectedBook.access_points > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need more points to choose this access period.</p> : null}
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || Math.ceil(Number(durationDays) / 7) * selectedBook.access_points > (profile?.points_balance ?? 0)} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Requesting...' : `Request ${durationDays}-day access`}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {contributionOpen ? (
+        <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setContributionOpen(false) }}>
+          <section className="access-modal" role="dialog" aria-modal="true" aria-labelledby="contribution-modal-title">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Community library</p>
+                <h2 id="contribution-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Suggest a resource</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">An administrator reviews every submission before it enters the catalog.</p>
+              </div>
+              <button type="button" onClick={() => setContributionOpen(false)} className="notification-modal-close" aria-label="Close resource form">×</button>
+            </div>
+            <form onSubmit={handleContributionSubmit} className="mt-6 space-y-4">
+              <input required value={contributionForm.title} onChange={(event) => setContributionForm({ ...contributionForm, title: event.target.value })} placeholder="Book title" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
+              <input required value={contributionForm.author} onChange={(event) => setContributionForm({ ...contributionForm, author: event.target.value })} placeholder="Author" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
+              <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Why is this useful for the library?" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
+              <input type="url" value={contributionForm.pdfUrl} onChange={(event) => setContributionForm({ ...contributionForm, pdfUrl: event.target.value })} placeholder="Optional public PDF URL" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. Do not submit copyrighted material unless the library has permission to store and share it.</p>
+              {contributionStatus ? <p className="rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm text-slate-700 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100">{contributionStatus}</p> : null}
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button type="button" onClick={() => setContributionOpen(false)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
+                <button type="submit" disabled={contributionSubmitting} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{contributionSubmitting ? 'Submitting...' : 'Submit for review'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       {notificationsOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNotificationsOpen(false) }}>
