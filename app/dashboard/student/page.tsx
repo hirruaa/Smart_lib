@@ -383,6 +383,69 @@ export default function StudentPage() {
         </header>
         <BookAssistant />
 
+        {/* Student Personal Study Analytics Strip */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Active Digital Loans
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                {activeLoans.length}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">/ 3 max allowed</span>
+            </div>
+            <p className="mt-1 text-xs text-pine-600 dark:text-pine-300">
+              {3 - activeLoans.length} slots available
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Reading History
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                {borrowRequests.filter((r) => r.status === 'returned').length}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">books completed</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              {borrowRequests.length} lifetime requests
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Saved to Wishlist
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                {wishlistIds.size}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">books</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Resources saved for later
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Outstanding Fines
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                ${fines.reduce((sum, f) => sum + Number(f.amount), 0).toFixed(2)}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">balance</span>
+            </div>
+            <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+              {fines.length === 0 ? 'Account in good standing' : `${fines.length} unpaid fine(s)`}
+            </p>
+          </div>
+        </div>
+
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-6">
             <div id="explore" className="catalog-panel rounded-[2rem] p-6 lg:p-8">

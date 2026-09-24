@@ -531,5 +531,43 @@ revoke insert on public.borrow_requests from anon, authenticated;
 revoke all on public.email_queue from anon, authenticated;
 revoke all on function public.calculate_overdue_fines(numeric) from public;
 
+-- Storage bucket configuration for e-books
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'ebooks',
+  'ebooks',
+  false,
+  52428800, -- 50 MB limit
+  array['application/pdf']
+)
+on conflict (id) do update set
+  public = false,
+  file_size_limit = 52428800,
+  allowed_mime_types = array['application/pdf'];
+
+drop policy if exists "Admin manage ebooks storage" on storage.objects;
+create policy "Admin manage ebooks storage" on storage.objects
+for all to authenticated
+using (bucket_id = 'ebooks' and public.is_admin())
+with check (bucket_id = 'ebooks' and public.is_admin());
+
+drop policy if exists "Student read approved loan ebooks" on storage.objects;
+create policy "Student read approved loan ebooks" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'ebooks' and (
+    public.is_admin() or
+    exists (
+      select 1 from public.books b
+      join public.borrow_requests br on br.book_id = b.id
+      where (b.pdf_url = name or b.pdf_url like '%' || name)
+        and br.student_id = auth.uid()
+        and br.status = 'approved'
+        and br.returned_date is null
+        and br.due_date > now()
+    )
+  )
+);
+
 -- After creating your first account, promote it manually from the SQL editor:
 -- update public.profiles set role = 'admin' where email = 'your-admin-email@example.com';

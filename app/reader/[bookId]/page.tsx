@@ -37,6 +37,29 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Resource unavailable</h1><p className="mt-2">This resource does not have a readable digital file yet.</p></div></div>
   }
 
+  // If the book is stored in Supabase storage, generate a secure signed URL
+  let resolvedPdfUrl = book.pdf_url
+  if (!resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) {
+    const cleanPath = resolvedPdfUrl.replace(/^ebooks\//, '')
+    const { data: signedData, error: signError } = await supabase.storage
+      .from('ebooks')
+      .createSignedUrl(cleanPath, 7200)
+
+    if (signError || !signedData?.signedUrl) {
+      return (
+        <div className="surface-page min-h-screen p-8">
+          <div className="surface-card mx-auto max-w-xl p-8">
+            <h1 className="text-2xl font-semibold">Unable to load document</h1>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              There was an issue retrieving the secure reading file. Please notify a library administrator.
+            </p>
+          </div>
+        </div>
+      )
+    }
+    resolvedPdfUrl = signedData.signedUrl
+  }
+
   return (
     <div className="min-h-screen bg-paper-100 px-4 py-6 text-slate-900 dark:bg-forest-900 dark:text-paper-100 sm:px-8">
       <div className="mx-auto max-w-7xl">
@@ -46,7 +69,7 @@ export default async function Page({ params }: Props) {
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">{book.title}</h1>
           </div>
         </div>
-        <EReader bookId={Number(params.bookId)} pdfUrl={book.pdf_url} />
+        <EReader bookId={Number(params.bookId)} pdfUrl={resolvedPdfUrl} />
       </div>
     </div>
   )

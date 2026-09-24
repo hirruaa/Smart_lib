@@ -2,8 +2,14 @@ import './globals.css'
 import CookieConsent from '@/components/CookieConsent'
 
 export const metadata = {
-  title: 'Smart Lib',
-  description: 'Smart Lib dashboard and authentication',
+  title: {
+    default: 'Smart Lib | Academic Digital Library & Study Workspace',
+    template: '%s | Smart Lib',
+  },
+  description: 'Smart Lib - Role-based academic digital library, e-book lending, study notes, and research assistant.',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export default function RootLayout({

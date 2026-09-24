@@ -6,9 +6,14 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import ThemeToggle from '@/components/ThemeToggle'
+import BrandLogo from '@/components/BrandLogo'
+import EbookUploader from '@/components/EbookUploader'
+import AdminAnalytics from '@/components/AdminAnalytics'
+import { uploadEbookFile } from '@/utils/storage'
 
 const navItems = [
   { label: 'Overview', section: 'overview' },
+  { label: 'Analytics', section: 'analytics' },
   { label: 'Books', section: 'books' },
   { label: 'Requests', section: 'requests' },
   { label: 'Users', section: 'users' },
@@ -63,6 +68,7 @@ type AdminProfile = {
 function AdminNavIcon({ section }: { section: string }) {
   const paths: Record<string, React.ReactNode> = {
     overview: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
+    analytics: <><path d="M18 20V10M12 20V4M6 20v-6" /></>,
     books: <><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v17H7.5A2.5 2.5 0 0 0 5 22V5.5Z" /><path d="M5 20.5A2.5 2.5 0 0 1 7.5 18H19M9 7h6M9 10h4" /></>,
     requests: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 12h6M9 16h4" /></>,
     users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
@@ -93,6 +99,8 @@ export default function AdminPage() {
   })
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
+  const [newBookFile, setNewBookFile] = useState<File | null>(null)
+  const [materialFile, setMaterialFile] = useState<File | null>(null)
   const [bookSearch, setBookSearch] = useState('')
   const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -230,6 +238,55 @@ export default function AdminPage() {
     }
   })
 
+  const categoryStats = useMemo(() => {
+    const counts: Record<string, number> = {}
+    books.forEach((b) => {
+      const cat = b.category?.trim() || 'Uncategorized'
+      counts[cat] = (counts[cat] || 0) + 1
+    })
+    return Object.entries(counts)
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [books])
+
+  const monthlyStats = useMemo(() => {
+    // Group requests by month
+    const monthsMap: Record<string, { requests: number; approved: number }> = {}
+    const monthsList: string[] = []
+
+    // Last 6 months
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date()
+      d.setMonth(d.getMonth() - i)
+      const label = d.toLocaleString('default', { month: 'short' })
+      monthsMap[label] = { requests: 0, approved: 0 }
+      monthsList.push(label)
+    }
+
+    requests.forEach((r) => {
+      if (r.request_date) {
+        const d = new Date(r.request_date)
+        const label = d.toLocaleString('default', { month: 'short' })
+        if (monthsMap[label]) {
+          monthsMap[label].requests += 1
+          if (r.status === 'approved') {
+            monthsMap[label].approved += 1
+          }
+        }
+      }
+    })
+
+    return monthsList.map((label) => ({
+      label,
+      requests: monthsMap[label].requests,
+      approved: monthsMap[label].approved,
+    }))
+  }, [requests])
+
+  const storageCount = useMemo(() => {
+    return books.filter((b) => b.pdf_url && !b.pdf_url.startsWith('http://') && !b.pdf_url.startsWith('https://')).length
+  }, [books])
+
   const handleLogout = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
@@ -319,13 +376,27 @@ export default function AdminPage() {
     setError(null)
 
     const supabase = createClient()
+    let finalPdfUrl = newBook.pdf_url.trim()
+
+    // If admin selected a PDF file to upload to Supabase Storage
+    if (newBookFile) {
+      setActionMessage('Uploading e-book to Supabase Storage...')
+      const uploadResult = await uploadEbookFile(supabase, newBookFile, newBook.title.slice(0, 15))
+      if (uploadResult.error) {
+        setError(`Upload failed: ${uploadResult.error}`)
+        setSaving(false)
+        return
+      }
+      finalPdfUrl = uploadResult.path
+    }
+
     const { error } = await supabase.from('books').insert([
       {
         title: newBook.title,
         author: newBook.author,
         category: newBook.category,
         isbn: newBook.isbn || null,
-        pdf_url: newBook.pdf_url || null,
+        pdf_url: finalPdfUrl || null,
         description: newBook.description || null,
         total_copies: Number(newBook.total_copies) || 1,
         available_copies: Number(newBook.total_copies) || 1,
@@ -335,8 +406,9 @@ export default function AdminPage() {
     if (error) {
       setError(error.message)
     } else {
-      setActionMessage('New book added to inventory.')
+      setActionMessage('New book added to inventory successfully.')
       setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', total_copies: '1', description: '' })
+      setNewBookFile(null)
       await loadData()
     }
 
@@ -433,6 +505,25 @@ export default function AdminPage() {
               {actionMessage}
             </div>
           ) : null}
+
+          {section === 'analytics' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track borrowing velocity, inventory health, fulfillment rates, and storage utilization.</p>
+              </div>
+              <AdminAnalytics
+                totalBooks={books.length}
+                totalStudents={students.length}
+                totalRequests={requests.length}
+                totalLoansActive={requests.filter((r) => r.status === 'approved' && !r.returned_date).length}
+                totalReturned={requests.filter((r) => r.status === 'returned').length}
+                categoryStats={categoryStats}
+                monthlyStats={monthlyStats}
+                storageCount={storageCount}
+              />
+            </section>
+          )}
 
           {section === 'books' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
@@ -555,15 +646,14 @@ export default function AdminPage() {
                     className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   />
                 </label>
-                <label className="mt-4 block">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">PDF URL</span>
-                  <input
-                    value={newBook.pdf_url}
-                    onChange={(event) => setNewBook({ ...newBook, pdf_url: event.target.value })}
-                    className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                    placeholder="https://..."
+                <div className="mt-4">
+                  <EbookUploader
+                    onFileSelected={(file) => setNewBookFile(file)}
+                    onUrlEntered={(url) => setNewBook((prev) => ({ ...prev, pdf_url: url }))}
+                    currentValue={newBook.pdf_url}
+                    disabled={saving}
                   />
-                </label>
+                </div>
                 <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Description</span>
                   <textarea
@@ -701,27 +791,41 @@ export default function AdminPage() {
               <form
                 onSubmit={async (event) => {
                   event.preventDefault()
-                  if (!pdfBookId || !pdfUrl) {
-                    setError('Please select a book and provide a PDF URL.')
+                  if (!pdfBookId || (!pdfUrl && !materialFile)) {
+                    setError('Please select a book and either upload a PDF file or provide a URL.')
                     return
                   }
                   setSaving(true)
                   setError(null)
                   const supabase = createClient()
-                  const { error } = await supabase.from('books').update({ pdf_url: pdfUrl }).eq('id', pdfBookId)
+
+                  let finalUrl = pdfUrl.trim()
+                  if (materialFile) {
+                    setActionMessage('Uploading e-book to Supabase Storage...')
+                    const uploadResult = await uploadEbookFile(supabase, materialFile, pdfBookId)
+                    if (uploadResult.error) {
+                      setError(`Upload failed: ${uploadResult.error}`)
+                      setSaving(false)
+                      return
+                    }
+                    finalUrl = uploadResult.path
+                  }
+
+                  const { error } = await supabase.from('books').update({ pdf_url: finalUrl }).eq('id', pdfBookId)
                   if (error) {
                     setError(error.message)
                   } else {
-                    setActionMessage('PDF URL published successfully.')
+                    setActionMessage('PDF attached to book successfully.')
                     setPdfBookId(null)
                     setPdfUrl('')
+                    setMaterialFile(null)
                     await loadData()
                   }
                   setSaving(false)
                 }}
                 className="mt-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6 dark:border-slate-700 dark:bg-slate-800/60"
               >
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-4">
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Select book</span>
                     <select
@@ -733,28 +837,27 @@ export default function AdminPage() {
                       <option value="">Select a book</option>
                       {books.map((book) => (
                         <option key={book.id} value={book.id}>
-                          {book.title}
+                          {book.title} ({book.author})
                         </option>
                       ))}
                     </select>
                   </label>
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">PDF URL</span>
-                    <input
-                      value={pdfUrl}
-                      onChange={(event) => setPdfUrl(event.target.value)}
-                      required
-                      placeholder="https://..."
-                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+
+                  <div>
+                    <EbookUploader
+                      onFileSelected={(file) => setMaterialFile(file)}
+                      onUrlEntered={(url) => setPdfUrl(url)}
+                      currentValue={pdfUrl}
+                      disabled={saving}
                     />
-                  </label>
+                  </div>
                 </div>
                 <button
                   type="submit"
                   disabled={saving}
                   className="mt-6 inline-flex w-full items-center justify-center rounded-3xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
                 >
-                  {saving ? 'Publishing...' : 'Publish PDF'}
+                  {saving ? 'Publishing...' : 'Attach & Publish PDF'}
                 </button>
               </form>
             </section>
