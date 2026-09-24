@@ -1,8 +1,8 @@
-﻿'use client'
+'use client'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 
 function normalizeRole(value: unknown): 'admin' | 'student' | null {
   const raw = String(value ?? '').trim().toLowerCase()
@@ -17,7 +17,7 @@ export default function DashboardPage() {
   const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     async function checkAuth() {
       let {

@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
 import EbookUploader from '@/components/EbookUploader'
@@ -111,7 +111,7 @@ export default function AdminPage() {
     if (!confirm(`Are you sure you want to remove "${title}" from the catalog?`)) return
     setSaving(true)
     setError(null)
-    const supabase = createClient()
+    const supabase = getSupabase()
     const { error: delError } = await supabase.from('books').delete().eq('id', bookId)
     if (delError) {
       setError(delError.message)
@@ -125,7 +125,7 @@ export default function AdminPage() {
   const loadData = async () => {
     setError(null)
     setActionMessage(null)
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     const { data: { user }, error } = await supabase.auth.getUser()
     const currentUser = user
@@ -288,7 +288,7 @@ export default function AdminPage() {
   }, [books])
 
   const handleLogout = async () => {
-    const supabase = createClient()
+    const supabase = getSupabase()
     await supabase.auth.signOut()
     router.replace('/login')
   }
@@ -296,7 +296,7 @@ export default function AdminPage() {
   const handleApprove = async (requestId: number, durationDays: number | null | undefined) => {
     setSaving(true)
     setError(null)
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     const { error } = await supabase.rpc('admin_decide_borrow_request', {
       request_id: requestId,
@@ -314,7 +314,7 @@ export default function AdminPage() {
 
   const handleReject = async (requestId: number) => {
     setSaving(true)
-    const supabase = createClient()
+    const supabase = getSupabase()
     const { error } = await supabase.rpc('admin_decide_borrow_request', {
       request_id: requestId,
       decision: 'rejected',
@@ -332,7 +332,7 @@ export default function AdminPage() {
     setError(null)
     setActionMessage(null)
 
-    const supabase = createClient()
+    const supabase = getSupabase()
     const { error } = await supabase.rpc('admin_set_profile_role', {
       target_user_id: userId,
       new_role: role,
@@ -375,7 +375,7 @@ export default function AdminPage() {
     setActionMessage(null)
     setError(null)
 
-    const supabase = createClient()
+    const supabase = getSupabase()
     let finalPdfUrl = newBook.pdf_url.trim()
 
     // If admin selected a PDF file to upload to Supabase Storage
@@ -797,7 +797,7 @@ export default function AdminPage() {
                   }
                   setSaving(true)
                   setError(null)
-                  const supabase = createClient()
+                  const supabase = getSupabase()
 
                   let finalUrl = pdfUrl.trim()
                   if (materialFile) {

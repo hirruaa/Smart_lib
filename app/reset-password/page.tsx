@@ -3,7 +3,7 @@
 import { FormEvent, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 
 export default function ResetPasswordPage() {
@@ -16,7 +16,7 @@ export default function ResetPasswordPage() {
   const [hasSession, setHasSession] = useState<boolean | null>(null)
 
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = getSupabase()
     supabase.auth.getSession().then(({ data: { session } }) => {
       setHasSession(!!session)
     })
@@ -38,7 +38,7 @@ export default function ResetPasswordPage() {
     }
 
     setIsSubmitting(true)
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     try {
       const { error } = await supabase.auth.updateUser({

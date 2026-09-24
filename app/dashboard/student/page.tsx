@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 import dynamicImport from 'next/dynamic'
 import ProfileModal from '@/components/ProfileModal'
 import ThemeToggle from '@/components/ThemeToggle'
@@ -98,7 +98,7 @@ export default function StudentPage() {
   }, [notificationsOpen])
 
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     async function loadData() {
       const {
@@ -245,7 +245,7 @@ export default function StudentPage() {
   }).length
 
   const handleLogout = async () => {
-    const supabase = createClient()
+    const supabase = getSupabase()
     await supabase.auth.signOut()
     router.replace('/login')
   }
@@ -266,7 +266,7 @@ export default function StudentPage() {
       setRequestStatus(data.error || 'Something went wrong while requesting digital access.')
     } else {
       setRequestStatus(`Digital access requested for ${book.title} for ${durationDays} days.`)
-      const supabase = createClient()
+      const supabase = getSupabase()
       const { data: requestsResult } = await supabase
         .from('borrow_requests')
         .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days, renewal_count')
@@ -284,7 +284,7 @@ export default function StudentPage() {
   const handleLoanAction = async (loanId: number, action: 'renew' | 'return') => {
     setLoanActionId(loanId)
     setRequestStatus(null)
-    const supabase = createClient()
+    const supabase = getSupabase()
     const rpc = action === 'renew' ? 'renew_digital_loan' : 'return_digital_loan'
     const params = action === 'renew' ? { request_id: loanId, extension_days: 14 } : { request_id: loanId }
     const { data, error } = await supabase.rpc(rpc, params)
@@ -299,7 +299,7 @@ export default function StudentPage() {
 
   const handleWishlist = async (bookId: number) => {
     if (!userId) return
-    const supabase = createClient()
+    const supabase = getSupabase()
     if (wishlistIds.has(bookId)) {
       const { error } = await supabase.from('wishlists').delete().eq('book_id', bookId).eq('student_id', userId)
       if (!error) setWishlistIds((current) => { const next = new Set(current); next.delete(bookId); return next })
@@ -312,7 +312,7 @@ export default function StudentPage() {
   const handleReview = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!userId || reviewBookId === null) return
-    const { error } = await createClient().from('reviews').upsert({ book_id: reviewBookId, student_id: userId, rating: Number(reviewRating), comment: reviewComment.trim() || null }, { onConflict: 'book_id,student_id' })
+    const { error } = await getSupabase().from('reviews').upsert({ book_id: reviewBookId, student_id: userId, rating: Number(reviewRating), comment: reviewComment.trim() || null }, { onConflict: 'book_id,student_id' })
     setRequestStatus(error ? error.message : 'Your review was saved.')
     if (!error) {
       setReviewBookId(null)

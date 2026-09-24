@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -12,7 +12,7 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     const loadProfile = async () => {
       const {
@@ -49,7 +49,7 @@ export default function ProfilePage() {
     setMessage(null)
     setError(null)
 
-    const supabase = createClient()
+    const supabase = getSupabase()
     const {
       data: { user },
       error,

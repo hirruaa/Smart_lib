@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 
 type AuthMode = 'login' | 'signup' | 'forgot'
@@ -28,7 +28,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
     setSuccessMsg('')
     setIsSubmitting(true)
 
-    const supabase = createClient()
+    const supabase = getSupabase()
 
     try {
       if (mode === 'signup') {

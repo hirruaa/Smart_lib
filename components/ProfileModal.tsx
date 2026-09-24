@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { getSupabase } from '@/utils/supabase/client'
 
 type ProfileModalProps = {
   open: boolean
@@ -20,7 +20,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
     if (!open) return
 
     const loadProfile = async () => {
-      const supabase = createClient()
+      const supabase = getSupabase()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
@@ -48,7 +48,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
     setMessage(null)
     setError(null)
 
-    const supabase = createClient()
+    const supabase = getSupabase()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       setError('Your session has expired. Please sign in again.')
