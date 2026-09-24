@@ -369,6 +369,20 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
 .notification-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .notification-modal-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; cursor: pointer; font-size: 21px; line-height: 1; }
 .notification-modal-close:hover, .notification-modal-close:focus-visible { border-color: #78938a; background: #eef3ee; outline: none; }
+.reader-workspace { min-height: calc(100vh - 13rem); }
+.reader-page-layer { position: relative; min-height: 420px; align-items: flex-start; }
+.reader-drawing-canvas { position: absolute; top: 0; left: 50%; z-index: 2; pointer-events: none; transform: translateX(-50%); }
+.reader-drawing-canvas-active { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.reader-draw-button { border: 1px solid #e2ded4; border-radius: 10px; background: #f7f4ed; padding: 8px 10px; color: #52635c; font-size: 12px; font-weight: 700; }
+.reader-draw-button:hover, .reader-draw-button:focus-visible, .reader-draw-button-active { border-color: #78938a; background: #dde5de; color: #263f3a; outline: none; }
+.reader-draw-button:disabled { cursor: not-allowed; opacity: .4; }
+.reader-tool-button { border: 1px solid #b9cec0; border-radius: 10px; background: #263f3a; padding: 8px 11px; color: #f5f1e8; font-size: 12px; font-weight: 700; }
+.reader-tool-button:hover, .reader-tool-button:focus-visible { background: #78938a; color: #182b27; outline: none; }
+.reader-tool-button-muted { border-color: #e2ded4; background: transparent; color: #52635c; }
+.study-panel-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; background: rgba(24, 43, 39, .5); padding: 20px; }
+.study-panel-modal { width: min(100%, 680px); max-height: min(820px, calc(100vh - 40px)); overflow-y: auto; border: 1px solid #e2ded4; border-radius: 24px; background: #fcfbf7; padding: 26px; box-shadow: 0 24px 70px rgba(24, 43, 39, .26); }
+.study-panel-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; cursor: pointer; font-size: 21px; line-height: 1; }
+.study-panel-close:hover, .study-panel-close:focus-visible { border-color: #78938a; background: #eef3ee; outline: none; }
 .access-modal-backdrop { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; background: rgba(24, 43, 39, .45); padding: 20px; }
 .access-modal { width: min(100%, 560px); max-height: min(760px, calc(100vh - 40px)); overflow-y: auto; border: 1px solid #e2ded4; border-radius: 22px; background: #fcfbf7; padding: 26px; box-shadow: 0 24px 70px rgba(24, 43, 39, .24); }
 .access-modal button:focus-visible { outline: 3px solid #b9cec0; outline-offset: 2px; }
@@ -429,6 +443,11 @@ html.dark .review-modal { border-color: #52645a; background: #263f3a; }
 html.dark .review-modal-close { border-color: #63736a; color: #f5f1e8; }
 html.dark .notification-modal { border-color: #52645a; background: #263f3a; }
 html.dark .notification-modal-close { border-color: #63736a; color: #f5f1e8; }
+html.dark .reader-tool-button-muted { border-color: #52645a; color: #b5c9b8; }
+html.dark .reader-draw-button { border-color: #52645a; background: #33443c; color: #dce7df; }
+html.dark .reader-draw-button:hover, html.dark .reader-draw-button:focus-visible, html.dark .reader-draw-button-active { border-color: #78938a; background: #405b50; color: #f5f1e8; }
+html.dark .study-panel-modal { border-color: #52645a; background: #263f3a; }
+html.dark .study-panel-close { border-color: #63736a; color: #f5f1e8; }
 html.dark .access-modal { border-color: #52645a; background: #263f3a; }
 html.dark .access-modal .secondary-action { border-color: #52645a; color: #b5c9b8 !important; }
 html.dark .student-shell .assistant-panel,
