@@ -856,8 +856,8 @@ export default function AdminPage() {
                         <tr key={material.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
                           <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{material.title}</td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                            <a href={material.resource_url ?? '#'} target="_blank" rel="noreferrer" className="text-sky-600 hover:text-sky-500 dark:text-sky-300">
-                              Open PDF
+                            <a href={`/reader/${material.id}`} className="text-sky-600 hover:text-sky-500 dark:text-sky-300">
+                              Open reader
                             </a>
                           </td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{material.created_at ? new Date(material.created_at).toLocaleDateString() : 'Unknown'}</td>
