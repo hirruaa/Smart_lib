@@ -151,6 +151,9 @@ html.dark .secondary-action { border-color: #52645a; color: #b5c9b8; }
 .admin-sidebar-collapsed .admin-sidebar nav span,
 .admin-sidebar-collapsed .admin-sidebar-footer span { display: none; }
 .admin-nav-button { display: flex; align-items: center; gap: 12px; }
+.admin-nav-groups { display: grid; gap: 18px; }
+.admin-nav-group { display: grid; gap: 6px; }
+.admin-nav-group-label { margin: 0 10px 2px; color: #9b9b91; font-size: 10px; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; }
 .admin-nav-icon { display: inline-grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: #eef3ee; color: #526f65; }
 .admin-nav-icon svg { width: 16px; height: 16px; }
 .admin-sidebar-collapsed .admin-sidebar nav .admin-nav-icon { display: inline-grid; width: 22px; height: 22px; }
@@ -179,6 +182,7 @@ html.dark .admin-sidebar nav button { color: #dce7df; }
 html.dark .admin-sidebar nav button:hover, html.dark .admin-sidebar nav button.bg-slate-100 { background: #405b50 !important; color: #ffffff !important; }
 html.dark .admin-nav-icon { background: #405b50; color: #f5f1e8; }
 html.dark .admin-theme-control { color: #e1e8e2; }
+html.dark .admin-nav-group-label { color: #9aaa9f; }
 html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; color: #f5f1e8; }
 
 .student-layout { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: 28px; align-items: start; }

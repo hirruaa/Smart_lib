@@ -10,18 +10,10 @@ import BrandLogo from '@/components/BrandLogo'
 import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
 
-const navItems = [
-  { label: 'Overview', section: 'overview' },
-  { label: 'Analytics', section: 'analytics' },
-  { label: 'Books', section: 'books' },
-  { label: 'Requests', section: 'requests' },
-  { label: 'Contributions', section: 'contributions' },
-  { label: 'Recognition', section: 'recognition' },
-  { label: 'Users', section: 'users' },
-  { label: 'Materials', section: 'materials' },
-  { label: 'Access grants', section: 'grants' },
-  { label: 'Audit log', section: 'audit' },
-  { label: 'Rewards', section: 'rewards' },
+const navGroups = [
+  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }] },
+  { label: 'Library', items: [{ label: 'Books', section: 'books' }, { label: 'PDF materials', section: 'materials' }, { label: 'Contributions', section: 'contributions' }] },
+  { label: 'Insights & points', items: [{ label: 'Analytics', section: 'analytics' }, { label: 'Recognition', section: 'recognition' }, { label: 'Rewards', section: 'rewards' }, { label: 'Access grants', section: 'grants' }, { label: 'Audit log', section: 'audit' }] },
 ]
 
 type Book = {
@@ -32,7 +24,7 @@ type Book = {
   category: string
   description: string | null
   pdf_url: string | null
-  storage_provider?: string
+  storage_provider?: string | null
   storage_file_id?: string | null
   storage_path?: string | null
   access_points: number
@@ -82,6 +74,7 @@ type Contribution = {
   author: string
   description: string | null
   pdf_url: string | null
+  storage_provider?: string | null
   status: string
   created_at: string | null
   review_feedback?: string | null
@@ -214,7 +207,7 @@ export default function AdminPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
-        .select('id, user_id, title, author, description, pdf_url, status, review_feedback, created_at')
+        .select('id, user_id, title, author, description, pdf_url, storage_provider, status, review_feedback, created_at')
         .order('created_at', { ascending: false }),
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('book_access_grants').select('id,student_id,book_id,access_type,expires_at,status,reason').order('created_at', { ascending: false }).limit(100),
@@ -636,22 +629,13 @@ export default function AdminPage() {
             <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
           </div>
           <button type="button" className="admin-sidebar-toggle" onClick={() => { setSidebarCollapsed((current) => !current); setSidebarOpen(false) }} aria-label={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><span aria-hidden="true">☰</span></button>
-          <nav className="space-y-2">
-            {navItems.map((item) => (
-              <button
-                key={item.section}
-                type="button"
-                onClick={() => setSection(item.section)}
-                className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                  section === item.section
-                    ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100'
-                    : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'
-                }`}
-              >
-                <span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span>
-                <span>{item.label}</span>
-              </button>
-            ))}
+          <nav className="admin-nav-groups">
+            {navGroups.map((group) => <div key={group.label} className="admin-nav-group">
+              <p className="admin-nav-group-label">{group.label}</p>
+              <div className="space-y-1">
+                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { setSection(item.section); setSidebarOpen(false) }} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
+              </div>
+            </div>)}
           </nav>
           <div className="admin-sidebar-footer mt-8 space-y-3">
             <div className="admin-theme-control"><ThemeToggle /><span>Appearance</span></div>
@@ -679,6 +663,7 @@ export default function AdminPage() {
               <div>
                 <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Admin</p>
                 <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.email}</h1>
+                <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-400">Review urgent work, keep the catalog healthy, and recognize the community from one control center.</p>
               </div>
               <div className="rounded-[1.5rem] bg-slate-100 p-4 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
                 Active role: <span className="font-semibold text-slate-900 dark:text-slate-100">{profile?.role}</span>
@@ -762,7 +747,7 @@ export default function AdminPage() {
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage the library inventory, stock, and PDF attachments.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage inventory, protected PDFs, and storage providers from one library workspace.</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -805,9 +790,9 @@ export default function AdminPage() {
                           {book.available_copies} / {book.total_copies}
                         </td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                          {book.pdf_url ? (
+                          {book.pdf_url || book.storage_file_id || book.storage_path ? (
                             <span className="rounded-md bg-pine-100 px-2 py-0.5 text-xs font-semibold text-pine-700 dark:bg-forest-700 dark:text-pine-200">
-                              Attached
+                              {book.storage_provider === 'google_drive' ? 'Google Drive' : book.storage_provider === 'external' ? 'External' : 'Supabase'}
                             </span>
                           ) : (
                             <span className="text-xs text-slate-400">None</span>
@@ -1036,8 +1021,8 @@ export default function AdminPage() {
           {section === 'materials' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Published materials</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage e-book and PDF links for library materials.</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">PDF materials</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Attach, replace, and verify protected digital files for catalog books.</p>
               </div>
 
               <div className="overflow-x-auto">

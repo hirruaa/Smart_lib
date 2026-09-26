@@ -411,8 +411,7 @@ export default function StudentPage() {
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <a href="/assistant" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Research desk</span></a>
                   <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
-                  <a href="/points" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>Points wallet</span></a>
-                  <a href="/rewards" onClick={() => setSidebarOpen(false)}><BookMarkIcon /><span>Rewards</span></a>
+                  <a href="/points" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>Points & rewards</span></a>
                   <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contribute material</span></a>
             <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Explore resources</span></a>
             <a href="#access" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>My access</span></a>
@@ -475,7 +474,19 @@ export default function StudentPage() {
         </section>
 
         {/* Student Personal Study Analytics Strip */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
+            <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{profile?.points_balance ?? 0}</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">points</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={() => router.push('/points')} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
+              <button type="button" onClick={() => router.push('/points#rewards')} className="rounded-xl border border-pine-300 px-3 py-2 text-xs font-semibold text-pine-800 hover:bg-white dark:border-forest-600 dark:text-pine-100 dark:hover:bg-forest-700">Rewards</button>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Active Access

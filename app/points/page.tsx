@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
+import RewardsCatalog from '@/components/RewardsCatalog'
 
 type Transaction = { id: number; amount: number; transaction_type: string; description: string; created_at: string }
 type Contribution = { id: number; title: string; status: string; points_awarded: number; created_at: string }
@@ -69,6 +70,7 @@ export default function PointsPage() {
           <div className="surface-card p-6"><h2 className="text-xl font-semibold">Unlocked materials</h2><div className="mt-4 space-y-3">{grants.slice(0, 6).map((grant) => <article key={grant.id} className="rounded-xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex justify-between gap-3"><strong>{grant.books?.[0]?.title ?? `Book #${grant.book_id}`}</strong><span className="text-xs capitalize text-slate-500">{grant.status}</span></div><p className="mt-2 text-xs text-slate-500">{grant.points_paid ? `${grant.points_paid} points` : 'Free access'} · expires {grant.expires_at ? new Date(grant.expires_at).toLocaleString() : 'never'}</p><button type="button" onClick={() => router.push(`/reader/${grant.book_id}`)} className="mt-3 text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">Open reader</button></article>)}{grants.length === 0 ? <p className="text-sm text-slate-500">No unlocked materials yet.</p> : null}</div></div></div>
         </section>
         <section className="surface-card p-6"><h2 className="text-xl font-semibold">Contribution history</h2><div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-paper-300 text-xs uppercase tracking-wider text-slate-500 dark:border-forest-700"><tr><th className="px-3 py-3">Material</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Points</th><th className="px-3 py-3">Submitted</th></tr></thead><tbody className="divide-y divide-paper-300 dark:divide-forest-700">{contributions.map((item) => <tr key={item.id}><td className="px-3 py-3 font-medium">{item.title}</td><td className="px-3 py-3 capitalize">{item.status}</td><td className="px-3 py-3">{item.points_awarded}</td><td className="px-3 py-3 text-slate-500">{new Date(item.created_at).toLocaleDateString()}</td></tr>)}</tbody></table>{contributions.length === 0 ? <p className="py-6 text-sm text-slate-500">Submit a useful academic resource to start building your contribution history.</p> : null}</div></section>
+        <RewardsCatalog />
       </div>
     </main>
   )
