@@ -41,6 +41,17 @@ with check (
   and name like 'contributions/' || auth.uid()::text || '/%'
 );
 
+drop policy if exists "Owners and admins read contribution PDFs" on storage.objects;
+create policy "Owners and admins read contribution PDFs" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'ebooks'
+  and (
+    public.is_admin()
+    or name like 'contributions/' || auth.uid()::text || '/%'
+  )
+);
+
 -- The current app submits through validated RPCs, not direct table inserts.
 revoke insert on public.book_contributions from anon, authenticated;
 

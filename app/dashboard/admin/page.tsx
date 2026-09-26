@@ -75,6 +75,8 @@ type Contribution = {
   description: string | null
   pdf_url: string | null
   storage_provider?: string | null
+  storage_file_id?: string | null
+  storage_path?: string | null
   status: string
   created_at: string | null
   review_feedback?: string | null
@@ -207,7 +209,7 @@ export default function AdminPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
-        .select('id, user_id, title, author, description, pdf_url, storage_provider, status, review_feedback, created_at')
+        .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, created_at')
         .order('created_at', { ascending: false }),
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('book_access_grants').select('id,student_id,book_id,access_type,expires_at,status,reason').order('created_at', { ascending: false }).limit(100),
@@ -1214,7 +1216,7 @@ export default function AdminPage() {
                         <h3 className="font-semibold text-slate-900 dark:text-slate-100">{contribution.title}</h3>
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {students.find((student) => student.id === contribution.user_id)?.email ?? 'Unknown student'}</p>
                         {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
-                        {contribution.pdf_url ? <a href={contribution.pdf_url} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
+                        {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <a href={`/api/contributions/${contribution.id}/file`} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
                       </div>
                       <div className="flex shrink-0 gap-2">
                         <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
