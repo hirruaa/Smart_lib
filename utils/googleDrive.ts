@@ -3,7 +3,12 @@ import { google } from 'googleapis'
 import { Readable } from 'node:stream'
 
 export function isGoogleDriveConfigured() {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN && process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID)
+  return Boolean(
+    process.env.GOOGLE_CLIENT_ID &&
+    process.env.GOOGLE_CLIENT_SECRET &&
+    process.env.GOOGLE_REFRESH_TOKEN &&
+    (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || process.env.GOOGLE_DRIVE_SHARED_DRIVE_ID)
+  )
 }
 
 function driveClient() {
@@ -14,7 +19,7 @@ function driveClient() {
 }
 
 async function folderId(drive: ReturnType<typeof google.drive>, name: string) {
-  const root = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID!
+  const root = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || process.env.GOOGLE_DRIVE_SHARED_DRIVE_ID!
   const result = await drive.files.list({
     q: `'${root}' in parents and name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
     fields: 'files(id,name)',

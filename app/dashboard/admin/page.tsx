@@ -9,6 +9,7 @@ import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
 import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
+import ActionModal from '@/components/ActionModal'
 
 const navGroups = [
   { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }] },
@@ -85,6 +86,7 @@ type Contribution = {
 type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
 type AccessGrant = { id: number; student_id: string; book_id: number; access_type: string; expires_at: string | null; status: string; reason: string | null }
 type Reward = { id: number; name: string; description: string | null; points_cost: number; reward_type: string; stock: number | null; is_active: boolean }
+type AdminConfirm = { type: 'deleteBook' | 'revokeLoan' | 'revokeGrant'; id: number; label?: string } | null
 
 function AdminNavIcon({ section }: { section: string }) {
   const paths: Record<string, React.ReactNode> = {
@@ -140,9 +142,15 @@ export default function AdminPage() {
   const [grantForm, setGrantForm] = useState({ studentId: '', bookId: '', duration: '7', reason: '' })
   const [rewards, setRewards] = useState<Reward[]>([])
   const [rewardForm, setRewardForm] = useState({ name: '', description: '', cost: '50', type: 'profile_badge', stock: '' })
+  const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
+  const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
+  const [revisionDialog, setRevisionDialog] = useState<{ id: number; feedback: string } | null>(null)
 
   const handleDeleteBook = async (bookId: number, title: string) => {
-    if (!confirm(`Are you sure you want to remove "${title}" from the catalog?`)) return
+    setConfirmAction({ type: 'deleteBook', id: bookId, label: title })
+  }
+
+  const executeDeleteBook = async (bookId: number, title: string) => {
     setSaving(true)
     setError(null)
     const supabase = getSupabase()
@@ -358,6 +366,7 @@ export default function AdminPage() {
       setActionMessage('Request approved and digital access enabled.')
     }
     setSaving(false)
+    setConfirmAction(null)
   }
 
   const handleReject = async (requestId: number) => {
@@ -376,7 +385,10 @@ export default function AdminPage() {
   }
 
   const handleRevoke = async (requestId: number) => {
-    if (!window.confirm('Revoke this approved digital access? The student will lose access immediately.')) return
+    setConfirmAction({ type: 'revokeLoan', id: requestId })
+  }
+
+  const executeRevoke = async (requestId: number) => {
     setSaving(true)
     setError(null)
     setActionMessage(null)
@@ -389,6 +401,7 @@ export default function AdminPage() {
       setActionMessage('Digital access revoked.')
     }
     setSaving(false)
+    setConfirmAction(null)
   }
 
   const handleRoleChange = async (userId: string, role: 'student' | 'admin') => {
@@ -413,8 +426,14 @@ export default function AdminPage() {
   }
 
   const handleContributionReview = async (contributionId: number, decision: 'approved' | 'rejected') => {
-    const reward = decision === 'approved' ? Number(window.prompt('Points to award for this contribution?', '25') ?? '25') : 0
-    const accessPoints = decision === 'approved' ? Number(window.prompt('Points charged per 7 days of access?', '0') ?? '0') : 0
+    setReviewDialog({ id: contributionId, decision, reward: decision === 'approved' ? '25' : '0', accessPoints: '0' })
+  }
+
+  const executeContributionReview = async () => {
+    if (!reviewDialog) return
+    const { id: contributionId, decision } = reviewDialog
+    const reward = decision === 'approved' ? Number(reviewDialog.reward) : 0
+    const accessPoints = decision === 'approved' ? Number(reviewDialog.accessPoints) : 0
     if (decision === 'approved' && (!Number.isInteger(reward) || reward < 0 || reward > 100)) {
       setError('Reward must be a whole number between 0 and 100 points.')
       return
@@ -438,17 +457,23 @@ export default function AdminPage() {
       await loadData()
     }
     setSaving(false)
+    setReviewDialog(null)
   }
 
   const handleContributionRevision = async (contributionId: number) => {
-    const feedback = window.prompt('What should the student revise?', 'Please add clearer sources, structure, or explanations.')
-    if (!feedback?.trim()) return
+    setRevisionDialog({ id: contributionId, feedback: 'Please add clearer sources, structure, or explanations.' })
+  }
+
+  const executeContributionRevision = async () => {
+    if (!revisionDialog || !revisionDialog.feedback.trim()) return
+    const { id: contributionId, feedback } = revisionDialog
     setSaving(true)
     setError(null)
     const { error } = await getSupabase().rpc('admin_request_contribution_revision', { contribution_id: contributionId, feedback: feedback.trim() })
     if (error) setError(error.message)
     else { setActionMessage('Revision request sent to the student.'); await loadData() }
     setSaving(false)
+    setRevisionDialog(null)
   }
 
   const handleCreateStudent = async (event: FormEvent<HTMLFormElement>) => {
@@ -508,12 +533,16 @@ export default function AdminPage() {
   }
 
   const handleRevokeGrant = async (grantId: number) => {
-    if (!window.confirm('Revoke this administrator-granted access?')) return
+    setConfirmAction({ type: 'revokeGrant', id: grantId })
+  }
+
+  const executeRevokeGrant = async (grantId: number) => {
     setSaving(true)
     const { error } = await getSupabase().rpc('admin_revoke_book_access', { grant_id: grantId, revoke_reason: 'Administrator revoked access' })
     if (error) setError(error.message)
     else { setActionMessage('Access grant revoked.'); await loadData() }
     setSaving(false)
+    setConfirmAction(null)
   }
 
   const handleCreateReward = async (event: FormEvent<HTMLFormElement>) => {
@@ -1288,6 +1317,62 @@ export default function AdminPage() {
             </section>
           )}
         </main>
+        <ActionModal
+          open={confirmAction?.type === 'deleteBook'}
+          title="Remove this book?"
+          description={confirmAction?.label ? `“${confirmAction.label}” will be removed from the catalog.` : undefined}
+          confirmLabel="Remove book"
+          tone="danger"
+          busy={saving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => { if (confirmAction?.type === 'deleteBook') void executeDeleteBook(confirmAction.id, confirmAction.label ?? 'Book') }}
+        />
+        <ActionModal
+          open={confirmAction?.type === 'revokeLoan'}
+          title="Revoke digital access?"
+          description="The student will lose access to this approved resource immediately."
+          confirmLabel="Revoke access"
+          tone="danger"
+          busy={saving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => { if (confirmAction?.type === 'revokeLoan') void executeRevoke(confirmAction.id) }}
+        />
+        <ActionModal
+          open={confirmAction?.type === 'revokeGrant'}
+          title="Revoke this access grant?"
+          description="This administrator-granted access will end immediately."
+          confirmLabel="Revoke grant"
+          tone="danger"
+          busy={saving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => { if (confirmAction?.type === 'revokeGrant') void executeRevokeGrant(confirmAction.id) }}
+        />
+        <ActionModal
+          open={reviewDialog !== null}
+          title={reviewDialog?.decision === 'approved' ? 'Approve contribution' : 'Reject contribution'}
+          description={reviewDialog?.decision === 'approved' ? 'Set the reward and the points cost for each seven-day access period.' : 'Reject this contribution and notify the student.'}
+          confirmLabel={reviewDialog?.decision === 'approved' ? 'Approve contribution' : 'Reject contribution'}
+          tone={reviewDialog?.decision === 'approved' ? 'default' : 'danger'}
+          busy={saving}
+          onClose={() => setReviewDialog(null)}
+          onConfirm={() => void executeContributionReview()}
+        >
+          {reviewDialog?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Reward points<input type="number" min="0" max="100" value={reviewDialog.reward} onChange={(event) => setReviewDialog({ ...reviewDialog, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Access cost / 7 days<input type="number" min="0" value={reviewDialog.accessPoints} onChange={(event) => setReviewDialog({ ...reviewDialog, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+          </div> : null}
+        </ActionModal>
+        <ActionModal
+          open={revisionDialog !== null}
+          title="Request a revision"
+          description="Tell the student what needs to be improved before approval."
+          confirmLabel="Send revision request"
+          busy={saving}
+          onClose={() => setRevisionDialog(null)}
+          onConfirm={() => void executeContributionRevision()}
+        >
+          <textarea value={revisionDialog?.feedback ?? ''} onChange={(event) => revisionDialog && setRevisionDialog({ ...revisionDialog, feedback: event.target.value })} rows={5} maxLength={1000} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-950" placeholder="Explain what the student should revise..." />
+        </ActionModal>
       </div>
     </div>
   )

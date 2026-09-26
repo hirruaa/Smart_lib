@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import NotesPanel from './NotesPanel'
 import HighlightsPanel from './HighlightsPanel'
+import ActionModal from './ActionModal'
 
 type Point = { x: number; y: number }
 type Stroke = { points: Point[]; color: string; width: number; opacity: number }
@@ -56,6 +57,8 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [drawingStatus, setDrawingStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [readerError, setReaderError] = useState<string | null>(null)
+  const [clearDrawingsOpen, setClearDrawingsOpen] = useState(false)
+  const [deleteNoteId, setDeleteNoteId] = useState<number | null>(null)
   const [pdfModules, setPdfModules] = useState<PdfModules | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
@@ -242,7 +245,7 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
     if (response.ok) { const saved = await response.json(); setNotes((items) => isNew ? [saved, ...items] : items.map((item) => item.id === saved.id ? saved : item)); setExpandedNoteId(saved.id); setNoteDraft(null); setNoteStatus('saved') } else setNoteStatus('error')
     setSavingNote(false)
   }
-  async function deleteNote(id: number) { if (!window.confirm('Delete this note?')) return; const response = await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' }); if (response.ok) { setNotes((items) => items.filter((item) => item.id !== id)); setExpandedNoteId(null) } }
+  async function deleteNote(id: number) { const response = await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' }); if (response.ok) { setNotes((items) => items.filter((item) => item.id !== id)); setExpandedNoteId(null) }; setDeleteNoteId(null) }
   function noteMetaAt(clientX: number, clientY: number, note: Note) {
     const rect = pageFrameRef.current?.getBoundingClientRect(); if (!rect) return note.meta ?? {}
     return { ...(note.meta ?? {}), x: clamp((clientX - rect.left) / rect.width), y: clamp((clientY - rect.top) / rect.height) }

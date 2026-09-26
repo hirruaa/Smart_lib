@@ -36,8 +36,8 @@ export default function PointsPage() {
         supabase.from('book_access_grants').select('id,book_id,access_type,points_paid,granted_at,expires_at,status,books(title)').eq('student_id', user.id).order('granted_at', { ascending: false }),
         supabase.from('user_achievements').select('awarded_at,achievements(name,description)').eq('user_id', user.id).order('awarded_at', { ascending: false }),
       ])
-      const firstError = [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult].find((result) => result.error)?.error
-      if (firstError) setError('Unable to load your points activity right now.')
+      const coreError = [profileResult, transactionResult, contributionResult].find((result) => result.error)?.error
+      if (coreError) setError('Unable to load your points activity right now.')
       setBalance(profileResult.data?.points_balance ?? 0)
       setTransactions((transactionResult.data ?? []) as Transaction[])
       setContributions((contributionResult.data ?? []) as Contribution[])

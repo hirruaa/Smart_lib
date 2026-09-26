@@ -1,6 +1,7 @@
 "use client"
 import React, { useEffect, useMemo, useState } from 'react'
 import NoteEditor from './NoteEditor'
+import ActionModal from './ActionModal'
 
 type NotesPanelProps = {
   bookId: number
@@ -15,6 +16,7 @@ export default function NotesPanel({ bookId, selectedText, selectedPage, onChang
   const [editing, setEditing] = useState<any | null>(null)
   const [query, setQuery] = useState('')
   const [pageFilter, setPageFilter] = useState('')
+  const [deleteId, setDeleteId] = useState<number | null>(null)
 
   async function load() {
     const res = await fetch(`/api/study/notes?book_id=${bookId}`)
@@ -50,10 +52,10 @@ export default function NotesPanel({ bookId, selectedText, selectedPage, onChang
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('Delete this note?')) return
     await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' })
     await load()
     onChanged?.()
+    setDeleteId(null)
   }
 
   return (
@@ -93,7 +95,7 @@ export default function NotesPanel({ bookId, selectedText, selectedPage, onChang
                 <p className="text-sm leading-6 text-slate-700 dark:text-slate-300">{n.text || 'No additional note text.'}</p>
                 <div className="flex gap-2 text-xs text-slate-500 dark:text-slate-400">
                   <button onClick={(event) => { event.stopPropagation(); setEditing(n) }} className="font-semibold text-sky-600">Edit</button>
-                  <button onClick={(event) => { event.stopPropagation(); void handleDelete(n.id) }} className="font-semibold text-rose-600">Delete</button>
+                  <button onClick={(event) => { event.stopPropagation(); setDeleteId(n.id) }} className="font-semibold text-rose-600">Delete</button>
                 </div>
               </div>
             </li>
@@ -104,6 +106,15 @@ export default function NotesPanel({ bookId, selectedText, selectedPage, onChang
           {notes.length ? 'No notes match the current filters.' : 'No notes yet — select text on the page to start a note, or click New to add one manually.'}
         </div>
       )}
+      <ActionModal
+        open={deleteId !== null}
+        title="Delete this note?"
+        description="This note will be permanently removed from your reading session."
+        confirmLabel="Delete note"
+        tone="danger"
+        onClose={() => setDeleteId(null)}
+        onConfirm={() => { if (deleteId !== null) void handleDelete(deleteId) }}
+      />
     </div>
   )
 }

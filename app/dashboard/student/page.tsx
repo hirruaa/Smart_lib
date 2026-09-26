@@ -409,14 +409,12 @@ export default function StudentPage() {
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label="Student workspace">
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
-            <a href="/assistant" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Research desk</span></a>
+            <a href="#research" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Library assistant</span></a>
                   <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
                   <a href="/points" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>Points & rewards</span></a>
                   <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contribute material</span></a>
             <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Explore resources</span></a>
-            <a href="#access" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>My access</span></a>
-            <a href="#requests" onClick={() => setSidebarOpen(false)}><RequestIcon /><span>Requests</span></a>
-            <a href="#history" onClick={() => setSidebarOpen(false)}><HistoryIcon /><span>Reading history</span></a>
+            <a href="/library" onClick={() => setSidebarOpen(false)}><BookMarkIcon /><span>My library</span></a>
           </nav>
           <div className="student-sidebar-footer">
             <div className="student-theme-control"><ThemeToggle /><span>Appearance</span></div>
@@ -454,7 +452,7 @@ export default function StudentPage() {
               <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Return to your active digital resources at the page you last visited.</p>
             </div>
-            <a href="#access" className="text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">View all active access</a>
+            <a href="/library" className="text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</a>
           </div>
           {continueReading.length > 0 ? (
             <div className="mt-5 grid gap-3 md:grid-cols-3">
