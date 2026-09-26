@@ -16,7 +16,6 @@ export async function POST(request: Request) {
   const allowFallback = String(form.get('allow_fallback') || 'true') !== 'false'
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
   if (!['google_drive', 'supabase'].includes(requestedProvider)) return NextResponse.json({ error: 'Invalid storage provider.' }, { status: 400 })
-  if (profile?.role !== 'admin' && requestedProvider !== 'google_drive') return NextResponse.json({ error: 'Student uploads use Google Drive storage.' }, { status: 403 })
   if (!(file instanceof File) || file.type !== 'application/pdf') return NextResponse.json({ error: 'Only PDF files are supported.' }, { status: 400 })
   if (file.size > MAX_FILE_SIZE) return NextResponse.json({ error: 'PDF files must be 50 MB or smaller.' }, { status: 400 })
   const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, '_')
@@ -28,7 +27,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ storage_provider: 'google_drive', storage_file_id: uploaded.fileId, file_name: uploaded.fileName, file_size: uploaded.fileSize, mime_type: uploaded.mimeType })
     } catch (error) {
       console.error('Google Drive upload failed.', error)
-      if (!allowFallback) return NextResponse.json({ error: 'Google Drive upload failed. Check the Google Drive configuration.' }, { status: 502 })
+      if (!allowFallback) {
+        const message = error instanceof Error ? error.message : 'Unknown Google Drive error.'
+        return NextResponse.json({ error: `Google Drive upload failed: ${message}` }, { status: 502 })
+      }
     }
   } else if (requestedProvider === 'google_drive' && !allowFallback) {
     return NextResponse.json({ error: 'Google Drive is not configured.' }, { status: 503 })

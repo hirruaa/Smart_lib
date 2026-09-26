@@ -20,14 +20,16 @@ export async function GET(request: Request, { params }: { params: { bookId: stri
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
-  const [{ data: profile }, { data: book }] = await Promise.all([
+  const [{ data: profile }, { data: book }, { data: ownedContribution }] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
     supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path').eq('id', bookId).maybeSingle(),
+    supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
   if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) return NextResponse.json({ error: 'Resource unavailable.' }, { status: 404 })
 
   const isAdmin = profile?.role === 'admin'
-  if (!isAdmin) {
+  const isContributor = Boolean(ownedContribution)
+  if (!isAdmin && !isContributor) {
     const [{ data: loan }, { data: grant }] = await Promise.all([
       supabase.from('borrow_requests').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'approved').is('returned_date', null).gt('due_date', new Date().toISOString()).maybeSingle(),
       supabase.from('book_access_grants').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle(),

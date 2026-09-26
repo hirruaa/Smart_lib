@@ -14,8 +14,12 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Sign in to read this resource</h1><p className="mt-2">Digital reading is available to authenticated library members.</p></div></div>
   }
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
+  const [{ data: profile }, { data: ownedContribution }] = await Promise.all([
+    supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
+    supabase.from('book_contributions').select('id').eq('approved_book_id', Number(params.bookId)).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
+  ])
   const isAdmin = profile?.role === 'admin'
+  const isContributor = Boolean(ownedContribution)
   const [{ data: activeLoan }, { data: activeGrant }] = await Promise.all([
     supabase
       .from('borrow_requests')
@@ -36,7 +40,7 @@ export default async function Page({ params }: Props) {
       .maybeSingle(),
   ])
 
-  if (!isAdmin && !activeLoan && !activeGrant) {
+  if (!isAdmin && !isContributor && !activeLoan && !activeGrant) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Active access required</h1><p className="mt-2">Request temporary digital access from the library before opening this resource.</p></div></div>
   }
 

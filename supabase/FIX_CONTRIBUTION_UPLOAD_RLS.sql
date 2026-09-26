@@ -50,6 +50,23 @@ using (
   and (
     public.is_admin()
     or name like 'contributions/' || auth.uid()::text || '/%'
+    or exists (
+      select 1 from public.books b
+      join public.borrow_requests br on br.book_id = b.id
+      where (b.storage_path = name or b.pdf_url = name or b.pdf_url like '%' || name)
+        and br.student_id = auth.uid()
+        and br.status = 'approved'
+        and br.returned_date is null
+        and br.due_date > now()
+    )
+    or exists (
+      select 1 from public.books b
+      join public.book_access_grants bag on bag.book_id = b.id
+      where (b.storage_path = name or b.pdf_url = name or b.pdf_url like '%' || name)
+        and bag.student_id = auth.uid()
+        and bag.status = 'active'
+        and bag.expires_at > now()
+    )
   )
 );
 

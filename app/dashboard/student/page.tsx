@@ -50,6 +50,7 @@ type UserProfile = {
 
 type Fine = { id: number; amount: number; status: string; created_at: string | null }
 type SystemNotification = { id: number; title: string; message: string; read_at: string | null; created_at: string }
+const accessDurationOptions = [1, 3, 7, 14, 30]
 
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -66,6 +67,10 @@ function ProfileIcon() { return <LineIcon><circle cx="12" cy="8" r="3" /><path d
 function LogoutIcon() { return <LineIcon><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></LineIcon> }
 function MenuIcon() { return <LineIcon><path d="M4 6h16M4 12h16M4 18h16" /></LineIcon> }
 function BellIcon() { return <LineIcon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></LineIcon> }
+function StudyQueueIcon() { return <LineIcon><path d="M6 4h12v16H6z" /><path d="M9 8h6M9 12h6M9 16h4" /></LineIcon> }
+function SearchIcon() { return <LineIcon><circle cx="10.8" cy="10.8" r="6.2" /><path d="m16 16 4.2 4.2" /></LineIcon> }
+function FilterIcon() { return <LineIcon><path d="M4 6h16M7 12h10M10 18h4" /></LineIcon> }
+function SortIcon() { return <LineIcon><path d="M8 5v14M5 8l3-3 3 3M16 19V5M13 16l3 3 3-3" /></LineIcon> }
 
 export default function StudentPage() {
   const router = useRouter()
@@ -73,7 +78,8 @@ export default function StudentPage() {
   const [searchInput, setSearchInput] = useState('')
   const [availability, setAvailability] = useState('all')
   const [catalogSort, setCatalogSort] = useState<'relevance' | 'title' | 'author' | 'newest'>('relevance')
-  const [digitalOnly, setDigitalOnly] = useState(false)
+  const [catalogControlsOpen, setCatalogControlsOpen] = useState(false)
+  const [expandedBookId, setExpandedBookId] = useState<number | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
@@ -84,6 +90,10 @@ export default function StudentPage() {
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [studyQueueOpen, setStudyQueueOpen] = useState(false)
+  const [requestsOpen, setRequestsOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loanActionId, setLoanActionId] = useState<number | null>(null)
@@ -91,6 +101,8 @@ export default function StudentPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set())
   const [fines, setFines] = useState<Fine[]>([])
+  const [finesLoaded, setFinesLoaded] = useState(false)
+  const [readingProgressLoaded, setReadingProgressLoaded] = useState(false)
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([])
   const [reviewBookId, setReviewBookId] = useState<number | null>(null)
   const [reviewRating, setReviewRating] = useState('5')
@@ -117,6 +129,22 @@ export default function StudentPage() {
     if (!userId) return
     fetch('/api/notifications').then((response) => response.ok ? response.json() : []).then((data) => setSystemNotifications(Array.isArray(data) ? data : [])).catch(() => undefined)
   }, [userId])
+
+  useEffect(() => {
+    if (!userId || !notificationsOpen || finesLoaded) return
+    getSupabase().from('fines').select('id, amount, status, created_at').eq('student_id', userId).eq('status', 'unpaid').order('created_at', { ascending: false }).then(({ data }) => {
+      setFines((data ?? []) as Fine[])
+      setFinesLoaded(true)
+    })
+  }, [userId, notificationsOpen, finesLoaded])
+
+  useEffect(() => {
+    if (!userId || !studyQueueOpen || readingProgressLoaded) return
+    getSupabase().from('reading_progress').select('book_id,current_page,total_pages').eq('user_id', userId).then(({ data }) => {
+      setReadingProgress(Object.fromEntries((data ?? []).map((item: { book_id: number; current_page: number; total_pages: number | null }) => [item.book_id, item])))
+      setReadingProgressLoaded(true)
+    })
+  }, [userId, studyQueueOpen, readingProgressLoaded])
 
   useEffect(() => {
     const supabase = getSupabase()
@@ -160,7 +188,7 @@ export default function StudentPage() {
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0 })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, wishlistResult, finesResult, progressResult] = await Promise.all([
+      const [booksResult, requestsResult, wishlistResult] = await Promise.all([
         supabase
           .from('books')
         .select('id, title, author, category, description, isbn, total_copies, available_copies, access_points, access_mode, access_duration_days, page_count, pdf_url')
@@ -171,8 +199,6 @@ export default function StudentPage() {
           .eq('student_id', currentUser.id)
           .order('request_date', { ascending: false }),
         supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
-        supabase.from('fines').select('id, amount, status, created_at').eq('student_id', currentUser.id).eq('status', 'unpaid').order('created_at', { ascending: false }),
-        supabase.from('reading_progress').select('book_id,current_page,total_pages').eq('user_id', currentUser.id),
       ])
 
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
@@ -193,8 +219,6 @@ export default function StudentPage() {
 
       setBooks(fetchedBooks)
       setWishlistIds(new Set((wishlistResult.data ?? []).map((item: { book_id: number }) => item.book_id)))
-      setFines((finesResult.data ?? []) as Fine[])
-      setReadingProgress(Object.fromEntries((progressResult.data ?? []).map((item: { book_id: number; current_page: number; total_pages: number | null }) => [item.book_id, item])))
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
         const matchingBook = fetchedBooks.find((b) => b.id === request.book_id)
         return {
@@ -242,9 +266,7 @@ export default function StudentPage() {
             (availability === 'available' && book.available_copies > 0) ||
             (availability === 'all-out' && book.available_copies === 0)
 
-          const matchesDigital = !digitalOnly || Boolean(book.pdf_url)
-
-          return matchesQuery && matchesCategory && matchesAvailability && matchesDigital
+          return matchesQuery && matchesCategory && matchesAvailability
         })
 
       return results.sort((a, b) => {
@@ -254,7 +276,7 @@ export default function StudentPage() {
         return 0
       })
     },
-    [books, query, selectedCategory, availability, catalogSort, digitalOnly]
+    [books, query, selectedCategory, availability, catalogSort]
   )
 
   const activeLoans = useMemo(
@@ -272,7 +294,7 @@ export default function StudentPage() {
   }, [activeLoans])
 
   const continueReading = useMemo(
-    () => activeLoans.filter((loan) => loan.pdf_url).slice(0, 3),
+    () => activeLoans.filter((loan) => loan.pdf_url),
     [activeLoans]
   )
 
@@ -409,12 +431,10 @@ export default function StudentPage() {
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label="Student workspace">
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
-            <a href="#research" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Library assistant</span></a>
-                  <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
-                  <a href="/points" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>Points & rewards</span></a>
-                  <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contribute material</span></a>
-            <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Explore resources</span></a>
             <a href="/library" onClick={() => setSidebarOpen(false)}><BookMarkIcon /><span>My library</span></a>
+            <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
+            <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookIcon /><span>My access</span></button>
+            <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contributions</span></a>
           </nav>
           <div className="student-sidebar-footer">
             <div className="student-theme-control"><ThemeToggle /><span>Appearance</span></div>
@@ -431,21 +451,17 @@ export default function StudentPage() {
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || 'student'}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Browse the library, track active access, and manage your requests in one place.</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setNotificationsOpen(true)}
-              className="student-notification-button"
-              aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'}
-              title="Notifications"
-            >
-              <BellIcon />
-              {alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}
-            </button>
+            <div className="student-hero-actions">
+              <button type="button" onClick={() => setStudyQueueOpen(true)} className="student-notification-button" aria-label="Open study queue" title="Study queue"><StudyQueueIcon />{continueReading.length > 0 ? <span className="student-notification-badge" aria-hidden="true">{continueReading.length}</span> : null}</button>
+              <button type="button" onClick={() => setRequestsOpen(true)} className="student-notification-button" aria-label="Open borrow requests" title="Borrow requests"><RequestIcon />{borrowRequests.filter((request) => request.status === 'pending').length > 0 ? <span className="student-notification-badge" aria-hidden="true">{borrowRequests.filter((request) => request.status === 'pending').length}</span> : null}</button>
+              <button type="button" onClick={() => setHistoryOpen(true)} className="student-notification-button" aria-label="Open reading history" title="Reading history"><HistoryIcon /></button>
+              <button type="button" onClick={() => setNotificationsOpen(true)} className="student-notification-button" aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'} title="Notifications"><BellIcon />{alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}</button>
+            </div>
           </div>
         </header>
         <BookAssistant />
 
-        <section className="continue-reading-panel rounded-[2rem] border border-paper-300 bg-paper-50 p-6 shadow-sm dark:border-forest-800 dark:bg-forest-900/60 lg:p-8">
+        <section className="continue-reading-panel rounded-[2rem] border border-paper-300 bg-paper-50 p-6 shadow-sm dark:border-forest-800 dark:bg-forest-900/60 lg:p-8" aria-hidden="true">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Study queue</p>
@@ -472,7 +488,7 @@ export default function StudentPage() {
         </section>
 
         {/* Student Personal Study Analytics Strip */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
             <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
             <div className="mt-2 flex items-baseline gap-2">
@@ -483,21 +499,6 @@ export default function StudentPage() {
               <button type="button" onClick={() => router.push('/points')} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
               <button type="button" onClick={() => router.push('/points#rewards')} className="rounded-xl border border-pine-300 px-3 py-2 text-xs font-semibold text-pine-800 hover:bg-white dark:border-forest-600 dark:text-pine-100 dark:hover:bg-forest-700">Rewards</button>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Active Access
-            </span>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
-                {activeLoans.length}
-              </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">/ 3 max allowed</span>
-            </div>
-            <p className="mt-1 text-xs text-pine-600 dark:text-pine-300">
-              {3 - activeLoans.length} slots available
-            </p>
           </div>
 
           <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
@@ -530,20 +531,6 @@ export default function StudentPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Outstanding Fines
-            </span>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
-                ${fines.reduce((sum, f) => sum + Number(f.amount), 0).toFixed(2)}
-              </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">balance</span>
-            </div>
-            <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-              {fines.length === 0 ? 'Account in good standing' : `${fines.length} unpaid fine(s)`}
-            </p>
-          </div>
         </div>
 
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -553,17 +540,20 @@ export default function StudentPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Discover resources and request temporary digital access.</p>
-                  <button type="button" onClick={() => router.push('/contributions')} className="secondary-action mt-4 rounded-xl border px-3 py-2 text-xs font-semibold">Open contribution center</button>
+                  <div className="catalog-heading-actions mt-4">
+                  <button type="button" onClick={() => router.push('/contributions')} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Open contribution center</span></button>
+                  <button type="button" className="catalog-filter-toggle catalog-filter-toggle-heading" onClick={() => setCatalogControlsOpen((current) => !current)} aria-expanded={catalogControlsOpen} aria-controls="catalog-controls"><FilterIcon /><span>{catalogControlsOpen ? 'Hide filters' : 'Show filters'}</span></button>
+                  </div>
                 </div>
-                <form
+                {catalogControlsOpen ? <div className="catalog-controls-wrap is-open"><form id="catalog-controls"
                 onSubmit={(event) => {
                   event.preventDefault()
                   setQuery(searchInput)
                 }}
-                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr]"
+                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
               >
                 <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label text-xs font-semibold uppercase tracking-[0.24em]">Search</span>
+                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><SearchIcon /><span>Search</span></span>
                   <div className="mt-2 flex gap-2">
                     <input
                       value={searchInput}
@@ -593,7 +583,7 @@ export default function StudentPage() {
                   </div>
                 </label>
                 <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label text-xs font-semibold uppercase tracking-[0.24em]">Availability</span>
+                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><FilterIcon /><span>Availability</span></span>
                   <select
                     value={availability}
                     onChange={(event) => setAvailability(event.target.value)}
@@ -605,7 +595,7 @@ export default function StudentPage() {
                   </select>
                 </label>
                 <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label text-xs font-semibold uppercase tracking-[0.24em]">Sort by</span>
+                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><SortIcon /><span>Sort by</span></span>
                   <select
                     value={catalogSort}
                     onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
@@ -617,16 +607,7 @@ export default function StudentPage() {
                     <option value="newest">Recently added</option>
                   </select>
                 </label>
-                <label className="flex items-center gap-3 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={digitalOnly}
-                    onChange={(event) => setDigitalOnly(event.target.checked)}
-                    className="h-4 w-4 accent-sky-600"
-                  />
-                  <span>Digital access only</span>
-                </label>
-              </form>
+                </form></div> : null}
               </div>
 
               {/* Category Pills Bar */}
@@ -657,17 +638,15 @@ export default function StudentPage() {
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 {filteredBooks.length > 0 ? (
                   filteredBooks.map((book) => (
-                    <div key={book.id} className="resource-card rounded-[1.5rem] p-5">
+                    <div key={book.id} className={`resource-card rounded-[1.5rem] p-5 ${expandedBookId === book.id ? 'resource-card-expanded' : ''}`} role="button" tabIndex={0} aria-expanded={expandedBookId === book.id} onClick={(event) => { if ((event.target as HTMLElement).closest('button')) return; setExpandedBookId((current) => current === book.id ? null : book.id) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpandedBookId((current) => current === book.id ? null : book.id) } }}>
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p>
                           <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
                           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
                         </div>
-                        <span className="status-pill status-available rounded-full px-3 py-1 text-xs font-semibold">
-                          Digital access
-                        </span>
                       </div>
+                      {expandedBookId === book.id ? <>
                       <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">{book.description}</p>
                       <div className="mt-4 grid gap-3 sm:grid-cols-3">
                         <div>
@@ -696,7 +675,7 @@ export default function StudentPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setDurationDays(String(book.access_duration_days))
+                          setDurationDays(String(accessDurationOptions.includes(book.access_duration_days) ? book.access_duration_days : 30))
                           setSelectedBook(book)
                           setRequestStatus(null)
                         }}
@@ -711,6 +690,7 @@ export default function StudentPage() {
                         </button>
                         <button type="button" onClick={() => setReviewBookId(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Review</button>
                       </div>
+                      </> : <p className="resource-card-hint">Select to view details and actions</p>}
                     </div>
                   ))
                 ) : dataReady ? (
@@ -818,6 +798,22 @@ export default function StudentPage() {
           </div>
 
           <aside className="student-side-bento grid gap-6 xl:grid-cols-2">
+            <div id="study-queue" className="side-panel study-queue-card rounded-[2rem] p-6 xl:col-span-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Study queue</p>
+                  <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
+                </div>
+                <a href="/library" className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">My library</a>
+              </div>
+              {continueReading.length > 0 ? <div className="mt-4 space-y-3">{continueReading.map((loan) => {
+                const progress = readingProgress[loan.book_id]
+                const page = progress?.current_page ?? lastReadPages[loan.book_id] ?? 1
+                const totalPages = progress?.total_pages ?? books.find((book) => book.id === loan.book_id)?.page_count ?? null
+                const percentage = totalPages ? Math.min(100, Math.round((page / totalPages) * 100)) : null
+                return <article key={loan.id} className="study-queue-item"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Page {page}{totalPages ? ` of ${totalPages}` : ''}</p></div><span className="text-xs font-bold text-pine-700 dark:text-pine-200">{percentage === null ? 'Active' : `${percentage}%`}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-paper-300 dark:bg-forest-700"><span className="block h-full rounded-full bg-pine-500" style={{ width: `${percentage ?? 0}%` }} /></div><button type="button" onClick={() => router.push(`/reader/${loan.book_id}`)} className="pine-action mt-3 w-full rounded-xl px-3 py-2 text-xs font-semibold">Resume reading</button></article>
+              })}</div> : <p className="mt-4 rounded-xl border border-dashed border-paper-300 bg-paper-100/60 p-4 text-sm text-slate-600 dark:border-forest-700 dark:bg-forest-800/50 dark:text-slate-300">Borrow a digital resource to build your queue.</p>}
+            </div>
             <div id="requests" className="side-panel rounded-[2rem] p-6 xl:col-span-2 xl:col-start-1 xl:row-start-1">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track the status of your active requests.</p>
@@ -886,7 +882,7 @@ export default function StudentPage() {
             </div>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {[selectedBook.access_duration_days].map((days) => (
+              {accessDurationOptions.map((days) => (
                 <button
                   key={days}
                   type="button"
@@ -906,7 +902,7 @@ export default function StudentPage() {
                   {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'restricted' ? 'Restricted access' : `${selectedBook.access_points} points`}
                 </span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. This resource is configured for {selectedBook.access_duration_days} days.</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Choose the access period that fits your study plan.</p>
               {selectedBook.access_mode === 'points' && selectedBook.access_points > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {selectedBook.access_points - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
             </div>
 
@@ -946,6 +942,55 @@ export default function StudentPage() {
         </div>
       ) : null}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {studyQueueOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setStudyQueueOpen(false) }}>
+          <section className="notification-modal study-queue-modal" role="dialog" aria-modal="true" aria-labelledby="study-queue-modal-title">
+            <div className="notification-modal-header">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Study queue</p>
+                <h2 id="study-queue-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
+              </div>
+              <button type="button" className="notification-modal-close" onClick={() => setStudyQueueOpen(false)} aria-label="Close study queue">×</button>
+            </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Pick up where you left off in your active digital resources.</p>
+            {continueReading.length > 0 ? <div className="study-queue-modal-list">{continueReading.map((loan) => {
+              const progress = readingProgress[loan.book_id]
+              const page = progress?.current_page ?? lastReadPages[loan.book_id] ?? 1
+              const totalPages = progress?.total_pages ?? books.find((book) => book.id === loan.book_id)?.page_count ?? null
+              const percentage = totalPages ? Math.min(100, Math.round((page / totalPages) * 100)) : null
+              return <article key={loan.id} className="study-queue-modal-item"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Last opened page {page}{totalPages ? ` of ${totalPages}` : ''}</p></div><span className="text-xs font-bold text-pine-700 dark:text-pine-200">{percentage === null ? 'Active' : `${percentage}%`}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-paper-300 dark:bg-forest-700"><span className="block h-full rounded-full bg-pine-500" style={{ width: `${percentage ?? 0}%` }} /></div><button type="button" onClick={() => { setStudyQueueOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action mt-3 w-full rounded-xl px-3 py-2 text-xs font-semibold">Resume reading</button></article>
+            })}</div> : <div className="study-queue-empty">Borrow a digital resource to build your reading queue.</div>}
+            <a href="/library" className="mt-5 inline-flex text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</a>
+          </section>
+        </div>
+      ) : null}
+      {activeAccessOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveAccessOpen(false) }}>
+          <section className="notification-modal active-access-modal" role="dialog" aria-modal="true" aria-labelledby="active-access-modal-title">
+            <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">My books</p><h2 id="active-access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Active access</h2></div><button type="button" className="notification-modal-close" onClick={() => setActiveAccessOpen(false)} aria-label="Close active access">×</button></div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Books you can currently read and manage.</p>
+            <div className="active-access-list">
+              {activeLoans.length > 0 ? activeLoans.map((loan) => {
+                const dueDate = loan.due_date ? new Date(loan.due_date) : null
+                const diffDays = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null
+                const isUrgent = diffDays !== null && diffDays <= 3
+                const isOverdue = diffDays !== null && diffDays < 0
+                return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Checked out {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Due {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isOverdue ? 'bg-rose-100 text-rose-800' : isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{isOverdue ? 'Overdue' : diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}<button type="button" onClick={() => void handleLoanAction(loan.id, 'renew')} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}</button><button type="button" onClick={() => void handleLoanAction(loan.id, 'return')} disabled={loanActionId !== null} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">Return</button></div></article>
+              }) : <div className="study-queue-empty">You do not have any active digital access yet. Explore the catalog to request a resource.</div>}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {requestsOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRequestsOpen(false) }}>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="requests-modal-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library activity</p><h2 id="requests-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Borrow requests</h2></div><button type="button" className="notification-modal-close" onClick={() => setRequestsOpen(false)} aria-label="Close borrow requests">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track the status of your access requests.</p><div className="modal-record-list">{borrowRequests.length > 0 ? borrowRequests.map((request) => <div key={request.id} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{request.title ?? `Book #${request.book_id}`}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {request.request_date ? new Date(request.request_date).toLocaleDateString() : 'N/A'}</p></div><span className={`status-pill rounded-full px-3 py-1 text-xs font-semibold ${request.status === 'approved' ? 'status-approved' : request.status === 'rejected' || request.status === 'revoked' ? 'status-rejected' : 'status-pending'}`}>{request.status}</span></div>) : <div className="study-queue-empty">Your access requests will appear here.</div>}</div></section>
+        </div>
+      ) : null}
+      {historyOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false) }}>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library activity</p><h2 id="history-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Reading history</h2></div><button type="button" className="notification-modal-close" onClick={() => setHistoryOpen(false)} aria-label="Close reading history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Your recently returned and rejected resources.</p><div className="modal-record-list">{readingHistory.length > 0 ? readingHistory.map((event) => <div key={`${event.title}-${event.date}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{event.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{event.action} · {event.date}</p></div></div>) : <div className="study-queue-empty">No reading history to show yet.</div>}</div></section>
+        </div>
+      ) : null}
       {notificationsOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNotificationsOpen(false) }}>
           <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">

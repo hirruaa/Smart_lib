@@ -41,15 +41,19 @@ const initialMessage: ChatMessage = {
 }
 
 export default function BookAssistant() {
+  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage])
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const sessionLoadedRef = useRef(false)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (!open || sessionLoadedRef.current) return
+    sessionLoadedRef.current = true
     let cancelled = false
     async function loadSession() {
       try {
@@ -83,7 +87,7 @@ export default function BookAssistant() {
     }
     void loadSession()
     return () => { cancelled = true }
-  }, [])
+  }, [open])
 
   useEffect(() => {
     window.localStorage.setItem('smart-lib-assistant-session', JSON.stringify(messages))
@@ -152,11 +156,13 @@ export default function BookAssistant() {
   }
 
   return (
-    <section id="research" className="assistant-panel assistant-chat-panel">
+    <>
+      {!open ? <button type="button" className="assistant-launcher" onClick={() => setOpen(true)} aria-label="Open library assistant"><span className="assistant-launcher-mark" aria-hidden="true">✦</span><span className="assistant-launcher-label">Ask the library</span></button> : null}
+      {open ? <section id="research" className="assistant-panel assistant-chat-panel assistant-floating-window" aria-label="Library assistant chat">
       <div className="assistant-heading">
         <div className="assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M12 3 13.7 9.3 20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z" strokeLinecap="round" strokeLinejoin="round" /><path d="m19 17 .6 2.4L22 20l-2.4.6L19 23l-.6-2.4L16 20l2.4-.6L19 17Z" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
         <div className="assistant-heading-copy"><p className="assistant-kicker">Research desk</p><h2>Library assistant</h2><p>A focused conversation for discovery, policy, and access.</p></div>
-        <button type="button" className="assistant-clear" onClick={clearSession}>New chat</button>
+        <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 
       {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <button key={session.id} type="button" className={session.id === sessionId ? 'active' : ''} onClick={() => void selectSession(session)}>{session.title}</button>)}</div> : null}
@@ -184,6 +190,7 @@ export default function BookAssistant() {
         <button type="submit" className="assistant-submit" disabled={loading || !query.trim()} aria-label="Send message">Send</button>
       </form>
       <p className="assistant-disclaimer">Assistant responses are based on your library catalog and account data.</p>
-    </section>
+      </section> : null}
+    </>
   )
 }

@@ -116,7 +116,7 @@ export default function Home() {
                 </svg>
               }
               title="Temporary Digital Lending"
-              description="Request temporary digital access for 7 to 90 days. Built-in loan limits, extensions, and clear due dates keep resources accessible to everyone."
+              description="Request temporary digital access for 7 to 90 days with extensions and clear due dates."
               badge="Lending"
             />
 

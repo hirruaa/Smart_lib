@@ -340,14 +340,13 @@
   returns public.borrow_requests language plpgsql security definer set search_path = public as $$
   declare
     requested public.borrow_requests;
-    active_count integer;
     required_points integer;
     user_points integer;
     book_points integer;
   begin
     if auth.uid() is null then raise exception 'Authentication required'; end if;
-    if p_duration_days < 7 or p_duration_days > 90 then
-      raise exception 'Choose a lending period between 7 and 90 days';
+    if p_duration_days < 1 or p_duration_days > 90 then
+      raise exception 'Choose a lending period between 1 and 90 days';
     end if;
 
     select access_points into book_points from public.books where id = p_book_id;
@@ -355,14 +354,6 @@
     required_points := ceil(p_duration_days / 7.0)::integer * book_points;
 
     perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
-    select count(*) into active_count
-    from public.borrow_requests
-    where student_id = auth.uid() and status = 'approved'
-      and returned_date is null and due_date > now();
-    if active_count >= 3 then
-      raise exception 'You have reached the maximum of 3 active digital loans';
-    end if;
-
     if exists (
       select 1 from public.borrow_requests
       where student_id = auth.uid() and book_id = p_book_id
@@ -789,10 +780,11 @@
   using (
     bucket_id = 'ebooks' and (
       public.is_admin() or
+      name like 'contributions/' || auth.uid()::text || '/%' or
       exists (
         select 1 from public.books b
         join public.borrow_requests br on br.book_id = b.id
-        where (b.pdf_url = name or b.pdf_url like '%' || name)
+        where (b.storage_path = name or b.pdf_url = name or b.pdf_url like '%' || name)
           and br.student_id = auth.uid()
           and br.status = 'approved'
           and br.returned_date is null
