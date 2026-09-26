@@ -1026,8 +1026,8 @@ export default function AdminPage() {
           {section === 'materials' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">PDF materials</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Attach, replace, and verify protected digital files for catalog books.</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Attach PDF files</h2>
+                <p className="mt-1 max-w-2xl text-sm text-slate-500 dark:text-slate-400">Add a protected PDF to a book that already exists in the catalog. Students will open it through the Smart Lib reading session after they receive access.</p>
               </div>
 
               <div className="overflow-x-auto">
@@ -1035,7 +1035,7 @@ export default function AdminPage() {
                   <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Title</th>
-                      <th className="px-4 py-3 font-semibold">PDF URL</th>
+                      <th className="px-4 py-3 font-semibold">Reader</th>
                       <th className="px-4 py-3 font-semibold">Published</th>
                     </tr>
                   </thead>
@@ -1110,14 +1110,14 @@ export default function AdminPage() {
               >
                 <div className="space-y-4">
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Select book</span>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">1. Choose the catalog book</span>
                     <select
                       value={pdfBookId ?? ''}
                       onChange={(event) => setPdfBookId(Number(event.target.value) || null)}
                       required
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     >
-                      <option value="">Select a book</option>
+                      <option value="">Choose a book</option>
                       {books.map((book) => (
                         <option key={book.id} value={book.id}>
                           {book.title} ({book.author})
@@ -1132,13 +1132,15 @@ export default function AdminPage() {
                       onUrlEntered={(url) => setPdfUrl(url)}
                       currentValue={pdfUrl}
                       disabled={saving}
+                      allowExternalUrl={false}
                     />
                     <label className="mt-3 block max-w-sm">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Storage provider</span>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">2. Choose where to store the PDF</span>
                       <select value={materialStorageProvider} onChange={(event) => setMaterialStorageProvider(event.target.value as typeof materialStorageProvider)} disabled={saving} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
                         <option value="google_drive">Google Drive</option>
                         <option value="supabase">Supabase Storage</option>
                       </select>
+                      <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Google Drive uses your connected Drive account. Supabase Storage keeps the file inside this project.</span>
                     </label>
                   </div>
                 </div>
@@ -1147,7 +1149,7 @@ export default function AdminPage() {
                   disabled={saving}
                   className="mt-6 inline-flex w-full items-center justify-center rounded-3xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
                 >
-                  {saving ? 'Publishing...' : 'Attach & Publish PDF'}
+                  {saving ? 'Uploading and attaching...' : '3. Upload and attach PDF'}
                 </button>
               </form>
             </section>

@@ -7,6 +7,7 @@ interface EbookUploaderProps {
   onUrlEntered?: (url: string) => void
   currentValue?: string
   disabled?: boolean
+  allowExternalUrl?: boolean
 }
 
 export default function EbookUploader({
@@ -14,6 +15,7 @@ export default function EbookUploader({
   onUrlEntered,
   currentValue,
   disabled = false,
+  allowExternalUrl = true,
 }: EbookUploaderProps) {
   const [mode, setMode] = useState<'upload' | 'url'>('upload')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -78,7 +80,7 @@ export default function EbookUploader({
           >
             Upload PDF
           </button>
-          <button
+          {allowExternalUrl ? <button
             type="button"
             onClick={() => {
               setMode('url')
@@ -91,7 +93,7 @@ export default function EbookUploader({
             }`}
           >
             External URL / Google Drive
-          </button>
+          </button> : null}
         </div>
       </div>
 
@@ -187,8 +189,8 @@ export default function EbookUploader({
             placeholder="https://drive.google.com/... or https://..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-            Paste a public PDF URL, Google Drive share link, or external academic repository link.
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Paste a public PDF URL or Google Drive share link.
           </p>
         </div>
       )}
