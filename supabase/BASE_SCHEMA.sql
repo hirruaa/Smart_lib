@@ -401,7 +401,7 @@
     on conflict (id) do update set email = excluded.email;
     return new;
   end;
-  $$;a
+  $$;
 
   drop trigger if exists on_auth_user_created on auth.users;
   create trigger on_auth_user_created

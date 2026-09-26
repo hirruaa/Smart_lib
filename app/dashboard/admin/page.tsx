@@ -214,8 +214,11 @@ export default function AdminPage() {
       supabase.from('rewards').select('id,name,description,points_cost,reward_type,stock,is_active').order('points_cost'),
     ])
 
-    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error || auditRes.error || grantsRes.error || rewardsRes.error) {
-      setError('Failed to load admin data.')
+    // Optional insights modules may not exist yet in older Supabase projects.
+    // Keep the control panel usable while those sections remain empty.
+    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error) {
+      const failedResource = booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error
+      setError(`Failed to load admin data: ${failedResource?.message || 'Please check the Supabase schema.'}`)
     }
 
     setBooks((booksRes.data ?? []) as Book[])
