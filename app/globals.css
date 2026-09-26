@@ -426,6 +426,12 @@ html.dark .study-hub-panel > p, html.dark .study-collection p, html.dark .study-
 .notification-modal-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; cursor: pointer; font-size: 21px; line-height: 1; }
 .notification-modal-close:hover, .notification-modal-close:focus-visible { border-color: #78938a; background: #eef3ee; outline: none; }
 .reader-workspace { min-height: calc(100vh - 13rem); }
+.reader-theme-sepia .reader-workspace { background: #f4ead4; border-color: #d9c49d; }
+.reader-theme-sepia .reader-page-frame { filter: sepia(.16); }
+.reader-theme-dark .reader-workspace { background: #202522; border-color: #46534d; }
+.reader-theme-dark .reader-page-frame { filter: brightness(.86) contrast(1.06); }
+.reader-theme-dark .reader-page-navigation,
+.reader-theme-dark .reader-quick-drawing-tools { border-color: #46534d; background: rgba(35, 43, 39, .94); color: #dce8df; }
 .reader-toolbar { position: sticky; top: 12px; z-index: 20; border-color: #d7dfd7; background: rgba(252, 251, 247, .94); box-shadow: 0 14px 34px rgba(24, 43, 39, .12); backdrop-filter: blur(14px); }
 .reader-toolbar-controls { min-width: 0; }
 .reader-quick-actions { min-width: 0; }
