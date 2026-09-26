@@ -16,48 +16,42 @@ export default async function Page({ params }: Props) {
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
   const isAdmin = profile?.role === 'admin'
-  const { data: activeLoan } = await supabase
-    .from('borrow_requests')
-    .select('id')
-    .eq('student_id', user.id)
-    .eq('book_id', Number(params.bookId))
-    .eq('status', 'approved')
-    .is('returned_date', null)
-    .gt('due_date', new Date().toISOString())
-    .maybeSingle()
+  const [{ data: activeLoan }, { data: activeGrant }] = await Promise.all([
+    supabase
+      .from('borrow_requests')
+      .select('id')
+      .eq('student_id', user.id)
+      .eq('book_id', Number(params.bookId))
+      .eq('status', 'approved')
+      .is('returned_date', null)
+      .gt('due_date', new Date().toISOString())
+      .maybeSingle(),
+    supabase
+      .from('book_access_grants')
+      .select('id')
+      .eq('student_id', user.id)
+      .eq('book_id', Number(params.bookId))
+      .eq('status', 'active')
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle(),
+  ])
 
-  if (!isAdmin && !activeLoan) {
+  if (!isAdmin && !activeLoan && !activeGrant) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Active access required</h1><p className="mt-2">Request temporary digital access from the library before opening this resource.</p></div></div>
   }
 
-  const { data } = await supabase.from('books').select('id,pdf_url,title').eq('id', Number(params.bookId)).maybeSingle()
+  const { data } = await supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,title,access_mode').eq('id', Number(params.bookId)).maybeSingle()
   const book = (data as any) ?? null
 
-  if (!book || !book.pdf_url) {
+  if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Resource unavailable</h1><p className="mt-2">This resource does not have a readable digital file yet.</p></div></div>
   }
 
-  // If the book is stored in Supabase storage, generate a secure signed URL
-  let resolvedPdfUrl = book.pdf_url
-  if (!resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) {
-    const cleanPath = resolvedPdfUrl.replace(/^ebooks\//, '')
-    const { data: signedData, error: signError } = await supabase.storage
-      .from('ebooks')
-      .createSignedUrl(cleanPath, 7200)
+  let resolvedPdfUrl = book.pdf_url || ''
+  if (book.storage_provider === 'google_drive' || book.storage_provider === 'supabase' || !resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) resolvedPdfUrl = `/api/reader/${params.bookId}`
 
-    if (signError || !signedData?.signedUrl) {
-      return (
-        <div className="surface-page min-h-screen p-8">
-          <div className="surface-card mx-auto max-w-xl p-8">
-            <h1 className="text-2xl font-semibold">Unable to load document</h1>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              There was an issue retrieving the secure reading file. Please notify a library administrator.
-            </p>
-          </div>
-        </div>
-      )
-    }
-    resolvedPdfUrl = signedData.signedUrl
+  if ((book.access_mode === 'points' || book.access_mode === 'restricted') && (book.pdf_url.startsWith('http://') || book.pdf_url.startsWith('https://'))) {
+    return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Protected file migration required</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">This paid or restricted resource must be stored in the library&apos;s protected PDF storage before it can be opened.</p></div></div>
   }
 
   return (

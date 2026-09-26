@@ -6,11 +6,15 @@ type NotesPanelProps = {
   bookId: number
   selectedText?: string
   selectedPage?: number
+  onChanged?: () => void
+  onSelectNote?: (note: any) => void
 }
 
-export default function NotesPanel({ bookId, selectedText, selectedPage }: NotesPanelProps) {
+export default function NotesPanel({ bookId, selectedText, selectedPage, onChanged, onSelectNote }: NotesPanelProps) {
   const [notes, setNotes] = useState<any[]>([])
   const [editing, setEditing] = useState<any | null>(null)
+  const [query, setQuery] = useState('')
+  const [pageFilter, setPageFilter] = useState('')
 
   async function load() {
     const res = await fetch(`/api/study/notes?book_id=${bookId}`)
@@ -29,6 +33,10 @@ export default function NotesPanel({ bookId, selectedText, selectedPage }: Notes
   }, [selectedText, selectedPage, editing])
 
   const noteCount = useMemo(() => notes.length, [notes])
+  const filteredNotes = useMemo(() => notes.filter((note) => {
+    const haystack = `${note.text ?? ''} ${note.selection_text ?? ''}`.toLowerCase()
+    return (!query || haystack.includes(query.toLowerCase())) && (!pageFilter || String(note.page ?? '') === pageFilter)
+  }), [notes, pageFilter, query])
 
   async function handleSave(payload: any) {
     if (payload.id) {
@@ -38,12 +46,14 @@ export default function NotesPanel({ bookId, selectedText, selectedPage }: Notes
     }
     setEditing(null)
     await load()
+    onChanged?.()
   }
 
   async function handleDelete(id: number) {
     if (!confirm('Delete this note?')) return
     await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' })
     await load()
+    onChanged?.()
   }
 
   return (
@@ -61,12 +71,17 @@ export default function NotesPanel({ bookId, selectedText, selectedPage }: Notes
         </button>
       </div>
 
+      <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_110px]">
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" aria-label="Search notes" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+        <input value={pageFilter} onChange={(event) => setPageFilter(event.target.value.replace(/[^0-9]/g, ''))} placeholder="Page" aria-label="Filter notes by page" inputMode="numeric" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+      </div>
+
       {editing ? (
         <NoteEditor initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} />
-      ) : notes.length > 0 ? (
+      ) : filteredNotes.length > 0 ? (
         <ul className="space-y-3">
-          {notes.map((n) => (
-            <li key={n.id} className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/70">
+          {filteredNotes.map((n) => (
+            <li key={n.id} className="cursor-pointer rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4 transition hover:border-pine-300 dark:border-slate-700 dark:bg-slate-950/70" onClick={() => onSelectNote?.(n)}>
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
                   <span>Page {n.page || '—'}</span>
@@ -77,8 +92,8 @@ export default function NotesPanel({ bookId, selectedText, selectedPage }: Notes
                 ) : null}
                 <p className="text-sm leading-6 text-slate-700 dark:text-slate-300">{n.text || 'No additional note text.'}</p>
                 <div className="flex gap-2 text-xs text-slate-500 dark:text-slate-400">
-                  <button onClick={() => setEditing(n)} className="font-semibold text-sky-600">Edit</button>
-                  <button onClick={() => handleDelete(n.id)} className="font-semibold text-rose-600">Delete</button>
+                  <button onClick={(event) => { event.stopPropagation(); setEditing(n) }} className="font-semibold text-sky-600">Edit</button>
+                  <button onClick={(event) => { event.stopPropagation(); void handleDelete(n.id) }} className="font-semibold text-rose-600">Delete</button>
                 </div>
               </div>
             </li>
@@ -86,7 +101,7 @@ export default function NotesPanel({ bookId, selectedText, selectedPage }: Notes
         </ul>
       ) : (
         <div className="rounded-[1.5rem] border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-300">
-          No notes yet — select text on the page to start a note, or click New to add one manually.
+          {notes.length ? 'No notes match the current filters.' : 'No notes yet — select text on the page to start a note, or click New to add one manually.'}
         </div>
       )}
     </div>

@@ -32,13 +32,28 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json()
+  const body = await request.json().catch(() => ({}))
   if (body.sessionId) {
+    const sessionId = String(body.sessionId)
+    const role = body.role === 'user' || body.role === 'assistant' ? body.role : null
+    const content = typeof body.content === 'string' ? body.content.trim() : ''
+    if (!sessionId || !role || !content || content.length > 12000) {
+      return NextResponse.json({ error: 'Invalid assistant message.' }, { status: 400 })
+    }
+    const { data: ownedSession, error: sessionError } = await supabase
+      .from('assistant_sessions')
+      .select('id')
+      .eq('id', sessionId)
+      .eq('user_id', user.id)
+      .maybeSingle()
+    if (sessionError) return NextResponse.json({ error: 'Unable to verify assistant session.' }, { status: 500 })
+    if (!ownedSession) return NextResponse.json({ error: 'Assistant session not found.' }, { status: 404 })
+
     const { error } = await supabase.from('assistant_messages').insert({
-      session_id: body.sessionId,
+      session_id: sessionId,
       user_id: user.id,
-      role: body.role,
-      content: body.content,
+      role,
+      content,
       results: body.results ?? [],
       loans: body.loans ?? [],
     })
@@ -47,7 +62,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true })
   }
 
-  const { data, error } = await supabase.from('assistant_sessions').insert({ user_id: user.id, title: body.title || 'New research chat' }).select('id, title').single()
+  const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : ''
+  const { data, error } = await supabase.from('assistant_sessions').insert({ user_id: user.id, title: title || 'New research chat' }).select('id, title').single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ session: data })
 }

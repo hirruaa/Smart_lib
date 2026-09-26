@@ -60,11 +60,10 @@ export default function ProfilePage() {
       return
     }
 
-    const { error: updateError } = await supabase.from('profiles').upsert({
-      id: user.id,
-      full_name: fullName || null,
-      email: profile?.email,
-    })
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ full_name: fullName || null })
+      .eq('id', user.id)
 
     if (updateError) {
       setError(updateError.message)

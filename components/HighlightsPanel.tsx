@@ -15,12 +15,16 @@ export default function HighlightsPanel({
   bookId,
   selectedText,
   selectedPage,
+  selectedRects = [],
   onClearSelection,
+  onChanged,
 }: {
   bookId: number
   selectedText?: string
   selectedPage?: number
+  selectedRects?: Array<{ x: number; y: number; width: number; height: number }>
   onClearSelection?: () => void
+  onChanged?: () => void
 }) {
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [saving, setSaving] = useState(false)
@@ -53,13 +57,15 @@ export default function HighlightsPanel({
         body: JSON.stringify({
           book_id: bookId,
           page: selectedPage ?? 1,
-          rects: [],
+          rects: selectedRects,
           color: 'yellow',
           note_id: null,
           meta: { selection_text: selectedText },
         }),
       })
       await loadHighlights()
+      onChanged?.()
+      window.dispatchEvent(new Event('smart-lib:highlights-changed'))
       onClearSelection?.()
     } catch (err: any) {
       setError(err?.message ?? 'Unable to save highlight')

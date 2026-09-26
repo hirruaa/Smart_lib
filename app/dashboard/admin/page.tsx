@@ -9,7 +9,6 @@ import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
 import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
-import { uploadEbookFile } from '@/utils/storage'
 
 const navItems = [
   { label: 'Overview', section: 'overview' },
@@ -17,8 +16,12 @@ const navItems = [
   { label: 'Books', section: 'books' },
   { label: 'Requests', section: 'requests' },
   { label: 'Contributions', section: 'contributions' },
+  { label: 'Recognition', section: 'recognition' },
   { label: 'Users', section: 'users' },
   { label: 'Materials', section: 'materials' },
+  { label: 'Access grants', section: 'grants' },
+  { label: 'Audit log', section: 'audit' },
+  { label: 'Rewards', section: 'rewards' },
 ]
 
 type Book = {
@@ -29,7 +32,12 @@ type Book = {
   category: string
   description: string | null
   pdf_url: string | null
+  storage_provider?: string
+  storage_file_id?: string | null
+  storage_path?: string | null
   access_points: number
+  access_mode: 'free' | 'points' | 'restricted'
+  access_duration_days: number
   total_copies: number
   available_copies: number
   created_at: string | null
@@ -76,7 +84,12 @@ type Contribution = {
   pdf_url: string | null
   status: string
   created_at: string | null
+  review_feedback?: string | null
 }
+
+type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
+type AccessGrant = { id: number; student_id: string; book_id: number; access_type: string; expires_at: string | null; status: string; reason: string | null }
+type Reward = { id: number; name: string; description: string | null; points_cost: number; reward_type: string; stock: number | null; is_active: boolean }
 
 function AdminNavIcon({ section }: { section: string }) {
   const paths: Record<string, React.ReactNode> = {
@@ -86,6 +99,7 @@ function AdminNavIcon({ section }: { section: string }) {
     requests: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 12h6M9 16h4" /></>,
     users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
     materials: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+    recognition: <><path d="M12 3 14 8l5 .5-3.8 3.3 1.2 5.2-4.4-2.8-4.4 2.8 1.2-5.2L5 8.5 10 8z" /></>,
   }
 
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{paths[section]}</svg>
@@ -109,18 +123,28 @@ export default function AdminPage() {
     isbn: '',
     pdf_url: '',
     access_points: '0',
+    access_mode: 'free' as 'free' | 'points' | 'restricted',
+    access_duration_days: '30',
     total_copies: '1',
     description: '',
   })
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
   const [newBookFile, setNewBookFile] = useState<File | null>(null)
+  const [newBookStorageProvider, setNewBookStorageProvider] = useState<'google_drive' | 'supabase'>('google_drive')
   const [materialFile, setMaterialFile] = useState<File | null>(null)
+  const [materialStorageProvider, setMaterialStorageProvider] = useState<'google_drive' | 'supabase'>('google_drive')
   const [bookSearch, setBookSearch] = useState('')
   const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revoked'>('all')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '' })
+  const [recognitionForm, setRecognitionForm] = useState({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
+  const [grantForm, setGrantForm] = useState({ studentId: '', bookId: '', duration: '7', reason: '' })
+  const [rewards, setRewards] = useState<Reward[]>([])
+  const [rewardForm, setRewardForm] = useState({ name: '', description: '', cost: '50', type: 'profile_badge', stock: '' })
 
   const handleDeleteBook = async (bookId: number, title: string) => {
     if (!confirm(`Are you sure you want to remove "${title}" from the catalog?`)) return
@@ -174,10 +198,10 @@ export default function AdminPage() {
 
     setProfile({ email: email ?? '', role })
 
-    const [booksRes, requestsRes, studentsRes, contributionsRes] = await Promise.all([
+    const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, pdf_url, access_points, total_copies, available_copies, created_at')
+        .select('id, title, author, isbn, category, description, pdf_url, storage_provider, storage_file_id, storage_path, access_points, access_mode, access_duration_days, total_copies, available_copies, created_at')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -190,11 +214,14 @@ export default function AdminPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
-        .select('id, user_id, title, author, description, pdf_url, status, created_at')
+        .select('id, user_id, title, author, description, pdf_url, status, review_feedback, created_at')
         .order('created_at', { ascending: false }),
+      supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
+      supabase.from('book_access_grants').select('id,student_id,book_id,access_type,expires_at,status,reason').order('created_at', { ascending: false }).limit(100),
+      supabase.from('rewards').select('id,name,description,points_cost,reward_type,stock,is_active').order('points_cost'),
     ])
 
-    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error) {
+    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error || auditRes.error || grantsRes.error || rewardsRes.error) {
       setError('Failed to load admin data.')
     }
 
@@ -202,6 +229,9 @@ export default function AdminPage() {
     setRequests((requestsRes.data ?? []) as RequestItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
+    setAuditLogs((auditRes.data ?? []) as AuditLog[])
+    setAccessGrants((grantsRes.data ?? []) as AccessGrant[])
+    setRewards((rewardsRes.data ?? []) as Reward[])
   }
 
   useEffect(() => {
@@ -412,6 +442,17 @@ export default function AdminPage() {
     setSaving(false)
   }
 
+  const handleContributionRevision = async (contributionId: number) => {
+    const feedback = window.prompt('What should the student revise?', 'Please add clearer sources, structure, or explanations.')
+    if (!feedback?.trim()) return
+    setSaving(true)
+    setError(null)
+    const { error } = await getSupabase().rpc('admin_request_contribution_revision', { contribution_id: contributionId, feedback: feedback.trim() })
+    if (error) setError(error.message)
+    else { setActionMessage('Revision request sent to the student.'); await loadData() }
+    setSaving(false)
+  }
+
   const handleCreateStudent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSaving(true)
@@ -433,6 +474,74 @@ export default function AdminPage() {
     setSaving(false)
   }
 
+  const handleRecognition = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const { error } = await getSupabase().rpc('admin_award_recognition', {
+      target_user_id: recognitionForm.studentId,
+      award_category: recognitionForm.category,
+      award_points: Number(recognitionForm.points),
+      award_reason: recognitionForm.reason,
+    })
+    if (error) setError(error.message)
+    else {
+      setActionMessage('Recognition points awarded successfully.')
+      setRecognitionForm({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
+    }
+    setSaving(false)
+  }
+
+  const handleGrantAccess = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const { error } = await getSupabase().rpc('admin_grant_book_access', {
+      target_user_id: grantForm.studentId,
+      target_book_id: Number(grantForm.bookId),
+      duration_days: Number(grantForm.duration),
+      grant_reason: grantForm.reason,
+    })
+    if (error) setError(error.message)
+    else { setActionMessage('Temporary access granted.'); setGrantForm({ studentId: '', bookId: '', duration: '7', reason: '' }); await loadData() }
+    setSaving(false)
+  }
+
+  const handleRevokeGrant = async (grantId: number) => {
+    if (!window.confirm('Revoke this administrator-granted access?')) return
+    setSaving(true)
+    const { error } = await getSupabase().rpc('admin_revoke_book_access', { grant_id: grantId, revoke_reason: 'Administrator revoked access' })
+    if (error) setError(error.message)
+    else { setActionMessage('Access grant revoked.'); await loadData() }
+    setSaving(false)
+  }
+
+  const handleCreateReward = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError(null)
+    const { error } = await getSupabase().rpc('admin_create_reward', {
+      reward_name: rewardForm.name,
+      reward_description: rewardForm.description,
+      reward_cost: Number(rewardForm.cost),
+      reward_kind: rewardForm.type,
+      reward_stock: rewardForm.stock.trim() ? Number(rewardForm.stock) : null,
+    })
+    if (error) setError(error.message)
+    else { setActionMessage('Reward created.'); setRewardForm({ name: '', description: '', cost: '50', type: 'profile_badge', stock: '' }); await loadData() }
+    setSaving(false)
+  }
+
+  const handleRewardStatus = async (reward: Reward) => {
+    setSaving(true)
+    const { error } = await getSupabase().rpc('admin_set_reward_active', { reward_id: reward.id, active: !reward.is_active })
+    if (error) setError(error.message)
+    else { setActionMessage(`Reward ${reward.is_active ? 'deactivated' : 'activated'}.`); await loadData() }
+    setSaving(false)
+  }
+
   const handleAddBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSaving(true)
@@ -441,17 +550,31 @@ export default function AdminPage() {
 
     const supabase = getSupabase()
     let finalPdfUrl = newBook.pdf_url.trim()
+    let storageMetadata: Record<string, unknown> = { storage_provider: finalPdfUrl ? 'external' : 'supabase' }
 
     // If admin selected a PDF file to upload to Supabase Storage
     if (newBookFile) {
-      setActionMessage('Uploading e-book to Supabase Storage...')
-      const uploadResult = await uploadEbookFile(supabase, newBookFile, newBook.title.slice(0, 15))
-      if (uploadResult.error) {
-        setError(`Upload failed: ${uploadResult.error}`)
+      setActionMessage('Uploading e-book to library storage...')
+      const formData = new FormData()
+      formData.append('file', newBookFile)
+      formData.append('category', newBook.category || 'Books')
+      formData.append('provider', newBookStorageProvider)
+      formData.append('allow_fallback', 'false')
+      const uploadResponse = await fetch('/api/storage/upload', { method: 'POST', body: formData })
+      const uploadResult = await uploadResponse.json()
+      if (!uploadResponse.ok) {
+        setError(`Upload failed: ${uploadResult.error || 'Unable to upload PDF.'}`)
         setSaving(false)
         return
       }
-      finalPdfUrl = uploadResult.path
+      finalPdfUrl = uploadResult.pdf_url || uploadResult.storage_path || ''
+      storageMetadata = { storage_provider: uploadResult.storage_provider, storage_file_id: uploadResult.storage_file_id || null, storage_path: uploadResult.storage_path || null, file_name: uploadResult.file_name || newBookFile.name, file_size: uploadResult.file_size || newBookFile.size, mime_type: uploadResult.mime_type || 'application/pdf' }
+    }
+
+    if (newBook.access_mode !== 'free' && /^https?:\/\//i.test(finalPdfUrl)) {
+      setError('Paid or restricted resources must use a PDF uploaded to protected library storage.')
+      setSaving(false)
+      return
     }
 
     const { error } = await supabase.from('books').insert([
@@ -461,8 +584,11 @@ export default function AdminPage() {
         category: newBook.category,
         isbn: newBook.isbn || null,
         pdf_url: finalPdfUrl || null,
+        ...storageMetadata,
         description: newBook.description || null,
         access_points: Number(newBook.access_points) || 0,
+        access_mode: newBook.access_mode,
+        access_duration_days: Number(newBook.access_duration_days) || 30,
         total_copies: Number(newBook.total_copies) || 1,
         available_copies: Number(newBook.total_copies) || 1,
       },
@@ -472,12 +598,32 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New book added to inventory successfully.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_points: '0', total_copies: '1', description: '' })
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_points: '0', access_mode: 'free', access_duration_days: '30', total_copies: '1', description: '' })
       setNewBookFile(null)
       await loadData()
     }
 
     setSaving(false)
+  }
+
+  const exportLoanReport = () => {
+    const rows = requests.map((request) => [
+      request.id,
+      studentMap.get(request.student_id)?.email ?? 'Unknown',
+      bookMap.get(request.book_id)?.title ?? 'Unknown',
+      request.status,
+      request.request_date ?? '',
+      request.due_date ?? '',
+    ])
+    const csv = [['Request ID', 'Student', 'Book', 'Status', 'Requested', 'Due'], ...rows]
+      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `smart-lib-loans-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -570,6 +716,27 @@ export default function AdminPage() {
               {actionMessage}
             </div>
           ) : null}
+
+          {section === 'overview' && (
+            <section className="admin-overview-grid grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Pending actions</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Items that need an administrator decision.</p></div>
+                  <button type="button" onClick={exportLoanReport} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Export loan report</button>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left dark:border-amber-900/50 dark:bg-amber-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">Borrow requests</span><strong className="mt-2 block text-2xl text-amber-950 dark:text-amber-100">{pendingRequests.length}</strong><span className="text-xs text-amber-800/75 dark:text-amber-300/80">Awaiting review</span></button>
+                  <button type="button" onClick={() => setSection('contributions')} className="admin-action-tile rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left dark:border-sky-900/50 dark:bg-sky-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-300">Contributions</span><strong className="mt-2 block text-2xl text-sky-950 dark:text-sky-100">{contributions.filter((item) => item.status === 'pending').length}</strong><span className="text-xs text-sky-800/75 dark:text-sky-300/80">Awaiting review</span></button>
+                  <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-rose-200 bg-rose-50 p-4 text-left dark:border-rose-900/50 dark:bg-rose-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">Overdue loans</span><strong className="mt-2 block text-2xl text-rose-950 dark:text-rose-100">{overdueLoans.length}</strong><span className="text-xs text-rose-800/75 dark:text-rose-300/80">Need follow-up</span></button>
+                </div>
+                <div className="mt-6 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700"><tr><th className="px-3 py-3">Student</th><th className="px-3 py-3">Book</th><th className="px-3 py-3">Due</th><th className="px-3 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{[...pendingRequests, ...overdueLoans].slice(0, 6).map((request) => <tr key={`overview-${request.id}`}><td className="px-3 py-3 text-slate-700 dark:text-slate-200">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{request.due_date ? new Date(request.due_date).toLocaleDateString() : '—'}</td><td className="px-3 py-3 capitalize text-slate-600 dark:text-slate-300">{request.status === 'approved' ? 'overdue' : request.status}</td></tr>)}</tbody></table>{pendingRequests.length + overdueLoans.length === 0 ? <p className="px-3 py-6 text-sm text-slate-500">No urgent actions right now.</p> : null}</div>
+              </div>
+              <div className="space-y-6">
+                <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library health</h2><div className="mt-5 space-y-4"><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Digital materials</span><strong className="text-slate-900 dark:text-slate-100">{materials.length} / {books.length || 1}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, books.length ? materials.length / books.length * 100 : 0)}%` }} /></div></div><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Active access</span><strong className="text-slate-900 dark:text-slate-100">{requests.filter((item) => item.status === 'approved' && !item.returned_date).length}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-sky-500" style={{ width: `${Math.min(100, requests.length ? requests.filter((item) => item.status === 'approved' && !item.returned_date).length / requests.length * 100 : 0)}%` }} /></div></div></div></div>
+                <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Recent activity</h2><div className="mt-4 space-y-3">{requests.slice(0, 5).map((request) => <div key={`activity-${request.id}`} className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 text-sm last:border-0 dark:border-slate-800"><div><p className="font-medium text-slate-800 dark:text-slate-100">{studentMap.get(request.student_id)?.email ?? 'Student'} requested {bookMap.get(request.book_id)?.title ?? 'a resource'}</p><p className="mt-1 text-xs text-slate-500">{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'Recently'}</p></div><span className="capitalize text-xs text-slate-500">{request.status}</span></div>)}{requests.length === 0 ? <p className="text-sm text-slate-500">No activity yet.</p> : null}</div></div>
+              </div>
+            </section>
+          )}
 
           {section === 'analytics' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
@@ -714,6 +881,31 @@ export default function AdminPage() {
                     />
                     <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Use 0 for free access.</span>
                   </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access mode</span>
+                    <select
+                      value={newBook.access_mode}
+                      onChange={(event) => setNewBook({ ...newBook, access_mode: event.target.value as typeof newBook.access_mode })}
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="free">Free access</option>
+                      <option value="points">Points-based access</option>
+                      <option value="restricted">Restricted access</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration (days)</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={newBook.access_duration_days}
+                      onChange={(event) => setNewBook({ ...newBook, access_duration_days: event.target.value })}
+                      required
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Students receive this duration per unlock.</span>
+                  </label>
                 </div>
                 <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">ISBN</span>
@@ -730,6 +922,13 @@ export default function AdminPage() {
                     currentValue={newBook.pdf_url}
                     disabled={saving}
                   />
+                  <label className="mt-3 block max-w-sm">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Storage provider</span>
+                    <select value={newBookStorageProvider} onChange={(event) => setNewBookStorageProvider(event.target.value as typeof newBookStorageProvider)} disabled={saving} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+                      <option value="google_drive">Google Drive</option>
+                      <option value="supabase">Supabase Storage</option>
+                    </select>
+                  </label>
                 </div>
                 <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Description</span>
@@ -886,18 +1085,26 @@ export default function AdminPage() {
                   const supabase = getSupabase()
 
                   let finalUrl = pdfUrl.trim()
+                  let attachedStorage: Record<string, unknown> = { storage_provider: finalUrl ? 'external' : 'supabase' }
                   if (materialFile) {
-                    setActionMessage('Uploading e-book to Supabase Storage...')
-                    const uploadResult = await uploadEbookFile(supabase, materialFile, pdfBookId)
-                    if (uploadResult.error) {
-                      setError(`Upload failed: ${uploadResult.error}`)
+                    setActionMessage('Uploading e-book to library storage...')
+                    const formData = new FormData()
+                    formData.append('file', materialFile)
+                    formData.append('category', 'Books')
+                    formData.append('provider', materialStorageProvider)
+                    formData.append('allow_fallback', 'false')
+                    const uploadResponse = await fetch('/api/storage/upload', { method: 'POST', body: formData })
+                    const uploadResult = await uploadResponse.json()
+                    if (!uploadResponse.ok) {
+                      setError(`Upload failed: ${uploadResult.error || 'Unable to upload PDF.'}`)
                       setSaving(false)
                       return
                     }
-                    finalUrl = uploadResult.path
+                    finalUrl = uploadResult.pdf_url || uploadResult.storage_path || ''
+                    attachedStorage = { storage_provider: uploadResult.storage_provider, storage_file_id: uploadResult.storage_file_id || null, storage_path: uploadResult.storage_path || null, file_name: uploadResult.file_name || materialFile.name, file_size: uploadResult.file_size || materialFile.size, mime_type: uploadResult.mime_type || 'application/pdf' }
                   }
 
-                  const { error } = await supabase.from('books').update({ pdf_url: finalUrl }).eq('id', pdfBookId)
+                  const { error } = await supabase.from('books').update({ pdf_url: finalUrl, ...attachedStorage }).eq('id', pdfBookId)
                   if (error) {
                     setError(error.message)
                   } else {
@@ -936,6 +1143,13 @@ export default function AdminPage() {
                       currentValue={pdfUrl}
                       disabled={saving}
                     />
+                    <label className="mt-3 block max-w-sm">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Storage provider</span>
+                      <select value={materialStorageProvider} onChange={(event) => setMaterialStorageProvider(event.target.value as typeof materialStorageProvider)} disabled={saving} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+                        <option value="google_drive">Google Drive</option>
+                        <option value="supabase">Supabase Storage</option>
+                      </select>
+                    </label>
                   </div>
                 </div>
                 <button
@@ -946,6 +1160,55 @@ export default function AdminPage() {
                   {saving ? 'Publishing...' : 'Attach & Publish PDF'}
                 </button>
               </form>
+            </section>
+          )}
+
+          {section === 'recognition' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+              <div className="mb-6"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Student recognition</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Award points for verified academic help, volunteering, or community participation.</p></div>
+              <form onSubmit={handleRecognition} className="grid gap-4 sm:grid-cols-2">
+                <label className="block"><span className="text-sm font-medium text-slate-700 dark:text-slate-200">Student</span><select required value={recognitionForm.studentId} onChange={(event) => setRecognitionForm({ ...recognitionForm, studentId: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{student.email}</option>)}</select></label>
+                <label className="block"><span className="text-sm font-medium text-slate-700 dark:text-slate-200">Category</span><select value={recognitionForm.category} onChange={(event) => setRecognitionForm({ ...recognitionForm, category: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="academic_assistance">Academic assistance</option><option value="community_contribution">Community contribution</option><option value="volunteer_work">Volunteer work</option><option value="academic_achievement">Academic achievement</option><option value="special_recognition">Special recognition</option></select></label>
+                <label className="block"><span className="text-sm font-medium text-slate-700 dark:text-slate-200">Points</span><input required type="number" min="1" max="100" value={recognitionForm.points} onChange={(event) => setRecognitionForm({ ...recognitionForm, points: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <label className="block sm:col-span-2"><span className="text-sm font-medium text-slate-700 dark:text-slate-200">Reason</span><textarea required minLength={1} maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm({ ...recognitionForm, reason: event.target.value })} rows={4} placeholder="Explain the verified contribution..." className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <div className="sm:col-span-2"><button type="submit" disabled={saving || !recognitionForm.studentId} className="pine-action rounded-2xl px-5 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Awarding...' : 'Award recognition points'}</button></div>
+              </form>
+            </section>
+          )}
+
+          {section === 'grants' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
+              <div className="mb-6"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Administrator access grants</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Give temporary access without changing a student&apos;s points balance.</p></div>
+              <form onSubmit={handleGrantAccess} className="grid gap-4 sm:grid-cols-2">
+                <label className="block"><span className="text-sm font-medium">Student</span><select required value={grantForm.studentId} onChange={(event) => setGrantForm({ ...grantForm, studentId: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{student.email}</option>)}</select></label>
+                <label className="block"><span className="text-sm font-medium">Book</span><select required value={grantForm.bookId} onChange={(event) => setGrantForm({ ...grantForm, bookId: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="">Select a book</option>{books.filter((book) => book.pdf_url).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
+                <label className="block"><span className="text-sm font-medium">Duration (days)</span><input required type="number" min="1" max="365" value={grantForm.duration} onChange={(event) => setGrantForm({ ...grantForm, duration: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <label className="block sm:col-span-2"><span className="text-sm font-medium">Reason</span><textarea required maxLength={500} value={grantForm.reason} onChange={(event) => setGrantForm({ ...grantForm, reason: event.target.value })} rows={3} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <div className="sm:col-span-2"><button type="submit" disabled={saving || !grantForm.studentId || !grantForm.bookId} className="pine-action rounded-2xl px-5 py-3 text-sm font-semibold disabled:opacity-50">Grant temporary access</button></div>
+              </form>
+              <div className="mt-8 space-y-3">{accessGrants.filter((grant) => grant.access_type === 'admin_grant').map((grant) => <article key={grant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-paper-300 p-4 dark:border-forest-700"><div><strong>{books.find((book) => book.id === grant.book_id)?.title ?? `Book #${grant.book_id}`}</strong><p className="mt-1 text-xs text-slate-500">{students.find((student) => student.id === grant.student_id)?.email ?? 'Student'} · expires {grant.expires_at ? new Date(grant.expires_at).toLocaleString() : 'never'} · {grant.status}</p></div>{grant.status === 'active' ? <button type="button" disabled={saving} onClick={() => void handleRevokeGrant(grant.id)} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700">Revoke</button> : null}</article>)}{accessGrants.filter((grant) => grant.access_type === 'admin_grant').length === 0 ? <p className="text-sm text-slate-500">No administrator grants yet.</p> : null}</div>
+            </section>
+          )}
+
+          {section === 'audit' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Audit log</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review recent point, recognition, contribution, and access actions.</p>
+              <div className="mt-5 space-y-3">{auditLogs.map((log) => <article key={log.id} className="rounded-2xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex flex-wrap justify-between gap-2"><strong className="capitalize">{log.action.replaceAll('_', ' ')}</strong><span className="text-xs text-slate-500">{new Date(log.created_at).toLocaleString()}</span></div><p className="mt-1 text-xs text-slate-500">{log.target_type} #{log.target_id ?? '—'}</p></article>)}{auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit events recorded yet.</p> : null}</div>
+            </section>
+          )}
+
+          {section === 'rewards' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
+              <div className="mb-6"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Rewards catalog</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Create non-monetary rewards students can redeem with earned points.</p></div>
+              <form onSubmit={handleCreateReward} className="grid gap-4 sm:grid-cols-2">
+                <label className="block"><span className="text-sm font-medium">Name</span><input required maxLength={120} value={rewardForm.name} onChange={(event) => setRewardForm({ ...rewardForm, name: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <label className="block"><span className="text-sm font-medium">Type</span><select value={rewardForm.type} onChange={(event) => setRewardForm({ ...rewardForm, type: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="profile_badge">Profile badge</option><option value="profile_theme">Profile theme</option><option value="notebook_theme">Notebook theme</option><option value="annotation_style">Annotation style</option><option value="certificate">Certificate</option></select></label>
+                <label className="block"><span className="text-sm font-medium">Point cost</span><input required type="number" min="1" value={rewardForm.cost} onChange={(event) => setRewardForm({ ...rewardForm, cost: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <label className="block"><span className="text-sm font-medium">Stock (optional)</span><input type="number" min="0" value={rewardForm.stock} onChange={(event) => setRewardForm({ ...rewardForm, stock: event.target.value })} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <label className="block sm:col-span-2"><span className="text-sm font-medium">Description</span><textarea maxLength={500} value={rewardForm.description} onChange={(event) => setRewardForm({ ...rewardForm, description: event.target.value })} rows={3} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+                <div className="sm:col-span-2"><button type="submit" disabled={saving} className="pine-action rounded-2xl px-5 py-3 text-sm font-semibold disabled:opacity-50">Create reward</button></div>
+              </form>
+              <div className="mt-8 space-y-3">{rewards.map((reward) => <article key={reward.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-paper-300 p-4 dark:border-forest-700"><div><strong>{reward.name}</strong><p className="mt-1 text-xs text-slate-500">{reward.points_cost} points · {reward.stock === null ? 'unlimited' : `${reward.stock} in stock`} · {reward.is_active ? 'active' : 'inactive'}</p></div><button type="button" disabled={saving} onClick={() => void handleRewardStatus(reward)} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{reward.is_active ? 'Deactivate' : 'Activate'}</button></article>)}{rewards.length === 0 ? <p className="text-sm text-slate-500">No rewards configured.</p> : null}</div>
             </section>
           )}
 
@@ -966,6 +1229,7 @@ export default function AdminPage() {
                         {contribution.pdf_url ? <a href={contribution.pdf_url} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
                       </div>
                       <div className="flex shrink-0 gap-2">
+                        <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'rejected')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-300">Reject</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'approved')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Approve</button>
                       </div>

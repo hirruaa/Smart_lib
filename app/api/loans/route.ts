@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
-const allowedDurations = new Set([7, 14, 30, 45, 60, 90])
-
 export async function POST(request: Request) {
   try {
     const body = await request.json()
     const bookId = Number(body.bookId)
     const durationDays = Number(body.durationDays)
 
-    if (!Number.isInteger(bookId) || !Number.isInteger(durationDays) || !allowedDurations.has(durationDays)) {
+    if (!Number.isInteger(bookId) || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) {
       return NextResponse.json({ error: 'Choose a valid lending period.' }, { status: 400 })
     }
 

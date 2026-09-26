@@ -21,6 +21,9 @@ type Book = {
   total_copies: number
   available_copies: number
   access_points: number
+  access_mode: 'free' | 'points' | 'restricted'
+  access_duration_days: number
+  page_count?: number | null
   pdf_url?: string | null
 }
 
@@ -46,6 +49,7 @@ type UserProfile = {
 }
 
 type Fine = { id: number; amount: number; status: string; created_at: string | null }
+type SystemNotification = { id: number; title: string; message: string; read_at: string | null; created_at: string }
 
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -68,6 +72,8 @@ export default function StudentPage() {
   const [query, setQuery] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [availability, setAvailability] = useState('all')
+  const [catalogSort, setCatalogSort] = useState<'relevance' | 'title' | 'author' | 'newest'>('relevance')
+  const [digitalOnly, setDigitalOnly] = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
@@ -85,6 +91,7 @@ export default function StudentPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set())
   const [fines, setFines] = useState<Fine[]>([])
+  const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([])
   const [reviewBookId, setReviewBookId] = useState<number | null>(null)
   const [reviewRating, setReviewRating] = useState('5')
   const [reviewComment, setReviewComment] = useState('')
@@ -92,6 +99,8 @@ export default function StudentPage() {
   const [contributionSubmitting, setContributionSubmitting] = useState(false)
   const [contributionStatus, setContributionStatus] = useState<string | null>(null)
   const [contributionForm, setContributionForm] = useState({ title: '', author: '', description: '', pdfUrl: '' })
+  const [lastReadPages, setLastReadPages] = useState<Record<number, number>>({})
+  const [readingProgress, setReadingProgress] = useState<Record<number, { current_page: number; total_pages: number | null }>>({})
 
   useEffect(() => {
     if (!notificationsOpen) return
@@ -103,6 +112,11 @@ export default function StudentPage() {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [notificationsOpen])
+
+  useEffect(() => {
+    if (!userId) return
+    fetch('/api/notifications').then((response) => response.ok ? response.json() : []).then((data) => setSystemNotifications(Array.isArray(data) ? data : [])).catch(() => undefined)
+  }, [userId])
 
   useEffect(() => {
     const supabase = getSupabase()
@@ -146,10 +160,10 @@ export default function StudentPage() {
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0 })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, wishlistResult, finesResult] = await Promise.all([
+      const [booksResult, requestsResult, wishlistResult, finesResult, progressResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, total_copies, available_copies, access_points, pdf_url')
+        .select('id, title, author, category, description, isbn, total_copies, available_copies, access_points, access_mode, access_duration_days, page_count, pdf_url')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -158,6 +172,7 @@ export default function StudentPage() {
           .order('request_date', { ascending: false }),
         supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
         supabase.from('fines').select('id, amount, status, created_at').eq('student_id', currentUser.id).eq('status', 'unpaid').order('created_at', { ascending: false }),
+        supabase.from('reading_progress').select('book_id,current_page,total_pages').eq('user_id', currentUser.id),
       ])
 
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
@@ -170,12 +185,16 @@ export default function StudentPage() {
         total_copies: book.total_copies ?? 0,
         available_copies: book.available_copies ?? 0,
         access_points: book.access_points ?? 0,
+        access_mode: book.access_mode ?? (book.access_points > 0 ? 'points' : 'free'),
+        access_duration_days: book.access_duration_days ?? 30,
+        page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
       }))
 
       setBooks(fetchedBooks)
       setWishlistIds(new Set((wishlistResult.data ?? []).map((item: { book_id: number }) => item.book_id)))
       setFines((finesResult.data ?? []) as Fine[])
+      setReadingProgress(Object.fromEntries((progressResult.data ?? []).map((item: { book_id: number; current_page: number; total_pages: number | null }) => [item.book_id, item])))
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
         const matchingBook = fetchedBooks.find((b) => b.id === request.book_id)
         return {
@@ -201,8 +220,8 @@ export default function StudentPage() {
   }, [books])
 
   const filteredBooks = useMemo(
-    () =>
-      books
+    () => {
+      const results = books
         .map((book) => ({
           ...book,
           status: 'Digital access',
@@ -223,14 +242,38 @@ export default function StudentPage() {
             (availability === 'available' && book.available_copies > 0) ||
             (availability === 'all-out' && book.available_copies === 0)
 
-          return matchesQuery && matchesCategory && matchesAvailability
-        }),
-    [books, query, selectedCategory, availability]
+          const matchesDigital = !digitalOnly || Boolean(book.pdf_url)
+
+          return matchesQuery && matchesCategory && matchesAvailability && matchesDigital
+        })
+
+      return results.sort((a, b) => {
+        if (catalogSort === 'title') return a.title.localeCompare(b.title)
+        if (catalogSort === 'author') return a.author.localeCompare(b.author)
+        if (catalogSort === 'newest') return b.id - a.id
+        return 0
+      })
+    },
+    [books, query, selectedCategory, availability, catalogSort, digitalOnly]
   )
 
   const activeLoans = useMemo(
     () => borrowRequests.filter((request) => request.status === 'approved' && !request.returned_date),
     [borrowRequests]
+  )
+
+  useEffect(() => {
+    const saved: Record<number, number> = {}
+    activeLoans.forEach((loan) => {
+      const page = Number(window.localStorage.getItem(`smart-lib:last-page:${loan.book_id}`))
+      if (Number.isInteger(page) && page > 0) saved[loan.book_id] = page
+    })
+    setLastReadPages(saved)
+  }, [activeLoans])
+
+  const continueReading = useMemo(
+    () => activeLoans.filter((loan) => loan.pdf_url).slice(0, 3),
+    [activeLoans]
   )
 
   const readingHistory = useMemo(
@@ -245,7 +288,7 @@ export default function StudentPage() {
     [borrowRequests]
   )
 
-  const alertCount = activeLoans.filter((loan) => {
+  const alertCount = systemNotifications.filter((notification) => !notification.read_at).length + activeLoans.filter((loan) => {
     if (!loan.due_date) return false
     const dueDate = new Date(loan.due_date)
     const diffDays = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -276,7 +319,7 @@ export default function StudentPage() {
       setRequestStatus(data.error || 'Something went wrong while requesting digital access.')
     } else {
       setRequestStatus(`Digital access requested for ${book.title} for ${durationDays} days.`)
-      const pointsCost = Math.ceil(Number(durationDays) / 7) * book.access_points
+      const pointsCost = book.access_mode === 'points' ? book.access_points : 0
       setProfile((current) => current ? { ...current, points_balance: current.points_balance - pointsCost } : current)
       const supabase = getSupabase()
       const { data: requestsResult } = await supabase
@@ -333,23 +376,9 @@ export default function StudentPage() {
     }
   }
 
-  const handleContributionSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setContributionSubmitting(true)
-    setContributionStatus(null)
-    const { error } = await getSupabase().rpc('submit_book_contribution', {
-      p_title: contributionForm.title,
-      p_author: contributionForm.author,
-      p_description: contributionForm.description || null,
-      p_pdf_url: contributionForm.pdfUrl || null,
-    })
-    if (error) {
-      setContributionStatus(error.message)
-    } else {
-      setContributionStatus('Resource submitted for review. Points are awarded only after administrator approval.')
-      setContributionForm({ title: '', author: '', description: '', pdfUrl: '' })
-    }
-    setContributionSubmitting(false)
+    router.push('/contributions')
   }
 
   if (loadError) {
@@ -381,6 +410,10 @@ export default function StudentPage() {
           <nav className="student-nav" aria-label="Student workspace">
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <a href="/assistant" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Research desk</span></a>
+                  <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
+                  <a href="/points" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>Points wallet</span></a>
+                  <a href="/rewards" onClick={() => setSidebarOpen(false)}><BookMarkIcon /><span>Rewards</span></a>
+                  <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contribute material</span></a>
             <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Explore resources</span></a>
             <a href="#access" onClick={() => setSidebarOpen(false)}><AccessIcon /><span>My access</span></a>
             <a href="#requests" onClick={() => setSidebarOpen(false)}><RequestIcon /><span>Requests</span></a>
@@ -414,6 +447,32 @@ export default function StudentPage() {
           </div>
         </header>
         <BookAssistant />
+
+        <section className="continue-reading-panel rounded-[2rem] border border-paper-300 bg-paper-50 p-6 shadow-sm dark:border-forest-800 dark:bg-forest-900/60 lg:p-8">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Study queue</p>
+              <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Return to your active digital resources at the page you last visited.</p>
+            </div>
+            <a href="#access" className="text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">View all active access</a>
+          </div>
+          {continueReading.length > 0 ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {continueReading.map((loan) => {
+                const progress = readingProgress[loan.book_id]
+                const page = progress?.current_page ?? lastReadPages[loan.book_id] ?? 1
+                const totalPages = progress?.total_pages ?? books.find((book) => book.id === loan.book_id)?.page_count ?? null
+                const percentage = totalPages ? Math.min(100, Math.round((page / totalPages) * 100)) : null
+                return <article key={loan.id} className="continue-reading-card rounded-2xl border border-paper-300 bg-paper-100/70 p-4 dark:border-forest-700 dark:bg-forest-800/60">
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Last opened page {page}{totalPages ? ` of ${totalPages}` : ''}</p></div><span className="rounded-full bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{percentage === null ? 'Active' : `${percentage}%`}</span></div>
+                  <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-paper-300 dark:bg-forest-700"><span className="block h-full rounded-full bg-pine-500" style={{ width: `${percentage ?? 0}%` }} /></div>
+                  <button type="button" onClick={() => router.push(`/reader/${loan.book_id}`)} className="pine-action mt-4 w-full rounded-xl px-3 py-2 text-xs font-semibold">Resume reading</button>
+                </article>
+              })}
+            </div>
+          ) : <div className="mt-5 rounded-2xl border border-dashed border-paper-300 bg-paper-100/60 p-5 text-sm text-slate-600 dark:border-forest-700 dark:bg-forest-800/50 dark:text-slate-300">Borrow a digital resource to build your reading queue.</div>}
+        </section>
 
         {/* Student Personal Study Analytics Strip */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -485,7 +544,7 @@ export default function StudentPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Discover resources and request temporary digital access.</p>
-                  <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true) }} className="secondary-action mt-4 rounded-xl border px-3 py-2 text-xs font-semibold">Suggest a resource</button>
+                  <button type="button" onClick={() => router.push('/contributions')} className="secondary-action mt-4 rounded-xl border px-3 py-2 text-xs font-semibold">Open contribution center</button>
                 </div>
                 <form
                 onSubmit={(event) => {
@@ -535,6 +594,28 @@ export default function StudentPage() {
                     <option value="available">Has physical copies</option>
                     <option value="all-out">No physical copies</option>
                   </select>
+                </label>
+                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
+                  <span className="field-label text-xs font-semibold uppercase tracking-[0.24em]">Sort by</span>
+                  <select
+                    value={catalogSort}
+                    onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    <option value="relevance">Relevance</option>
+                    <option value="title">Title A-Z</option>
+                    <option value="author">Author A-Z</option>
+                    <option value="newest">Recently added</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-3 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={digitalOnly}
+                    onChange={(event) => setDigitalOnly(event.target.checked)}
+                    className="h-4 w-4 accent-sky-600"
+                  />
+                  <span>Digital access only</span>
                 </label>
               </form>
               </div>
@@ -606,7 +687,7 @@ export default function StudentPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setDurationDays('30')
+                          setDurationDays(String(book.access_duration_days))
                           setSelectedBook(book)
                           setRequestStatus(null)
                         }}
@@ -796,7 +877,7 @@ export default function StudentPage() {
             </div>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {[7, 14, 30, 45, 60, 90].map((days) => (
+              {[selectedBook.access_duration_days].map((days) => (
                 <button
                   key={days}
                   type="button"
@@ -804,7 +885,7 @@ export default function StudentPage() {
                   className={`rounded-2xl border px-4 py-3 text-left transition ${durationDays === String(days) ? 'border-forest-900 bg-forest-900 text-paper-100 dark:border-paper-100 dark:bg-paper-100 dark:text-forest-900' : 'border-paper-300 bg-paper-50 text-slate-700 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100'}`}
                 >
                   <span className="block text-sm font-semibold">{days} days</span>
-                  <span className={`mt-1 block text-xs ${durationDays === String(days) ? 'text-paper-100/75 dark:text-forest-900/70' : 'text-slate-500 dark:text-slate-300'}`}>Temporary digital access</span>
+                  <span className={`mt-1 block text-xs ${durationDays === String(days) ? 'text-paper-100/75 dark:text-forest-900/70' : 'text-slate-500 dark:text-slate-300'}`}>Configured access period</span>
                 </button>
               ))}
             </div>
@@ -813,17 +894,17 @@ export default function StudentPage() {
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {Math.ceil(Number(durationDays) / 7) * selectedBook.access_points === 0 ? 'Free access' : `${Math.ceil(Number(durationDays) / 7) * selectedBook.access_points} points`}
+                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'restricted' ? 'Restricted access' : `${selectedBook.access_points} points`}
                 </span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access costs are set by the library and increase with longer periods.</p>
-              {Math.ceil(Number(durationDays) / 7) * selectedBook.access_points > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need more points to choose this access period.</p> : null}
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. This resource is configured for {selectedBook.access_duration_days} days.</p>
+              {selectedBook.access_mode === 'points' && selectedBook.access_points > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {selectedBook.access_points - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
             </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || Math.ceil(Number(durationDays) / 7) * selectedBook.access_points > (profile?.points_balance ?? 0)} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Requesting...' : `Request ${durationDays}-day access`}
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'restricted' || (selectedBook.access_mode === 'points' && selectedBook.access_points > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'restricted' ? 'Administrator access required' : selectedBook.access_mode === 'points' ? `Unlock for ${selectedBook.access_points} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
@@ -868,6 +949,7 @@ export default function StudentPage() {
             </div>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
             <ul className="mt-6 space-y-3">
+              {systemNotifications.slice(0, 5).map((notification) => <li key={`system-${notification.id}`} className="rounded-[1.5rem] border border-pine-200 bg-pine-50 px-4 py-4 text-sm text-pine-900 dark:border-forest-700 dark:bg-forest-800/60 dark:text-paper-100"><div className="flex items-start justify-between gap-3"><div><strong>{notification.title}</strong><p className="mt-1">{notification.message}</p></div>{!notification.read_at ? <button type="button" className="text-xs font-semibold underline" onClick={() => { void fetch('/api/notifications', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: notification.id }) }); setSystemNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item)) }}>Mark read</button> : null}</div></li>)}
               {borrowRequests.filter((request) => request.status === 'pending' || request.status === 'approved').slice(0, 3).map((request) => {
                 const dueDate = request.due_date ? new Date(request.due_date) : null
                 const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null

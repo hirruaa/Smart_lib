@@ -76,7 +76,7 @@ export default function EbookUploader({
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
             }`}
           >
-            Upload PDF (Supabase)
+            Upload PDF
           </button>
           <button
             type="button"
@@ -163,7 +163,7 @@ export default function EbookUploader({
                   Click to select or drag & drop PDF here
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Direct Supabase Storage &bull; Up to 50 MB
+                  Protected library storage &bull; Up to 50 MB
                 </p>
                 {currentValue && (
                   <p className="mt-2 text-[11px] text-slate-600 dark:text-slate-400 truncate max-w-xs">
