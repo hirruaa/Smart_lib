@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import { getSupabase } from '@/utils/supabase/client'
+import BaseModal from './BaseModal'
 
 type ProfileModalProps = {
   open: boolean
@@ -70,16 +71,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
   }
 
   return (
-    <div className="profile-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title">
-        <div className="profile-modal-header">
-          <div>
-            <p className="profile-modal-kicker">Account</p>
-            <h2 id="profile-modal-title">Your profile</h2>
-          </div>
-          <button type="button" className="profile-modal-close" onClick={onClose} aria-label="Close profile">&times;</button>
-        </div>
-
+    <BaseModal open={open} onClose={onClose} title="Your profile" eyebrow="Account" size="sm">
         {error ? <p className="profile-modal-error">{error}</p> : null}
         {message ? <p className="profile-modal-success">{message}</p> : null}
 
@@ -94,7 +86,6 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
             <button type="submit" className="profile-modal-primary" disabled={saving}>Save changes</button>
           </div>
         </form>
-      </section>
-    </div>
+    </BaseModal>
   )
 }

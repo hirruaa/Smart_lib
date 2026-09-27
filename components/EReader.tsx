@@ -1,18 +1,15 @@
 "use client"
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import NotesPanel from './NotesPanel'
-import HighlightsPanel from './HighlightsPanel'
-import ActionModal from './ActionModal'
 
 type Point = { x: number; y: number }
 type Stroke = { points: Point[]; color: string; width: number; opacity: number }
 type Note = { id: number; page: number | null; text: string | null; selection_text: string | null; created_at?: string; meta?: { x?: number; y?: number; color?: string; title?: string } }
 type Highlight = { id: number; page: number; rects: Array<{ x: number; y: number; width: number; height: number }>; color: string; meta?: { selection_text?: string } }
-type ReaderPreset = { name: string; color: string; size: number; opacity: number }
 type PdfModules = { Document: any; Page: any }
 const noteColors = ['#f6d77a', '#c9dfc8', '#c9dceb', '#f3c4b7']
 const highlightColors = ['#f0c94b', '#9ed8aa', '#9ec9e8', '#efaaa0']
+const highlightLabels = ['Definition', 'Key term', 'Example', 'Important', 'Question']
 const drawingColors = [
   { name: 'Yellow', value: '#f0c94b' },
   { name: 'Blue', value: '#3b82f6' },
@@ -24,12 +21,12 @@ const penSizes = [2, 4, 6, 8]
 const markerSizes = [10, 16, 24, 32]
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
-export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: string }) {
+export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdfUrl: string; title: string }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
   const [scale, setScale] = useState(1)
   const [pageWidth, setPageWidth] = useState(900)
-  const [activePanel, setActivePanel] = useState<'notes' | 'highlights' | null>(null)
+  const setActivePanel = (panel: 'notes' | 'highlights' | null) => { if (panel === 'highlights') void createHighlight() }
   const [selectedText, setSelectedText] = useState<string | null>(null)
   const [selectedPage, setSelectedPage] = useState<number | null>(null)
   const [selectedRects, setSelectedRects] = useState<Array<{ x: number; y: number; width: number; height: number }>>([])
@@ -38,10 +35,11 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
   const [brushSize, setBrushSize] = useState(3)
   const [brushColor, setBrushColor] = useState('#263f3a')
   const [brushOpacity, setBrushOpacity] = useState(0.9)
+  const [quickColors, setQuickColors] = useState(drawingColors)
+  const [highlightPalette, setHighlightPalette] = useState(highlightColors)
+  const [highlightNames, setHighlightNames] = useState(highlightLabels)
+  const [highlightColor, setHighlightColor] = useState(highlightColors[0])
   const [readerTheme, setReaderTheme] = useState<'paper' | 'sepia' | 'dark'>('paper')
-  const [showNotes, setShowNotes] = useState(true)
-  const [showHighlights, setShowHighlights] = useState(true)
-  const [presets, setPresets] = useState<ReaderPreset[]>([])
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [past, setPast] = useState<Stroke[][]>([])
   const [future, setFuture] = useState<Stroke[][]>([])
@@ -57,12 +55,11 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [drawingStatus, setDrawingStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [readerError, setReaderError] = useState<string | null>(null)
-  const [clearDrawingsOpen, setClearDrawingsOpen] = useState(false)
-  const [deleteNoteId, setDeleteNoteId] = useState<number | null>(null)
   const [pdfModules, setPdfModules] = useState<PdfModules | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const brushCursorRef = useRef<HTMLDivElement | null>(null)
   const drawingRef = useRef<Stroke | null>(null)
   const strokesRef = useRef<Stroke[]>([])
   const visibleNotes = useMemo(() => notes.filter((note) => Number(note.page) === pageNumber), [notes, pageNumber])
@@ -84,15 +81,18 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
       if (saved.brushColor) setBrushColor(saved.brushColor)
       if (saved.brushSize) setBrushSize(Number(saved.brushSize))
       if (saved.brushOpacity) setBrushOpacity(Number(saved.brushOpacity))
+      if (Array.isArray(saved.quickColors) && saved.quickColors.length === 5) setQuickColors(saved.quickColors)
+      if (Array.isArray(saved.highlightPalette) && saved.highlightPalette.length === 5) setHighlightPalette(saved.highlightPalette)
+      if (Array.isArray(saved.highlightNames) && saved.highlightNames.length === 5) setHighlightNames(saved.highlightNames)
+      if (saved.highlightColor) setHighlightColor(saved.highlightColor)
       if (saved.scale) setScale(Number(saved.scale))
       if (saved.readerTheme) setReaderTheme(saved.readerTheme)
-      if (Array.isArray(saved.presets)) setPresets(saved.presets)
     } catch { /* Use defaults when local preferences are unavailable. */ }
   }, [bookId])
 
   useEffect(() => {
-    window.localStorage.setItem(`smart-lib:reader-preferences:${bookId}`, JSON.stringify({ brushColor, brushSize, brushOpacity, scale, readerTheme, presets }))
-  }, [bookId, brushColor, brushSize, brushOpacity, scale, readerTheme, presets])
+    window.localStorage.setItem(`smart-lib:reader-preferences:${bookId}`, JSON.stringify({ brushColor, brushSize, brushOpacity, quickColors, highlightPalette, highlightNames, highlightColor, scale, readerTheme }))
+  }, [bookId, brushColor, brushSize, brushOpacity, quickColors, highlightNames, highlightPalette, highlightColor, scale, readerTheme])
 
   useEffect(() => {
     const element = workspaceRef.current
@@ -177,6 +177,162 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
   useEffect(() => { requestAnimationFrame(syncCanvas) }, [syncCanvas, scale, pageWidth])
 
   useEffect(() => {
+    const pageFrame = pageFrameRef.current
+    if (!pageFrame) return
+    const cursor = document.createElement('div')
+    cursor.className = 'reader-brush-cursor'
+    cursor.setAttribute('aria-hidden', 'true')
+    pageFrame.appendChild(cursor)
+    brushCursorRef.current = cursor
+    return () => {
+      cursor.remove()
+      brushCursorRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const cursor = brushCursorRef.current
+    const canvas = canvasRef.current
+    if (!cursor || !canvas) return
+    cursor.style.width = `${brushSize}px`
+    cursor.style.height = `${brushSize}px`
+    cursor.style.borderColor = drawMode === 'eraser' ? 'rgba(38, 63, 58, .8)' : brushColor
+    cursor.style.backgroundColor = drawMode === 'marker' ? `${brushColor}66` : drawMode === 'pen' ? `${brushColor}18` : 'rgba(255,255,255,.25)'
+    cursor.dataset.tool = drawMode ?? ''
+    cursor.style.display = drawMode ? 'block' : 'none'
+    const moveCursor = (event: PointerEvent) => {
+      if (!drawMode) return
+      const rect = canvas.getBoundingClientRect()
+      cursor.style.left = `${event.clientX - rect.left}px`
+      cursor.style.top = `${event.clientY - rect.top}px`
+      cursor.style.display = 'block'
+    }
+    const hideCursor = () => { cursor.style.display = 'none' }
+    canvas.addEventListener('pointerenter', moveCursor)
+    canvas.addEventListener('pointermove', moveCursor)
+    canvas.addEventListener('pointerleave', hideCursor)
+    return () => {
+      canvas.removeEventListener('pointerenter', moveCursor)
+      canvas.removeEventListener('pointermove', moveCursor)
+      canvas.removeEventListener('pointerleave', hideCursor)
+    }
+  }, [brushColor, brushSize, drawMode])
+
+  useEffect(() => {
+    document.querySelectorAll<HTMLElement>('.reader-toolbar .reader-draw-button.capitalize').forEach((button) => {
+      const tool = button.textContent?.trim().toLowerCase() ?? ''
+      button.dataset.brushTool = tool
+      button.style.setProperty('--brush-preview-size', `${Math.max(4, Math.min(18, brushSize))}px`)
+      button.style.setProperty('--brush-preview-color', tool === 'eraser' ? '#52635c' : brushColor)
+      button.style.setProperty('--brush-preview-opacity', tool === 'marker' ? String(Math.max(.35, brushOpacity * .65)) : '1')
+    })
+  }, [brushColor, brushOpacity, brushSize, drawMode])
+
+  useEffect(() => {
+    document.querySelectorAll<HTMLButtonElement>('.reader-sidebar .reader-sidebar-button').forEach((button) => {
+      const label = button.textContent?.trim() ?? ''
+      if (label) {
+        button.title = label
+        button.setAttribute('aria-label', label)
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    const menu = document.querySelector<HTMLElement>('.reader-selection-menu')
+    if (!menu || !selectedText) return
+    const palette = document.createElement('div')
+    palette.className = 'reader-highlight-palette'
+    palette.setAttribute('aria-label', 'Highlight color')
+    highlightPalette.forEach((color, index) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'reader-highlight-swatch'
+      button.style.backgroundColor = color
+      button.dataset.active = String(highlightColor === color)
+      button.title = highlightNames[index]
+      button.setAttribute('aria-label', highlightNames[index])
+      button.addEventListener('click', () => setHighlightColor(color))
+      palette.appendChild(button)
+    })
+    const customize = document.createElement('button')
+    customize.type = 'button'
+    customize.className = 'reader-highlight-customize'
+    customize.textContent = 'Customize'
+    customize.addEventListener('click', () => {
+      const index = Math.max(0, highlightPalette.indexOf(highlightColor))
+      const name = window.prompt('Highlight label', highlightNames[index])?.trim()
+      const color = window.prompt('Highlight color', highlightPalette[index])?.trim()
+      if (!name || !color) return
+      setHighlightNames((items) => items.map((item, itemIndex) => itemIndex === index ? name : item))
+      setHighlightPalette((items) => items.map((item, itemIndex) => itemIndex === index ? color : item))
+      setHighlightColor(color)
+    })
+    palette.appendChild(customize)
+    const custom = document.createElement('input')
+    custom.type = 'color'
+    custom.value = highlightColor
+    custom.className = 'reader-highlight-custom'
+    custom.title = 'Customize highlight color'
+    custom.setAttribute('aria-label', 'Customize highlight color')
+    custom.addEventListener('input', (event) => {
+      const color = (event.target as HTMLInputElement).value
+      setHighlightColor(color)
+      setHighlightPalette((items) => items.map((item, index) => index === 0 ? color : item))
+    })
+    palette.appendChild(custom)
+    menu.appendChild(palette)
+    return () => palette.remove()
+  }, [highlightColor, highlightNames, highlightPalette, selectedText])
+
+  useEffect(() => {
+    const tool = document.querySelector<HTMLElement>('.reader-quick-drawing-tools')
+    if (!tool) return
+    const buttons = Array.from(tool.querySelectorAll<HTMLButtonElement>('.reader-quick-color')).slice(0, quickColors.length)
+    const cleanups: Array<() => void> = []
+    buttons.forEach((button, index) => {
+      const color = quickColors[index]
+      button.style.backgroundColor = color.value
+      button.title = color.name
+      button.setAttribute('aria-label', color.name)
+      const chooseColor = (event: Event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setBrushColor(color.value)
+      }
+      button.addEventListener('click', chooseColor, true)
+      cleanups.push(() => button.removeEventListener('click', chooseColor, true))
+    })
+    const activeIndex = Math.max(0, quickColors.findIndex((color) => color.value.toLowerCase() === brushColor.toLowerCase()))
+    const picker = document.createElement('input')
+    picker.type = 'color'
+    picker.className = 'reader-quick-color-picker'
+    picker.value = quickColors[activeIndex].value
+    picker.title = `Change ${quickColors[activeIndex].name} color`
+    picker.setAttribute('aria-label', `Change ${quickColors[activeIndex].name} color`)
+    const updateColor = (event: Event) => {
+      const value = (event.target as HTMLInputElement).value
+      setQuickColors((items) => items.map((item, index) => index === activeIndex ? { ...item, value } : item))
+      setBrushColor(value)
+    }
+    picker.addEventListener('change', updateColor)
+    tool.querySelector('.reader-quick-color-list')?.appendChild(picker)
+    const sizes = drawMode === 'marker' ? markerSizes : penSizes
+    tool.querySelectorAll<HTMLButtonElement>('.reader-size-preset').forEach((button, index) => {
+      const size = sizes[index]
+      if (size) {
+        button.dataset.size = `${size}px`
+        button.setAttribute('aria-label', `${size}px ${drawMode}`)
+      }
+    })
+    return () => {
+      cleanups.forEach((cleanup) => cleanup())
+      picker.removeEventListener('change', updateColor)
+      picker.remove()
+    }
+  }, [brushColor, quickColors, drawMode])
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
       if (event.key === 'ArrowLeft') setPageNumber((page) => Math.max(1, page - 1))
@@ -196,12 +352,13 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
 
   function pointFromEvent(event: React.PointerEvent<HTMLCanvasElement>): Point { const rect = event.currentTarget.getBoundingClientRect(); return { x: clamp((event.clientX - rect.left) / rect.width), y: clamp((event.clientY - rect.top) / rect.height) } }
   function eraseAt(point: Point) {
-    const radius = Math.max(0.012, brushSize / Math.max(320, pageWidth) / 2)
+    const displayWidth = canvasRef.current?.clientWidth || pageWidth
+    const radius = Math.max(0.012, brushSize / Math.max(320, displayWidth) / 2)
     const remaining = strokesRef.current.filter((stroke) => {
       for (let index = 1; index < stroke.points.length; index += 1) {
         const a = stroke.points[index - 1]; const b = stroke.points[index]; const dx = b.x - a.x; const dy = b.y - a.y; const length = dx * dx + dy * dy || 1
         const projection = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / length); const near = { x: a.x + projection * dx, y: a.y + projection * dy }
-        if (Math.hypot(near.x - point.x, near.y - point.y) <= radius + stroke.width / pageWidth) return false
+        if (Math.hypot(near.x - point.x, near.y - point.y) <= radius + stroke.width / displayWidth) return false
       }
       return true
     })
@@ -222,20 +379,7 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
     if (finished.points.length > 1) persistStrokes([...strokesRef.current, finished])
   }
 
-  function activateNoteMode() { setDrawMode(null); setActivePanel(null); setNoteMode((value) => !value) }
-  function savePreset() {
-    const name = window.prompt('Name this study preset', 'My study colors')?.trim()
-    if (!name) return
-    setPresets((items) => [...items.filter((item) => item.name !== name), { name, color: brushColor, size: brushSize, opacity: brushOpacity }].slice(-6))
-  }
-  function applyPreset(preset: ReaderPreset) { setBrushColor(preset.color); setBrushSize(preset.size); setBrushOpacity(preset.opacity) }
-  function exportAnnotations() {
-    const lines = notes.map((note) => `[Page ${note.page ?? '?'}] ${note.meta?.title || 'Note'}\n${note.text || ''}`).join('\n\n')
-    const highlightsText = highlights.map((highlight) => `[Page ${highlight.page}] Highlight (${highlight.color})`).join('\n')
-    const content = [lines, highlightsText].filter(Boolean).join('\n\n') || 'No annotations yet.'
-    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
-    const link = document.createElement('a'); link.href = url; link.download = 'smart-lib-annotations.txt'; link.click(); URL.revokeObjectURL(url)
-  }
+  function activateNoteMode() { setDrawMode(null); setNoteMode((value) => !value) }
   function beginNewNote(x = 0.5, y = 0.18) { setNoteMode(false); setNoteStatus('idle'); setNoteDraft({ id: 0, page: pageNumber, text: '', selection_text: selectedText ?? '', meta: { x, y, color: noteColor, title: '' } }) }
   async function persistNote() {
     if (!noteDraft?.text?.trim()) return
@@ -245,7 +389,12 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
     if (response.ok) { const saved = await response.json(); setNotes((items) => isNew ? [saved, ...items] : items.map((item) => item.id === saved.id ? saved : item)); setExpandedNoteId(saved.id); setNoteDraft(null); setNoteStatus('saved') } else setNoteStatus('error')
     setSavingNote(false)
   }
-  async function deleteNote(id: number) { const response = await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' }); if (response.ok) { setNotes((items) => items.filter((item) => item.id !== id)); setExpandedNoteId(null) }; setDeleteNoteId(null) }
+  async function deleteNote(id: number) { const response = await fetch(`/api/study/notes?id=${id}`, { method: 'DELETE' }); if (response.ok) { setNotes((items) => items.filter((item) => item.id !== id)); setExpandedNoteId(null) } }
+  async function createHighlight() {
+    if (!selectedText) return
+    const response = await fetch('/api/study/highlights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId, page: selectedPage ?? pageNumber, rects: selectedRects, color: highlightColor, note_id: null, meta: { selection_text: selectedText } }) })
+    if (response.ok) { await refreshHighlights(); setSelectedText(null); setSelectedPage(null); setSelectedRects([]); setSelectionMenuOpen(false) }
+  }
   function noteMetaAt(clientX: number, clientY: number, note: Note) {
     const rect = pageFrameRef.current?.getBoundingClientRect(); if (!rect) return note.meta ?? {}
     return { ...(note.meta ?? {}), x: clamp((clientX - rect.left) / rect.width), y: clamp((clientY - rect.top) / rect.height) }
@@ -278,8 +427,13 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
       const selection = window.getSelection()
       const text = selection?.toString().trim() ?? ''
       if (!text || !selection?.rangeCount || !pageFrameRef.current) return
+      const range = selection.getRangeAt(0)
+      const selectionNode = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+        ? range.commonAncestorContainer.parentElement
+        : range.commonAncestorContainer
+      if (!selectionNode || !pageFrameRef.current.contains(selectionNode)) return
       const pageRect = pageFrameRef.current.getBoundingClientRect()
-      const rects = Array.from(selection.getRangeAt(0).getClientRects()).map((rect) => ({
+      const rects = Array.from(range.getClientRects()).map((rect) => ({
         x: clamp((rect.left - pageRect.left) / pageRect.width),
         y: clamp((rect.top - pageRect.top) / pageRect.height),
         width: clamp(rect.width / pageRect.width),
@@ -293,10 +447,9 @@ export default function EReader({ bookId, pdfUrl }: { bookId: number; pdfUrl: st
   const Document = pdfModules?.Document; const Page = pdfModules?.Page
 
   return <div className={`reader-shell reader-theme-${readerTheme} min-h-[calc(100vh-3rem)]`}><div className="mx-auto max-w-7xl space-y-5">
-    <div className="reader-toolbar rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/60 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-4"><a href="/dashboard" className="rounded-xl border border-paper-300 bg-paper-100 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-forest-700 dark:bg-forest-900 dark:text-paper-100">← Dashboard</a><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">E-Study Room</p><h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Reading session</h2></div></div><div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300"><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))} disabled={pageNumber <= 1} className="px-3 py-2 disabled:opacity-40" aria-label="Previous page">←</button><span className="px-2 font-mono">{pageNumber} / {numPages ?? '...'}</span><button type="button" onClick={() => setPageNumber((page) => numPages ? Math.min(numPages, page + 1) : page + 1)} disabled={numPages ? pageNumber >= numPages : false} className="px-3 py-2 disabled:opacity-40" aria-label="Next page">→</button></div><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setScale((value) => Math.max(0.6, value - 0.1))} className="px-2.5 py-2" aria-label="Zoom out">−</button><button type="button" onClick={() => setScale(1)} className="px-2 py-2 font-mono">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale((value) => Math.min(2, value + 0.1))} className="px-2.5 py-2" aria-label="Zoom in">+</button></div><button type="button" onClick={() => setScale(1)} className="reader-draw-button" title="Fit document to width">Fit</button><button type="button" onClick={activateNoteMode} className={`reader-draw-button ${noteMode ? 'reader-draw-button-active' : ''}`}>＋ Note</button>{noteMode ? <div className="reader-note-colors" aria-label="Note colors">{noteColors.map((color) => <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label="Choose note color" className={noteColor === color ? 'reader-color-swatch reader-color-swatch-active' : 'reader-color-swatch'} style={{ backgroundColor: color }} />)}</div> : null}<button type="button" onClick={() => setActivePanel('notes')} className="reader-draw-button">Notes</button><button type="button" onClick={() => setActivePanel('highlights')} className="reader-draw-button">Highlights</button></div></div><div className="mt-4 flex flex-wrap items-center gap-2 border-t border-paper-300/80 pt-3 dark:border-forest-700">{(['pen', 'marker', 'eraser'] as const).map((mode) => <button key={mode} type="button" onClick={() => setDrawMode(drawMode === mode ? null : mode)} className={`reader-draw-button capitalize ${drawMode === mode ? 'reader-draw-button-active' : ''}`}>{mode}</button>)}<button type="button" onClick={undo} disabled={!past.length} className="reader-draw-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-draw-button">Redo</button><button type="button" onClick={() => { if (window.confirm('Clear drawings from this page?')) persistStrokes([]) }} disabled={!strokes.length} className="reader-draw-button">Clear page</button><span className="reader-save-status" role="status">{drawingStatus === 'saving' ? 'Saving…' : drawingStatus === 'saved' ? 'Saved' : drawingStatus === 'error' ? 'Save failed' : ''}</span>{drawMode ? <><label className="ml-2 flex items-center gap-2 text-xs">Size <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label><span className="font-mono text-xs">{brushSize}px</span></> : null}{(drawMode === 'pen' || drawMode === 'marker') ? <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} aria-label="Pen color" className="h-7 w-8" /> : null}{drawMode === 'marker' ? <label className="flex items-center gap-2 text-xs">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div></div>
-    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><button type="button" onClick={() => setActivePanel('notes')} className="reader-sidebar-button">Notes</button><button type="button" onClick={() => setActivePanel('highlights')} className="reader-sidebar-button">Highlights</button><button type="button" onClick={activateNoteMode} className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Marker</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} disabled={!past.length} className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace overflow-auto rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: “{selectedText}”</p><div className="flex gap-2"><button type="button" onClick={() => setActivePanel('highlights')} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => setNumPages(total)}><Page pageNumber={pageNumber} width={pageWidth * scale} onRenderSuccess={() => requestAnimationFrame(syncCanvas)} /></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading room…</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">×</button></div>{note.selection_text ? <p className="reader-note-quote">“{note.selection_text}”</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => void deleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">← Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Next page →</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
+    <div className="reader-toolbar rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/60 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-4"><a href="/dashboard" className="rounded-xl border border-paper-300 bg-paper-100 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-forest-700 dark:bg-forest-900 dark:text-paper-100">â† Dashboard</a><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">E-Study Room</p><h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2></div></div><div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300"><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))} disabled={pageNumber <= 1} className="px-3 py-2 disabled:opacity-40" aria-label="Previous page">â†</button><span className="px-2 font-mono">{pageNumber} / {numPages ?? '...'}</span><button type="button" onClick={() => setPageNumber((page) => numPages ? Math.min(numPages, page + 1) : page + 1)} disabled={numPages ? pageNumber >= numPages : false} className="px-3 py-2 disabled:opacity-40" aria-label="Next page">â†’</button></div><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setScale((value) => Math.max(0.6, value - 0.1))} className="px-2.5 py-2" aria-label="Zoom out">âˆ’</button><button type="button" onClick={() => setScale(1)} className="px-2 py-2 font-mono">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale((value) => Math.min(2, value + 0.1))} className="px-2.5 py-2" aria-label="Zoom in">+</button></div><button type="button" onClick={() => setScale(1)} className="reader-draw-button" title="Fit document to width">Fit</button><button type="button" onClick={activateNoteMode} className={`reader-draw-button ${noteMode ? 'reader-draw-button-active' : ''}`}>ï¼‹ Note</button>{noteMode ? <div className="reader-note-colors" aria-label="Note colors">{noteColors.map((color) => <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label="Choose note color" className={noteColor === color ? 'reader-color-swatch reader-color-swatch-active' : 'reader-color-swatch'} style={{ backgroundColor: color }} />)}</div> : null}<button type="button" onClick={() => setActivePanel('notes')} className="reader-draw-button">Notes</button><button type="button" onClick={() => void createHighlight()} className="reader-draw-button">Highlights</button></div></div><div className="mt-4 flex flex-wrap items-center gap-2 border-t border-paper-300/80 pt-3 dark:border-forest-700">{(['pen', 'marker', 'eraser'] as const).map((mode) => <button key={mode} type="button" onClick={() => setDrawMode(drawMode === mode ? null : mode)} className={`reader-draw-button capitalize ${drawMode === mode ? 'reader-draw-button-active' : ''}`}>{mode}</button>)}<button type="button" onClick={undo} disabled={!past.length} className="reader-draw-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-draw-button">Redo</button><button type="button" onClick={() => { if (window.confirm('Clear drawings from this page?')) persistStrokes([]) }} disabled={!strokes.length} className="reader-draw-button">Clear page</button><span className="reader-save-status" role="status">{drawingStatus === 'saving' ? 'Savingâ€¦' : drawingStatus === 'saved' ? 'Saved' : drawingStatus === 'error' ? 'Save failed' : ''}</span>{drawMode ? <><label className="ml-2 flex items-center gap-2 text-xs">Size <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label><span className="font-mono text-xs">{brushSize}px</span></> : null}{(drawMode === 'pen' || drawMode === 'marker') ? <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} aria-label="Pen color" className="h-7 w-8" /> : null}{drawMode === 'marker' ? <label className="flex items-center gap-2 text-xs">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div></div>
+    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><div className="reader-sidebar-pages"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page">←</button><span>Page {pageNumber} / {numPages ?? "…"}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} aria-label="Next page">→</button></div><button type="button" onClick={() => setActivePanel('notes')} className="reader-sidebar-button">Notes</button><button type="button" onClick={() => setActivePanel('highlights')} className="reader-sidebar-button">Highlights</button><button type="button" onClick={activateNoteMode} className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Marker</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} disabled={!past.length} className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace overflow-auto rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: â€œ{selectedText}â€</p><div className="flex gap-2"><button type="button" onClick={() => setActivePanel('highlights')} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => setNumPages(total)}><Page pageNumber={pageNumber} width={pageWidth * scale} onRenderSuccess={() => requestAnimationFrame(syncCanvas)} /></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading roomâ€¦</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">Ã—</button></div>{note.selection_text ? <p className="reader-note-quote">â€œ{note.selection_text}â€</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => void deleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">â† Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Next page â†’</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
   </div>
-  {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">×</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to remember…" /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: “{noteDraft.selection_text}”</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Saving…' : 'Save note'}</button></div></section></div> : null}
-  {activePanel ? <div className="study-panel-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActivePanel(null) }}><section className="study-panel-modal" role="dialog" aria-modal="true" aria-labelledby="study-panel-title"><div className="flex items-start justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Study workspace</p><h2 id="study-panel-title" className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{activePanel === 'notes' ? 'Notes' : 'Highlights'}</h2></div><button type="button" onClick={() => setActivePanel(null)} className="study-panel-close" aria-label="Close study panel">×</button></div><div className="mt-5">{activePanel === 'notes' ? <NotesPanel bookId={bookId} selectedText={selectedText ?? undefined} selectedPage={selectedPage ?? undefined} onChanged={() => void refreshNotes()} onSelectNote={(note) => { setActivePanel(null); setPageNumber(Number(note.page) || 1); window.setTimeout(() => setExpandedNoteId(note.id), 250) }} /> : <HighlightsPanel bookId={bookId} selectedText={selectedText ?? undefined} selectedPage={selectedPage ?? undefined} selectedRects={selectedRects} onClearSelection={() => { setSelectedText(null); setSelectedPage(null); setSelectedRects([]); setSelectionMenuOpen(false) }} />}</div></section></div> : null}
+  {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">Ã—</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to rememberâ€¦" /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: â€œ{noteDraft.selection_text}â€</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Savingâ€¦' : 'Save note'}</button></div></section></div> : null}
   </div>
 }

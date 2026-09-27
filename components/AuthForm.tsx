@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
 import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
+import PasswordInput from '@/components/PasswordInput'
 
 type AuthMode = 'login' | 'signup' | 'forgot'
 
@@ -137,13 +138,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
               ? 'Welcome back'
               : 'Join Smart Lib'}
           </h1>
-          <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
-            {isForgot
-              ? 'Enter your account email to receive a password reset link.'
-              : isLogin
-              ? 'Sign in to access your digital loans, study notes, and research desk.'
-              : 'Create a student account to discover, borrow, and read library resources.'}
-          </p>
+          {isForgot ? <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">Enter your account email to receive a password reset link.</p> : null}
         </div>
 
         {errorMsg ? (
@@ -208,8 +203,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
                   </button>
                 )}
               </div>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 required

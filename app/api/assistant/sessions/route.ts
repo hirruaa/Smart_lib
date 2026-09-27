@@ -67,3 +67,41 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ session: data })
 }
+
+export async function DELETE(request: Request) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const sessionId = new URL(request.url).searchParams.get('session_id')
+  if (!sessionId) return NextResponse.json({ error: 'Assistant session is required.' }, { status: 400 })
+
+  const { data: ownedSession, error: lookupError } = await supabase
+    .from('assistant_sessions')
+    .select('id')
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 })
+  if (!ownedSession) return NextResponse.json({ error: 'Assistant conversation not found.' }, { status: 404 })
+
+  const { error } = await supabase
+    .from('assistant_sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const { data: remainingSession, error: verifyError } = await supabase
+    .from('assistant_sessions')
+    .select('id')
+    .eq('id', sessionId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (verifyError) return NextResponse.json({ error: verifyError.message }, { status: 500 })
+  if (remainingSession) return NextResponse.json({ error: 'Conversation could not be deleted. Check the assistant_sessions delete policy in Supabase.' }, { status: 500 })
+  return NextResponse.json({ success: true, deletedSessionId: sessionId })
+}

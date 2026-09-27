@@ -19,6 +19,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => { try { const palette = localStorage.getItem('smartlib-palette'); const mode = localStorage.getItem('smartlib-theme'); if (palette) document.documentElement.dataset.theme = palette; if (mode === 'dark' || (!mode && window.matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (error) {} })()`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-paper-100 text-slate-900 antialiased transition-colors duration-300 dark:bg-forest-900 dark:text-paper-100">
         {children}
         <CookieConsent />

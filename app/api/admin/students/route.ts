@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
+import { apiError, boundedText } from '@/utils/api'
 
 export async function POST(request: Request) {
   const sessionClient = createClient()
@@ -14,7 +15,7 @@ export async function POST(request: Request) {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (profileError) return NextResponse.json({ error: profileError.message }, { status: 500 })
+  if (profileError) return apiError('Unable to verify administrator access.', 500, profileError)
   if (profile?.role !== 'admin') return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -23,12 +24,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Server-side Supabase admin credentials are not configured.' }, { status: 503 })
   }
 
-  const body = await request.json()
-  const email = String(body.email ?? '').trim().toLowerCase()
-  const password = String(body.password ?? '')
-  const fullName = String(body.fullName ?? '').trim()
+  const body = await request.json().catch(() => null)
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+  const password = typeof body.password === 'string' ? body.password : ''
+  const fullName = boundedText(body.fullName ?? '', 120) || ''
 
-  if (!email || !email.includes('@')) return NextResponse.json({ error: 'Enter a valid student email.' }, { status: 400 })
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid student email.' }, { status: 400 })
   if (password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
 
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
@@ -41,7 +43,7 @@ export async function POST(request: Request) {
     user_metadata: { full_name: fullName, role: 'student' },
   })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 409 })
+  if (error) return apiError('Unable to create the student account. The email may already be registered.', 409, error)
 
   if (created.user && fullName) {
     await adminClient.from('profiles').update({ full_name: fullName }).eq('id', created.user.id)

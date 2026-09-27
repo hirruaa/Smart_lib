@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
+import PasswordInput from '@/components/PasswordInput'
 
 export default function ResetPasswordPage() {
   const router = useRouter()
@@ -99,8 +100,7 @@ export default function ResetPasswordPage() {
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
               New Password
             </span>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -114,8 +114,7 @@ export default function ResetPasswordPage() {
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
               Confirm New Password
             </span>
-            <input
-              type="password"
+            <PasswordInput
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required

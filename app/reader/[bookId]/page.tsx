@@ -59,15 +59,9 @@ export default async function Page({ params }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-paper-100 px-4 py-6 text-slate-900 dark:bg-forest-900 dark:text-paper-100 sm:px-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-5 flex items-center justify-between border-b border-paper-300/80 pb-4 dark:border-forest-800">
-          <div>
-            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Reading Session</span>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">{book.title}</h1>
-          </div>
-        </div>
-        <EReader bookId={Number(params.bookId)} pdfUrl={resolvedPdfUrl} />
+    <div className="reader-page min-h-screen bg-paper-100 text-slate-900 dark:bg-forest-900 dark:text-paper-100">
+      <div className="mx-auto max-w-7xl px-4 pb-8 sm:px-8">
+        <EReader bookId={Number(params.bookId)} pdfUrl={resolvedPdfUrl} title={book.title} />
       </div>
     </div>
   )

@@ -7,7 +7,9 @@ import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import dynamicImport from 'next/dynamic'
 import ProfileModal from '@/components/ProfileModal'
+import WalletModal from '@/components/WalletModal'
 import ThemeToggle from '@/components/ThemeToggle'
+import BrandLogo from '@/components/BrandLogo'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
@@ -89,6 +91,7 @@ export default function StudentPage() {
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
+  const [walletOpen, setWalletOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [studyQueueOpen, setStudyQueueOpen] = useState(false)
   const [requestsOpen, setRequestsOpen] = useState(false)
@@ -426,18 +429,17 @@ export default function StudentPage() {
       {sidebarOpen ? <button type="button" className="student-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} /> : null}
       <div className={`student-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <aside className={`student-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-          <div className="student-brand"><span className="student-brand-mark"><BookMarkIcon /></span><span>Smart Lib</span></div>
+          <BrandLogo className="student-brand" iconSize="sm" />
           <button type="button" className="student-sidebar-toggle" onClick={() => { setSidebarCollapsed((current) => !current); setSidebarOpen(false) }} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><MenuIcon /></button>
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label="Student workspace">
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
-            <a href="/library" onClick={() => setSidebarOpen(false)}><BookMarkIcon /><span>My library</span></a>
+            <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
             <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
-            <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookIcon /><span>My access</span></button>
             <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contributions</span></a>
           </nav>
           <div className="student-sidebar-footer">
-            <div className="student-theme-control"><ThemeToggle /><span>Appearance</span></div>
+            <div className="student-theme-control"><ThemeToggle /></div>
             <button type="button" onClick={() => setProfileOpen(true)}><ProfileIcon /><span>Profile</span></button>
             <button type="button" onClick={handleLogout}><LogoutIcon /><span>Sign out</span></button>
           </div>
@@ -468,7 +470,7 @@ export default function StudentPage() {
               <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Return to your active digital resources at the page you last visited.</p>
             </div>
-            <a href="/library" className="text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</a>
+            <button type="button" onClick={() => setActiveAccessOpen(true)} className="text-left text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</button>
           </div>
           {continueReading.length > 0 ? (
             <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -489,19 +491,18 @@ export default function StudentPage() {
 
         {/* Student Personal Study Analytics Strip */}
         <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
+          <div className="student-stat-card rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
             <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{profile?.points_balance ?? 0}</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">points</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => router.push('/points')} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
-              <button type="button" onClick={() => router.push('/points#rewards')} className="rounded-xl border border-pine-300 px-3 py-2 text-xs font-semibold text-pine-800 hover:bg-white dark:border-forest-600 dark:text-pine-100 dark:hover:bg-forest-700">Rewards</button>
+              <button type="button" onClick={() => setWalletOpen(true)} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+          <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Reading History
             </span>
@@ -516,7 +517,7 @@ export default function StudentPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+          <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Saved to Wishlist
             </span>
@@ -804,7 +805,7 @@ export default function StudentPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Study queue</p>
                   <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Continue reading</h2>
                 </div>
-                <a href="/library" className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">My library</a>
+                <button type="button" onClick={() => setActiveAccessOpen(true)} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">My library</button>
               </div>
               {continueReading.length > 0 ? <div className="mt-4 space-y-3">{continueReading.map((loan) => {
                 const progress = readingProgress[loan.book_id]
@@ -942,6 +943,7 @@ export default function StudentPage() {
         </div>
       ) : null}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <WalletModal open={walletOpen} balance={profile?.points_balance ?? 0} onClose={() => setWalletOpen(false)} onOpenDetails={() => router.push('/points')} />
       {studyQueueOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setStudyQueueOpen(false) }}>
           <section className="notification-modal study-queue-modal" role="dialog" aria-modal="true" aria-labelledby="study-queue-modal-title">
@@ -960,15 +962,15 @@ export default function StudentPage() {
               const percentage = totalPages ? Math.min(100, Math.round((page / totalPages) * 100)) : null
               return <article key={loan.id} className="study-queue-modal-item"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Last opened page {page}{totalPages ? ` of ${totalPages}` : ''}</p></div><span className="text-xs font-bold text-pine-700 dark:text-pine-200">{percentage === null ? 'Active' : `${percentage}%`}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-paper-300 dark:bg-forest-700"><span className="block h-full rounded-full bg-pine-500" style={{ width: `${percentage ?? 0}%` }} /></div><button type="button" onClick={() => { setStudyQueueOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action mt-3 w-full rounded-xl px-3 py-2 text-xs font-semibold">Resume reading</button></article>
             })}</div> : <div className="study-queue-empty">Borrow a digital resource to build your reading queue.</div>}
-            <a href="/library" className="mt-5 inline-flex text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</a>
+            <button type="button" onClick={() => setActiveAccessOpen(true)} className="mt-5 inline-flex text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Open my library</button>
           </section>
         </div>
       ) : null}
       {activeAccessOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveAccessOpen(false) }}>
-          <section className="notification-modal active-access-modal" role="dialog" aria-modal="true" aria-labelledby="active-access-modal-title">
-            <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">My books</p><h2 id="active-access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Active access</h2></div><button type="button" className="notification-modal-close" onClick={() => setActiveAccessOpen(false)} aria-label="Close active access">×</button></div>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Books you can currently read and manage.</p>
+          <section className="notification-modal active-access-modal" role="dialog" aria-modal="true" aria-labelledby="my-library-modal-title">
+            <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Reading space</p><h2 id="my-library-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">My library</h2></div><button type="button" className="notification-modal-close" onClick={() => setActiveAccessOpen(false)} aria-label="Close my library">×</button></div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Books you currently have access to, with options to read, renew, or return them.</p>
             <div className="active-access-list">
               {activeLoans.length > 0 ? activeLoans.map((loan) => {
                 const dueDate = loan.due_date ? new Date(loan.due_date) : null

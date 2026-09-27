@@ -85,7 +85,7 @@ export default function ContributionsPage() {
           contribution_mime_type: uploaded?.mime_type || previous?.mime_type || 'application/pdf',
         })
         if (submitError) throw new Error(submitError.message)
-        setMessage('Your revised contribution was resubmitted for review.')
+        setMessage('Submitted Successfully — your revised contribution was resubmitted for review.')
       } else {
         const { error: submitError } = await supabase.rpc('submit_book_contribution_v2', {
           p_title: form.title,
@@ -100,7 +100,7 @@ export default function ContributionsPage() {
           p_mime_type: uploaded?.mime_type || 'application/pdf',
         })
         if (submitError) throw new Error(submitError.message)
-        setMessage('Your contribution was submitted for review.')
+        setMessage('Submitted Successfully — your contribution is now awaiting review.')
       }
       setForm({ title: '', author: '', description: '' })
       setFile(null)

@@ -10,6 +10,7 @@ import BrandLogo from '@/components/BrandLogo'
 import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
 import ActionModal from '@/components/ActionModal'
+import PasswordInput from '@/components/PasswordInput'
 
 const navGroups = [
   { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }] },
@@ -672,7 +673,7 @@ export default function AdminPage() {
             </div>)}
           </nav>
           <div className="admin-sidebar-footer mt-8 space-y-3">
-            <div className="admin-theme-control"><ThemeToggle /><span>Appearance</span></div>
+            <div className="admin-theme-control"><ThemeToggle /></div>
             <button
               type="button"
               onClick={() => router.push('/profile')}
@@ -732,7 +733,7 @@ export default function AdminPage() {
 
           {actionMessage ? (
             <div className="rounded-[1.75rem] border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-700 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300">
-              {actionMessage}
+              <strong className="mr-2">Success</strong>{actionMessage}
             </div>
           ) : null}
 
@@ -1277,7 +1278,7 @@ export default function AdminPage() {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <input type="text" value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="student@example.com" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <input type="password" required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <PasswordInput required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                 </div>
                 <button type="submit" disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Creating...' : 'Create student account'}</button>
               </form>

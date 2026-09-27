@@ -1,37 +1,69 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+const themes = [
+  { id: 'ink', label: 'Ink Black', color: '#262626' },
+  { id: 'sage', label: 'Sage Green', color: '#78938a' },
+  { id: 'maroon', label: 'Maroon', color: '#7d3f4d' },
+  { id: 'cocoa', label: 'Cocoa Brown', color: '#8b6a55' },
+  { id: 'blush', label: 'Blush Pink', color: '#d98296' },
+] as const
+
+type ThemeId = (typeof themes)[number]['id']
 
 export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(false)
+  const [theme, setTheme] = useState<ThemeId>('sage')
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const saved = localStorage.getItem('smartlib-theme')
+    const savedMode = localStorage.getItem('smartlib-theme')
+    const savedPalette = localStorage.getItem('smartlib-palette') as ThemeId | null
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-    const initialDark = saved ? saved === 'dark' : prefersDark
+    const initialDark = savedMode ? savedMode === 'dark' : prefersDark
+    const initialPalette = themes.some((item) => item.id === savedPalette) ? savedPalette as ThemeId : 'sage'
     setIsDark(initialDark)
+    setTheme(initialPalette)
     document.documentElement.classList.toggle('dark', initialDark)
+    document.documentElement.dataset.theme = initialPalette
   }, [])
 
-  const toggleTheme = () => {
+  useEffect(() => {
+    const handleOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [])
+
+  const toggleDark = () => {
     const next = !isDark
     setIsDark(next)
     document.documentElement.classList.toggle('dark', next)
     localStorage.setItem('smartlib-theme', next ? 'dark' : 'light')
   }
 
+  const chooseTheme = (next: ThemeId) => {
+    setTheme(next)
+    document.documentElement.dataset.theme = next
+    localStorage.setItem('smartlib-palette', next)
+    setOpen(false)
+  }
+
   return (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#e2ded4] bg-[#fcfbf7] text-[#4c554f] shadow-sm transition hover:border-[#78938a] hover:text-[#263f3a] dark:border-[#63736a] dark:bg-[#39453d] dark:text-[#f5f1e8]"
-      aria-label="Toggle dark mode"
-    >
-      {isDark ? (
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" strokeLinecap="round" /></svg>
-      ) : (
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      )}
-    </button>
+    <div className="theme-picker" ref={menuRef}>
+      <button type="button" onClick={() => setOpen((value) => !value)} className="theme-picker-trigger" aria-label="Choose color theme" aria-expanded={open}>
+        <span className="theme-picker-swatch" style={{ backgroundColor: themes.find((item) => item.id === theme)?.color }} />
+        <span className="theme-picker-label">Theme</span>
+        <svg aria-hidden="true" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m5 7 5 5 5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && <div className="theme-picker-menu" role="menu">
+        <p>Choose your color</p>
+        {themes.map((item) => <button type="button" role="menuitem" key={item.id} onClick={() => chooseTheme(item.id)} className={`theme-picker-option ${theme === item.id ? 'is-selected' : ''}`}><span className="theme-picker-swatch" style={{ backgroundColor: item.color }} />{item.label}{theme === item.id && <span className="theme-picker-check">✓</span>}</button>)}
+        <button type="button" onClick={toggleDark} className="theme-picker-mode"><span>{isDark ? '☀' : '☾'}</span>{isDark ? 'Use light mode' : 'Use dark mode'}</button>
+      </div>}
+    </div>
   )
 }

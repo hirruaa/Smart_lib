@@ -30,7 +30,7 @@ export default function BrandLogo({
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <span
-        className={`flex ${sizeClasses[iconSize]} items-center justify-center rounded-2xl bg-forest-900 text-paper-100 shadow-md shadow-forest-950/20 transition-transform duration-200 hover:scale-105 dark:bg-paper-100 dark:text-forest-950 dark:shadow-none`}
+        className={`brand-logo-mark flex ${sizeClasses[iconSize]} items-center justify-center rounded-2xl shadow-md transition-transform duration-200 hover:scale-105`}
       >
         <svg
           aria-hidden="true"
@@ -57,19 +57,16 @@ export default function BrandLogo({
       {showText && (
         <div className="flex flex-col leading-tight">
           <div className="flex items-center gap-1.5">
-            <span className="font-serif text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-xl">
-              Smart<span className="text-pine-600 dark:text-pine-200">Lib</span>
-            </span>
-            <span className="rounded-md bg-pine-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-pine-700 dark:bg-forest-800 dark:text-pine-200">
-              v1.0
+            <span className="brand-logo-name font-serif text-lg font-bold tracking-tight sm:text-xl">
+              Smart<span className="brand-logo-accent">Lib</span>
             </span>
           </div>
           {subtitle ? (
-            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            <span className="brand-logo-subtitle text-[11px] font-medium">
               {subtitle}
             </span>
           ) : (
-            <span className="text-[11px] font-medium tracking-wide text-slate-500 dark:text-slate-400">
+            <span className="brand-logo-subtitle text-[11px] font-medium tracking-wide">
               Academic Digital Library
             </span>
           )}

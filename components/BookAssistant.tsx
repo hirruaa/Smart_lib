@@ -47,6 +47,7 @@ export default function BookAssistant() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage])
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const sessionLoadedRef = useRef(false)
   const endRef = useRef<HTMLDivElement>(null)
@@ -106,6 +107,15 @@ export default function BookAssistant() {
     setLoading(true)
 
     try {
+      let activeSessionId = sessionId
+      if (!activeSessionId) {
+        const created = await fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+        const createdData = await created.json()
+        if (!created.ok || !createdData.session) throw new Error(createdData?.error || 'Unable to start a new conversation.')
+        activeSessionId = createdData.session.id
+        setSessionId(activeSessionId)
+        setSessions([createdData.session])
+      }
       const response = await fetch('/api/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -121,10 +131,10 @@ export default function BookAssistant() {
         loans: data.loans || [],
       }
       setMessages((current) => [...current, assistantMessage])
-      if (sessionId) {
+      if (activeSessionId) {
         await Promise.all([
-          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, role: 'user', content: userMessage.text }) }),
-          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, role: 'assistant', content: assistantMessage.text, results: assistantMessage.results, loans: assistantMessage.loans }) }),
+          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'user', content: userMessage.text }) }),
+          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'assistant', content: assistantMessage.text, results: assistantMessage.results, loans: assistantMessage.loans }) }),
         ])
       }
     } catch (err: any) {
@@ -155,6 +165,34 @@ export default function BookAssistant() {
     setMessages(data.messages?.length ? data.messages.map((message: any) => ({ id: String(message.id), role: message.role, text: message.content, results: message.results, loans: message.loans })) : [initialMessage])
   }
 
+  const deleteSession = async (selectedSession: ChatSession) => {
+    if (deletingSessionId) return
+    setDeletingSessionId(selectedSession.id)
+    setError(null)
+    try {
+      const response = await fetch(`/api/assistant/sessions?session_id=${encodeURIComponent(selectedSession.id)}`, { method: 'DELETE' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.error || 'Unable to delete this conversation.')
+
+      const remaining = sessions.filter((session) => session.id !== selectedSession.id)
+      setSessions(remaining)
+      if (selectedSession.id === sessionId) {
+        const nextSession = remaining[0]
+        if (nextSession) {
+          await selectSession(nextSession)
+        } else {
+          setSessionId(null)
+          setMessages([initialMessage])
+          window.localStorage.setItem('smart-lib-assistant-session', JSON.stringify([initialMessage]))
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Unable to delete this conversation.')
+    } finally {
+      setDeletingSessionId(null)
+    }
+  }
+
   return (
     <>
       {!open ? <button type="button" className="assistant-launcher" onClick={() => setOpen(true)} aria-label="Open library assistant"><span className="assistant-launcher-mark" aria-hidden="true">✦</span><span className="assistant-launcher-label">Ask the library</span></button> : null}
@@ -165,7 +203,7 @@ export default function BookAssistant() {
         <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 
-      {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <button key={session.id} type="button" className={session.id === sessionId ? 'active' : ''} onClick={() => void selectSession(session)}>{session.title}</button>)}</div> : null}
+      {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <div key={session.id} className={`assistant-session-item ${session.id === sessionId ? 'active' : ''}`}><button type="button" className="assistant-session-select" onClick={() => void selectSession(session)}>{session.title}</button>{deletingSessionId === session.id ? <span className="assistant-session-confirm"><span>Delete?</span><button type="button" onClick={() => void deleteSession(session)} aria-label={`Confirm deleting ${session.title}`}>Yes</button><button type="button" onClick={() => setDeletingSessionId(null)} aria-label="Cancel deleting conversation">No</button></span> : <button type="button" className="assistant-session-delete" onClick={() => setDeletingSessionId(session.id)} aria-label={`Delete ${session.title}`} title="Delete conversation">×</button>}</div>)}</div> : null}
 
       <div className="assistant-thread" aria-live="polite">
         {messages.map((message) => (
