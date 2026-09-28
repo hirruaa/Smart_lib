@@ -2,7 +2,7 @@
 
 ## Make room for your best ideas.
 
-Smart Lib is a capstone project created by H-STUDIO—a calm, welcoming space for learning, reading, and discovery. It brings your academic library, notes, and research tools together so you can spend less time hunting for resources and more time following your curiosity.
+Smart Lib is a capstone project, welcoming space for learning, reading, and discovery. It brings your academic library, notes, and research tools together so you can spend less time hunting for resources and more time following your curiosity.
 
 ## Everything in one place
 
