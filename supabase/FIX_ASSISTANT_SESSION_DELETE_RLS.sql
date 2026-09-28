@@ -10,3 +10,4 @@ for all
 to authenticated
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
+        

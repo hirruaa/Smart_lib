@@ -1,66 +1,31 @@
-# Smart_lib
+# Smart Lib
 
-This is a Next.js app using Supabase for auth and user role handling.
+## Make room for your best ideas.
 
-## Product scope
+Smart Lib is a capstone project created by H-STUDIO—a calm, welcoming space for learning, reading, and discovery. It brings your academic library, notes, and research tools together so you can spend less time hunting for resources and more time following your curiosity.
 
-Smart Lib is an AI-powered digital library for academic resource discovery and temporary e-book access. Its core experience combines:
+## Everything in one place
 
-- **AI Library Assistant** for natural-language catalog, account, borrowing, and policy questions.
-- **AI Research Helper** for finding resources and refining research topics with subject-focused searches.
-- **Flexible digital lending** with tracked access periods, expiry, renewal, and borrowing history.
-- **Intelligent resource management** for e-books and future research papers, theses, journals, and repository content.
+### Find your next favorite read
 
-Supporting capabilities include student profiles, saved resources, notifications, study notes, highlights, and administrator controls for users, resources, lending rules, and usage statistics.
+Explore a thoughtfully organized collection of academic resources and borrow the books that spark your interest.
 
-## Setup
+### Turn reading into progress
 
-1. Install dependencies:
+Read, highlight, and write as you go. Keep your important ideas, notes, and discoveries close at hand so they are easy to return to later.
 
-```bash
-npm install
-```
+### A little help, right on time
 
-2. Create a `.env.local` file at the project root with:
+Smart Lib’s assistant can help you discover resources, explore research topics, understand library policies, and keep track of your reading journey.
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
-```
+## A better rhythm for learning
 
-`SUPABASE_SERVICE_ROLE_KEY` is required for administrators to create student accounts. Keep it server-only and never prefix it with `NEXT_PUBLIC_`.
+1. **Choose what interests you** — Explore a library made for curious minds.
+2. **Make it yours** — Save thoughts, highlights, and notes as you learn.
+3. **Keep moving forward** — Return to your ideas whenever inspiration strikes.
 
-3. Run the app locally:
+Smart Lib is made for focused study, small steps, and big progress.
 
-```bash
-npm run dev
-```
+---
 
-## New Supabase project
-
-1. Create the project and copy its URL and anon key into `.env.local`.
-2. Open Supabase **SQL Editor** and run [`supabase/BASE_SCHEMA.sql`](supabase/BASE_SCHEMA.sql).
-3. Create and verify a normal account through `/register`.
-4. Promote that account to the initial administrator from the SQL Editor:
-
-```sql
-update public.profiles
-set role = 'admin'
-where email = 'your-admin-email@example.com';
-```
-
-Public registration intentionally creates student accounts only. Do not expose administrator promotion in the application UI.
-
-## Available scripts
-
-- `npm run dev` — start the development server
-- `npm run build` — build the production app
-- `npm run start` — start the production server after build
-
-## Notes
-
-- `app/login/page.tsx` is the login/signup page
-- `app/dashboard/page.tsx` is the protected dashboard page
-- `utils/supabase/server.ts` creates the server-side Supabase client
-- `utils/supabase/client.ts` creates the browser Supabase client
+Created with care by **H-STUDIO**.
