@@ -172,6 +172,9 @@ html.dark .secondary-action { border-color: #52645a; color: #b5c9b8; }
 .admin-sidebar-collapsed .admin-sidebar-footer > button { justify-content: center; width: 46px; min-height: 44px; margin-inline: auto; padding: 12px; }
 .admin-sidebar-collapsed .admin-theme-control { justify-content: center; }
 .admin-sidebar-toggle { position: fixed; z-index: 40; top: 28px; left: calc(max(16px, (100vw - 1500px) / 2 + 16px) + 282px); display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid #d0d9d2; border-radius: 10px; background: #fcfbf7; color: #263f3a; box-shadow: 0 4px 14px rgba(38, 63, 58, .12); cursor: pointer; }
+.admin-sidebar-toggle svg, .admin-mobile-toggle svg { width: 15px; height: 15px; }
+.admin-sidebar-toggle span, .admin-mobile-toggle span { display: block; position: relative; width: 15px; height: 11px; border-top: 2px solid currentColor; border-bottom: 2px solid currentColor; overflow: hidden; font-size: 0; }
+.admin-sidebar-toggle span::after, .admin-mobile-toggle span::after { content: ''; position: absolute; top: 3px; right: 0; left: 0; border-top: 2px solid currentColor; }
 .admin-sidebar-collapsed .admin-sidebar-toggle { left: calc(max(16px, (100vw - 1500px) / 2 + 16px) + 80px); }
 .admin-mobile-toggle { display: none; }
 .admin-sidebar-backdrop { display: none; }

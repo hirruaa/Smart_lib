@@ -202,6 +202,9 @@ export default function AdminPage() {
 
     setProfile({ email: email ?? '', role })
 
+    const isMissingTableError = (error: { code?: string; message?: string } | null) =>
+      Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
+
     const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes] = await Promise.all([
       supabase
         .from('books')
@@ -228,8 +231,10 @@ export default function AdminPage() {
     // Optional insights modules may not exist yet in older Supabase projects.
     // Keep the control panel usable while those sections remain empty.
     if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error) {
-      const failedResource = booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error
-      setError(`Failed to load admin data: ${failedResource?.message || 'Please check the Supabase schema.'}`)
+      const failedResource = [booksRes, requestsRes, studentsRes, contributionsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
+      if (failedResource) {
+        setError(`Failed to load admin data: ${failedResource.message || 'Please check the Supabase schema.'}`)
+      }
     }
 
     setBooks((booksRes.data ?? []) as Book[])
@@ -237,8 +242,8 @@ export default function AdminPage() {
     setStudents((studentsRes.data ?? []) as Profile[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
     setAuditLogs((auditRes.data ?? []) as AuditLog[])
-    setAccessGrants((grantsRes.data ?? []) as AccessGrant[])
-    setRewards((rewardsRes.data ?? []) as Reward[])
+    setAccessGrants(((!grantsRes.error || !isMissingTableError(grantsRes.error)) ? (grantsRes.data ?? []) : []) as AccessGrant[])
+    setRewards(((!rewardsRes.error || !isMissingTableError(rewardsRes.error)) ? (rewardsRes.data ?? []) : []) as Reward[])
   }
 
   useEffect(() => {
@@ -657,7 +662,7 @@ export default function AdminPage() {
   return (
     <div className="admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
-      <div className={`admin-layout mx-auto max-w-7xl ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
+      <div className={`admin-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
         <aside className={`admin-sidebar ${sidebarOpen ? 'admin-sidebar-open' : ''}`}>
           <div className="mb-8 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>

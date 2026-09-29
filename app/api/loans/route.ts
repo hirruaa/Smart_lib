@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const bookId = Number(body.bookId)
     const durationDays = Number(body.durationDays)
 
-    if (!Number.isInteger(bookId) || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) {
+    if (!Number.isInteger(bookId) || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 90) {
       return NextResponse.json({ error: 'Choose a valid lending period.' }, { status: 400 })
     }
 

@@ -27,6 +27,9 @@ export default function PointsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.replace('/login'); return }
 
+      const isMissingTableError = (error: { code?: string; message?: string } | null) =>
+        Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
+
       const [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult] = await Promise.all([
         supabase.from('profiles').select('points_balance').eq('id', user.id).single(),
         supabase.from('point_transactions').select('id,amount,transaction_type,description,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(100),
@@ -35,14 +38,14 @@ export default function PointsPage() {
         supabase.from('book_access_grants').select('id,book_id,access_type,points_paid,granted_at,expires_at,status,books(title)').eq('student_id', user.id).order('granted_at', { ascending: false }),
         supabase.from('user_achievements').select('awarded_at,achievements(name,description)').eq('user_id', user.id).order('awarded_at', { ascending: false }),
       ])
-      const coreError = [profileResult, transactionResult, contributionResult].find((result) => result.error)?.error
+      const coreError = [profileResult, transactionResult, contributionResult].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (coreError) setError('Unable to load your points activity right now.')
       setBalance(profileResult.data?.points_balance ?? 0)
       setTransactions((transactionResult.data ?? []) as Transaction[])
       setContributions((contributionResult.data ?? []) as Contribution[])
-      setRecognition((recognitionResult.data ?? []) as Recognition[])
-      setGrants((grantResult.data ?? []) as Grant[])
-      setAchievements(((achievementResult.data ?? []) as Array<{ awarded_at: string; achievements: { name: string; description: string }[] | null }>).map((item) => ({ id: item.awarded_at, awarded_at: item.awarded_at, name: item.achievements?.[0]?.name ?? 'Achievement', description: item.achievements?.[0]?.description ?? '' })) as Achievement[])
+      setRecognition((!recognitionResult.error || !isMissingTableError(recognitionResult.error) ? (recognitionResult.data ?? []) : []) as Recognition[])
+      setGrants((!grantResult.error || !isMissingTableError(grantResult.error) ? (grantResult.data ?? []) : []) as Grant[])
+      setAchievements((!achievementResult.error || !isMissingTableError(achievementResult.error) ? (((achievementResult.data ?? []) as Array<{ awarded_at: string; achievements: { name: string; description: string }[] | null }>).map((item) => ({ id: item.awarded_at, awarded_at: item.awarded_at, name: item.achievements?.[0]?.name ?? 'Achievement', description: item.achievements?.[0]?.description ?? '' }))) : []) as Achievement[])
       setLoading(false)
     }
     void load()

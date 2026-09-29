@@ -9,6 +9,8 @@ export default async function Page({ params }: Props) {
   const supabase = createClient()
   const { data: authData } = await supabase.auth.getUser()
   const user = authData.user
+  const isMissingTableError = (error: { code?: string; message?: string } | null) =>
+    Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
   if (!user) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Sign in to read this resource</h1><p className="mt-2">Digital reading is available to authenticated library members.</p></div></div>
@@ -20,7 +22,7 @@ export default async function Page({ params }: Props) {
   ])
   const isAdmin = profile?.role === 'admin'
   const isContributor = Boolean(ownedContribution)
-  const [{ data: activeLoan }, { data: activeGrant }] = await Promise.all([
+  const [loanResult, grantResult] = await Promise.all([
     supabase
       .from('borrow_requests')
       .select('id')
@@ -39,6 +41,13 @@ export default async function Page({ params }: Props) {
       .gt('expires_at', new Date().toISOString())
       .maybeSingle(),
   ])
+
+  if (grantResult.error && !isMissingTableError(grantResult.error)) {
+    return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Access service unavailable</h1><p className="mt-2">The library access table is not available yet. Please re-run the Supabase schema repair.</p></div></div>
+  }
+
+  const activeLoan = loanResult.data
+  const activeGrant = grantResult.data
 
   if (!isAdmin && !isContributor && !activeLoan && !activeGrant) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Active access required</h1><p className="mt-2">Request temporary digital access from the library before opening this resource.</p></div></div>

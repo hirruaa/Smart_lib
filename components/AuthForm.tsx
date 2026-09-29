@@ -33,6 +33,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
 
     try {
       if (mode === 'signup') {
+        const origin = typeof window !== 'undefined' ? window.location.origin : ''
         const result = await supabase.auth.signUp({
           email,
           password,
@@ -40,6 +41,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
             data: {
               full_name: fullName.trim() || undefined,
             },
+            emailRedirectTo: `${origin}/auth/callback?next=/verify-email`,
           },
         })
 

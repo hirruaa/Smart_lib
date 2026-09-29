@@ -636,7 +636,7 @@ export default function StudentPage() {
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <div className="mt-6 grid items-start gap-4 md:grid-cols-2">
                 {filteredBooks.length > 0 ? (
                   filteredBooks.map((book) => (
                     <div key={book.id} className={`resource-card rounded-[1.5rem] p-5 ${expandedBookId === book.id ? 'resource-card-expanded' : ''}`} role="button" tabIndex={0} aria-expanded={expandedBookId === book.id} onClick={(event) => { if ((event.target as HTMLElement).closest('button')) return; setExpandedBookId((current) => current === book.id ? null : book.id) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpandedBookId((current) => current === book.id ? null : book.id) } }}>

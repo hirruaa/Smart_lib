@@ -20,6 +20,9 @@ export async function GET(request: Request, { params }: { params: { bookId: stri
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
+  const isMissingTableError = (error: { code?: string; message?: string } | null) =>
+    Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
+
   const [{ data: profile }, { data: book }, { data: ownedContribution }] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
     supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path').eq('id', bookId).maybeSingle(),
@@ -30,11 +33,12 @@ export async function GET(request: Request, { params }: { params: { bookId: stri
   const isAdmin = profile?.role === 'admin'
   const isContributor = Boolean(ownedContribution)
   if (!isAdmin && !isContributor) {
-    const [{ data: loan }, { data: grant }] = await Promise.all([
+    const [loanResult, grantResult] = await Promise.all([
       supabase.from('borrow_requests').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'approved').is('returned_date', null).gt('due_date', new Date().toISOString()).maybeSingle(),
       supabase.from('book_access_grants').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle(),
     ])
-    if (!loan && !grant) return NextResponse.json({ error: 'Active access required.' }, { status: 403 })
+    if (grantResult.error && !isMissingTableError(grantResult.error)) return NextResponse.json({ error: 'Unable to verify temporary access.' }, { status: 500 })
+    if (!loanResult.data && !grantResult.data) return NextResponse.json({ error: 'Active access required.' }, { status: 403 })
   }
 
   if (book.storage_provider === 'external' || (!book.storage_provider && book.pdf_url?.startsWith('http'))) {
