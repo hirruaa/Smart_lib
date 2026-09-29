@@ -52,7 +52,7 @@ export default function ContributionsPage() {
     const formData = new FormData()
     formData.append('file', fileToUpload)
     formData.append('category', 'Contributions')
-    formData.append('provider', 'google_drive')
+    formData.append('provider', 'supabase')
     formData.append('allow_fallback', 'false')
     const response = await fetch('/api/storage/upload', { method: 'POST', body: formData })
     const result = await response.json()

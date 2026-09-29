@@ -890,7 +890,7 @@ export default function StudentPage() {
                   onClick={() => setDurationDays(String(days))}
                   className={`rounded-2xl border px-4 py-3 text-left transition ${durationDays === String(days) ? 'border-forest-900 bg-forest-900 text-paper-100 dark:border-paper-100 dark:bg-paper-100 dark:text-forest-900' : 'border-paper-300 bg-paper-50 text-slate-700 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100'}`}
                 >
-                  <span className="block text-sm font-semibold">{days} days</span>
+                  <span className="block text-sm font-semibold">{days} {days === 1 ? 'day' : 'days'}</span>
                   <span className={`mt-1 block text-xs ${durationDays === String(days) ? 'text-paper-100/75 dark:text-forest-900/70' : 'text-slate-500 dark:text-slate-300'}`}>Configured access period</span>
                 </button>
               ))}

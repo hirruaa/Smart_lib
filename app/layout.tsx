@@ -8,7 +8,7 @@ export const metadata = {
   },
   description: 'Smart Lib - Role-based academic digital library, e-book lending, study notes, and research assistant.',
   icons: {
-    icon: '/favicon.ico',
+    icon: '/icon.svg',
   },
 }
 

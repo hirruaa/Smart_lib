@@ -129,9 +129,9 @@ export default function AdminPage() {
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
   const [pdfUrl, setPdfUrl] = useState('')
   const [newBookFile, setNewBookFile] = useState<File | null>(null)
-  const [newBookStorageProvider, setNewBookStorageProvider] = useState<'google_drive' | 'supabase'>('google_drive')
+  const [newBookStorageProvider, setNewBookStorageProvider] = useState<'google_drive' | 'supabase'>('supabase')
   const [materialFile, setMaterialFile] = useState<File | null>(null)
-  const [materialStorageProvider, setMaterialStorageProvider] = useState<'google_drive' | 'supabase'>('google_drive')
+  const [materialStorageProvider, setMaterialStorageProvider] = useState<'google_drive' | 'supabase'>('supabase')
   const [bookSearch, setBookSearch] = useState('')
   const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revoked'>('all')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -950,8 +950,8 @@ export default function AdminPage() {
                   <label className="mt-3 block max-w-sm">
                     <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Storage provider</span>
                     <select value={newBookStorageProvider} onChange={(event) => setNewBookStorageProvider(event.target.value as typeof newBookStorageProvider)} disabled={saving} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
-                      <option value="google_drive">Google Drive</option>
                       <option value="supabase">Supabase Storage</option>
+                      <option value="google_drive">Google Drive</option>
                     </select>
                   </label>
                 </div>
@@ -1172,8 +1172,8 @@ export default function AdminPage() {
                     <label className="mt-3 block max-w-sm">
                       <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">2. Choose where to store the PDF</span>
                       <select value={materialStorageProvider} onChange={(event) => setMaterialStorageProvider(event.target.value as typeof materialStorageProvider)} disabled={saving} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
-                        <option value="google_drive">Google Drive</option>
                         <option value="supabase">Supabase Storage</option>
+                        <option value="google_drive">Google Drive</option>
                       </select>
                       <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Google Drive uses your connected Drive account. Supabase Storage keeps the file inside this project.</span>
                     </label>

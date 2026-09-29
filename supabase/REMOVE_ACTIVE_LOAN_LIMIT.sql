@@ -1,6 +1,15 @@
 -- Remove the per-student active digital loan cap from an existing Smart Lib database.
 -- Run this once in the Supabase SQL Editor after deploying the updated app.
 
+-- Keep the duration constraint aligned with the student dashboard options.
+alter table public.borrow_requests
+  drop constraint if exists borrow_requests_duration_days_valid;
+alter table public.borrow_requests
+  drop constraint if exists borrow_requests_duration_days_check;
+alter table public.borrow_requests
+  add constraint borrow_requests_duration_days_check
+  check (duration_days between 1 and 90);
+
 create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
 returns public.borrow_requests language plpgsql security definer set search_path = public as $$
 declare

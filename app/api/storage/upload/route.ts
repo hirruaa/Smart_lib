@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const file = form.get('file')
   const categoryInput = boundedText(form.get('category') || 'Contributions', 60)
   const category = categoryInput || 'Contributions'
-  const requestedProvider = String(form.get('provider') || 'google_drive')
+  const requestedProvider = String(form.get('provider') || 'supabase')
   const allowFallback = String(form.get('allow_fallback') || 'true') !== 'false'
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
   if (!['google_drive', 'supabase'].includes(requestedProvider)) return NextResponse.json({ error: 'Invalid storage provider.' }, { status: 400 })
