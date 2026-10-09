@@ -79,6 +79,30 @@ textarea {
   }
 }
 
+.physical-receipt {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .physical-receipt,
+  .physical-receipt * {
+    visibility: visible !important;
+  }
+
+  .physical-receipt {
+    position: fixed;
+    inset: 0;
+    display: block !important;
+    padding: 2rem;
+    background: #fff;
+    color: #111;
+  }
+}
+
 ::selection {
   background: rgba(120, 147, 138, 0.35);
 }
@@ -460,6 +484,10 @@ html.dark .student-shell .student-hero h1.text-slate-100 { color: #f5f1e8 !impor
 .notification-modal-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; cursor: pointer; font-size: 21px; line-height: 1; }
 .notification-modal-close:hover, .notification-modal-close:focus-visible { border-color: #78938a; background: #eef3ee; outline: none; }
 .reader-page-frame { position: relative; min-height: 420px; margin: 0 auto; line-height: normal; }
+.reader-session-guard { position: relative; }
+.reader-session-content { transition: filter 120ms ease; }
+.reader-session-content-hidden { filter: blur(28px); user-select: none; pointer-events: none; }
+.reader-session-cover { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; background: rgba(18, 28, 25, .88); color: #fff; font-size: 1.125rem; font-weight: 600; text-align: center; padding: 2rem; }
 .reader-page-frame .react-pdf__Document { display: block; }
 .reader-page-frame .react-pdf__Page { position: relative; display: block; }
 .reader-page-frame .react-pdf__Page canvas { display: block; max-width: none; }
@@ -1777,6 +1805,33 @@ html.dark .reader-page { --reader-bg: #17231f; --reader-surface: #22332d; --read
   padding-right: 2.75rem !important;
 }
 
+.reader-page-frame::after {
+  content: var(--reader-watermark) " · " var(--reader-watermark) "\A"
+    var(--reader-watermark) " · " var(--reader-watermark) "\A"
+    var(--reader-watermark) " · " var(--reader-watermark);
+  position: absolute;
+  z-index: 20;
+  inset: -20%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: rgb(21 48 43 / 13%);
+  font-size: clamp(12px, 1.6vw, 20px);
+  font-weight: 700;
+  line-height: 8;
+  text-align: center;
+  white-space: pre-wrap;
+  user-select: none;
+  pointer-events: none;
+  transform: rotate(-28deg);
+}
+
+@media print {
+  .reader-page {
+    display: none !important;
+  }
+}
+
 .password-visibility-toggle {
   position: absolute;
   top: 50%;
@@ -2340,3 +2395,9 @@ html.dark[data-theme] .base-modal button,
 html.dark[data-theme] .notification-modal button,
 html.dark[data-theme] .access-modal button,
 html.dark[data-theme] .review-modal button { color: var(--theme-text); }
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

@@ -28,10 +28,19 @@ export async function POST(request: Request) {
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const password = typeof body.password === 'string' ? body.password : ''
-  const fullName = boundedText(body.fullName ?? '', 120) || ''
+  const role = body.role === 'faculty' ? 'faculty' : body.role === 'student' || body.role === undefined ? 'student' : null
+  const fullName = boundedText(body.fullName ?? '', 120)
+  const school = boundedText(body.school ?? '', 120)
+  const department = boundedText(body.department ?? '', 120)
+  const course = boundedText(body.course ?? '', 120)
+  const studentYear = boundedText(body.studentYear ?? '', 40)
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid student email.' }, { status: 400 })
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
   if (password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
+  if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
+  if (fullName === null || school === null || department === null || course === null || studentYear === null) {
+    return NextResponse.json({ error: 'Profile details exceed the allowed length.' }, { status: 400 })
+  }
 
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -40,13 +49,25 @@ export async function POST(request: Request) {
     email,
     password,
     email_confirm: true,
-    user_metadata: { full_name: fullName, role: 'student' },
+    user_metadata: { full_name: fullName, role, school, department, course, student_year: studentYear },
   })
 
-  if (error) return apiError('Unable to create the student account. The email may already be registered.', 409, error)
+  if (error) return apiError('Unable to create the member account. The email may already be registered.', 409, error)
 
-  if (created.user && fullName) {
-    await adminClient.from('profiles').update({ full_name: fullName }).eq('id', created.user.id)
+  if (created.user) {
+    const { error: profileUpdateError } = await adminClient.from('profiles').update({
+      full_name: fullName || null,
+      school: school || null,
+      department: department || null,
+      course: course || null,
+      student_year: studentYear || null,
+      role,
+    }).eq('id', created.user.id)
+    if (profileUpdateError) {
+      const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
+      if (rollbackError) console.error('Unable to roll back member creation after profile setup failed.', rollbackError)
+      return apiError('Unable to save the new member profile.', 500, profileUpdateError)
+    }
   }
 
   return NextResponse.json({ success: true, email })

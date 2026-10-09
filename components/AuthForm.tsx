@@ -19,6 +19,10 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
+  const [school, setSchool] = useState('')
+  const [department, setDepartment] = useState('')
+  const [course, setCourse] = useState('')
+  const [studentYear, setStudentYear] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -40,6 +44,10 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
           options: {
             data: {
               full_name: fullName.trim() || undefined,
+              school: school.trim() || undefined,
+              department: department.trim() || undefined,
+              course: course.trim() || undefined,
+              student_year: studentYear.trim() || undefined,
             },
             emailRedirectTo: `${origin}/auth/callback?next=/verify-email`,
           },
@@ -70,7 +78,12 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         if (result.error) {
           setErrorMsg(result.error.message)
         } else {
-          router.replace('/dashboard')
+          const requestedPath = new URLSearchParams(window.location.search).get('next')
+          const parsedNext = requestedPath ? new URL(requestedPath, window.location.origin) : null
+          const nextPath = parsedNext?.origin === window.location.origin
+            ? `${parsedNext.pathname}${parsedNext.search}${parsedNext.hash}`
+            : '/dashboard'
+          router.replace(nextPath)
         }
       }
     } catch (err: any) {
@@ -157,18 +170,30 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {mode === 'signup' && (
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                Full Name
-              </span>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100"
-                placeholder="Ada Lovelace"
-              />
-            </label>
+            <>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Full Name</span>
+                <input type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Ada Lovelace" />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">School</span>
+                  <input maxLength={120} value={school} onChange={(event) => setSchool(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="School or college" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Department</span>
+                  <input maxLength={120} value={department} onChange={(event) => setDepartment(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Department" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Course / program</span>
+                  <input maxLength={120} value={course} onChange={(event) => setCourse(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Course or program" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Year level</span>
+                  <input maxLength={40} value={studentYear} onChange={(event) => setStudentYear(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="e.g. 2nd year" />
+                </label>
+              </div>
+            </>
           )}
 
           <label className="block">

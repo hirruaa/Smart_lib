@@ -10,6 +10,8 @@ import ProfileModal from '@/components/ProfileModal'
 import WalletModal from '@/components/WalletModal'
 import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
+import { StudentDashboardSkeleton } from '@/components/skeletons'
+import { useDebounce } from '@/utils/useDebounce'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
@@ -20,10 +22,9 @@ type Book = {
   category: string
   description: string | null
   isbn: string | null
-  total_copies: number
-  available_copies: number
   access_points: number
-  access_mode: 'free' | 'points' | 'restricted'
+  access_mode: 'free' | 'points' | 'restricted' | 'premium'
+  premium_price: number
   access_duration_days: number
   page_count?: number | null
   pdf_url?: string | null
@@ -78,7 +79,7 @@ export default function StudentPage() {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [searchInput, setSearchInput] = useState('')
-  const [availability, setAvailability] = useState('all')
+  const debouncedSearch = useDebounce(searchInput, 200)
   const [catalogSort, setCatalogSort] = useState<'relevance' | 'title' | 'author' | 'newest'>('relevance')
   const [catalogControlsOpen, setCatalogControlsOpen] = useState(false)
   const [expandedBookId, setExpandedBookId] = useState<number | null>(null)
@@ -107,6 +108,8 @@ export default function StudentPage() {
   const [finesLoaded, setFinesLoaded] = useState(false)
   const [readingProgressLoaded, setReadingProgressLoaded] = useState(false)
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([])
+  const [notificationError, setNotificationError] = useState<string | null>(null)
+  const [notificationReloadToken, setNotificationReloadToken] = useState(0)
   const [reviewBookId, setReviewBookId] = useState<number | null>(null)
   const [reviewRating, setReviewRating] = useState('5')
   const [reviewComment, setReviewComment] = useState('')
@@ -130,8 +133,25 @@ export default function StudentPage() {
 
   useEffect(() => {
     if (!userId) return
-    fetch('/api/notifications').then((response) => response.ok ? response.json() : []).then((data) => setSystemNotifications(Array.isArray(data) ? data : [])).catch(() => undefined)
-  }, [userId])
+    let active = true
+    fetch('/api/notifications')
+      .then(async (response) => {
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.error || 'Unable to load notifications.')
+        if (!Array.isArray(result)) throw new Error('Notification response was invalid.')
+        return result as SystemNotification[]
+      })
+      .then((data) => {
+        if (active) {
+          setSystemNotifications(data)
+          setNotificationError(null)
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setNotificationError(error instanceof Error ? error.message : 'Unable to load notifications.')
+      })
+    return () => { active = false }
+  }, [userId, notificationReloadToken])
 
   useEffect(() => {
     if (!userId || !notificationsOpen || finesLoaded) return
@@ -179,7 +199,7 @@ export default function StudentPage() {
       const email = profileData?.email ?? currentUser.email
       const fullName = profileData?.full_name ?? ''
 
-      if (role !== 'student') {
+      if (role !== 'student' && role !== 'faculty') {
         if (role === 'admin') {
           router.replace('/dashboard/admin')
         } else {
@@ -194,7 +214,8 @@ export default function StudentPage() {
       const [booksResult, requestsResult, wishlistResult] = await Promise.all([
         supabase
           .from('books')
-        .select('id, title, author, category, description, isbn, total_copies, available_copies, access_points, access_mode, access_duration_days, page_count, pdf_url')
+          .select('id, title, author, category, description, isbn, access_points, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
+          .neq('catalog_type', 'physical')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -211,19 +232,19 @@ export default function StudentPage() {
         category: book.category ?? '',
         description: book.description ?? '',
         isbn: book.isbn ?? null,
-        total_copies: book.total_copies ?? 0,
-        available_copies: book.available_copies ?? 0,
         access_points: book.access_points ?? 0,
         access_mode: book.access_mode ?? (book.access_points > 0 ? 'points' : 'free'),
+        premium_price: Number(book.premium_price ?? 0),
         access_duration_days: book.access_duration_days ?? 30,
         page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
       }))
 
       setBooks(fetchedBooks)
+      const bookLookup = new Map<number, Book>(fetchedBooks.map((b) => [b.id, b]))
       setWishlistIds(new Set((wishlistResult.data ?? []).map((item: { book_id: number }) => item.book_id)))
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
-        const matchingBook = fetchedBooks.find((b) => b.id === request.book_id)
+        const matchingBook = bookLookup.get(request.book_id)
         return {
           ...request,
           title: request.title ?? matchingBook?.title,
@@ -248,28 +269,30 @@ export default function StudentPage() {
 
   const filteredBooks = useMemo(
     () => {
+      const activeSearch = (query || debouncedSearch).trim().toLowerCase()
+      const searchTokens = activeSearch ? activeSearch.split(/\s+/) : []
+
       const results = books
         .map((book) => ({
           ...book,
           status: 'Digital access',
         }))
         .filter((book) => {
-          const lowerQuery = query.toLowerCase()
           const matchesQuery =
-            book.title.toLowerCase().includes(lowerQuery) ||
-            book.author.toLowerCase().includes(lowerQuery) ||
-            book.category.toLowerCase().includes(lowerQuery)
+            searchTokens.length === 0 ||
+            searchTokens.every(
+              (token) =>
+                book.title.toLowerCase().includes(token) ||
+                book.author.toLowerCase().includes(token) ||
+                book.category.toLowerCase().includes(token) ||
+                (book.isbn && book.isbn.toLowerCase().includes(token))
+            )
 
           const matchesCategory =
             selectedCategory === 'All' ||
             book.category.toLowerCase() === selectedCategory.toLowerCase()
 
-          const matchesAvailability =
-            availability === 'all' ||
-            (availability === 'available' && book.available_copies > 0) ||
-            (availability === 'all-out' && book.available_copies === 0)
-
-          return matchesQuery && matchesCategory && matchesAvailability
+          return matchesQuery && matchesCategory
         })
 
       return results.sort((a, b) => {
@@ -279,7 +302,7 @@ export default function StudentPage() {
         return 0
       })
     },
-    [books, query, selectedCategory, availability, catalogSort]
+    [books, query, debouncedSearch, selectedCategory, catalogSort]
   )
 
   const activeLoans = useMemo(
@@ -320,16 +343,128 @@ export default function StudentPage() {
     return diffDays <= 3
   }).length
 
+  const urgentLoans = useMemo(() => {
+    return activeLoans
+      .map((loan) => {
+        if (!loan.due_date) return null
+        const dueDate = new Date(loan.due_date)
+        const diffDays = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        return {
+          ...loan,
+          diffDays,
+          isOverdue: diffDays < 0,
+          isDueSoon: diffDays >= 0 && diffDays <= 2,
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item && (item.isOverdue || item.isDueSoon)))
+  }, [activeLoans])
+
+  // Realtime updates for loans & profile points
+  useEffect(() => {
+    if (!userId) return
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel(`student-realtime-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'borrow_requests',
+          filter: `student_id=eq.${userId}`,
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newReq = payload.new as BorrowRequest
+            setBorrowRequests((prev) => {
+              if (prev.some((r) => r.id === newReq.id)) return prev
+              const matchingBook = books.find((b) => b.id === newReq.book_id)
+              return [
+                {
+                  ...newReq,
+                  title: newReq.title ?? matchingBook?.title,
+                  pdf_url: matchingBook?.pdf_url ?? null,
+                },
+                ...prev,
+              ]
+            })
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = payload.new as BorrowRequest
+            setBorrowRequests((prev) =>
+              prev.map((r) => (r.id === updated.id ? { ...r, ...updated, title: r.title, pdf_url: r.pdf_url } : r))
+            )
+            if (updated.status === 'approved') {
+              setRequestStatus('Digital access approved! Your new book is now ready in My Library.')
+            }
+          } else if (payload.eventType === 'DELETE') {
+            const deleted = payload.old as { id: number }
+            setBorrowRequests((prev) => prev.filter((r) => r.id !== deleted.id))
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${userId}`,
+        },
+        (payload) => {
+          const updatedProfile = payload.new as { points_balance?: number; full_name?: string }
+          if (updatedProfile) {
+            setProfile((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    points_balance: updatedProfile.points_balance ?? prev.points_balance,
+                    full_name: updatedProfile.full_name ?? prev.full_name,
+                  }
+                : prev
+            )
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [userId, books])
+
   const handleLogout = async () => {
     const supabase = getSupabase()
     await supabase.auth.signOut()
     router.replace('/login')
   }
 
+  const markNotificationRead = async (notificationId: number) => {
+    setNotificationError(null)
+    try {
+      const response = await fetch('/api/notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: notificationId }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Unable to update notification.')
+      setSystemNotifications((current) => current.map((item) => item.id === notificationId
+        ? { ...item, read_at: result.read_at ?? new Date().toISOString() }
+        : item))
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : 'Unable to update notification.')
+    }
+  }
+
   const submitAccessRequest = async () => {
     if (!selectedBook) return
     const book = selectedBook
     if (!userId) return
+    if (book.access_mode === 'premium') {
+      setRequestStatus('Paid e-book checkout is temporarily unavailable. Choose a free or points-based e-book instead.')
+      return
+    }
     setRequestingBookId(book.id)
     setRequestStatus(null)
 
@@ -343,8 +478,10 @@ export default function StudentPage() {
     if (!response.ok) {
       setRequestStatus(data.error || 'Something went wrong while requesting digital access.')
     } else {
-      setRequestStatus(`Digital access requested for ${book.title} for ${durationDays} days.`)
-      const pointsCost = book.access_mode === 'points' ? book.access_points : 0
+      setRequestStatus(data.status === 'approved'
+        ? `Access approved for ${book.title} for ${durationDays} days. You can start reading now.`
+        : `Access requested for ${book.title} for ${durationDays} days.`)
+      const pointsCost = book.access_mode === 'points' ? book.access_points * Math.ceil(Number(durationDays) / 7) : 0
       setProfile((current) => current ? { ...current, points_balance: current.points_balance - pointsCost } : current)
       const supabase = getSupabase()
       const { data: requestsResult } = await supabase
@@ -436,6 +573,7 @@ export default function StudentPage() {
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
             <a href="/study" onClick={() => setSidebarOpen(false)}><SparkIcon /><span>Study hub</span></a>
+            <a href="/physical-library" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Physical books</span></a>
             <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contributions</span></a>
           </nav>
           <div className="student-sidebar-footer">
@@ -445,7 +583,11 @@ export default function StudentPage() {
           </div>
         </aside>
         <main id="overview" className="student-workspace space-y-8">
-        <header className="student-hero rounded-[2rem] p-6 lg:p-8">
+        {!dataReady ? (
+          <StudentDashboardSkeleton />
+        ) : (
+          <>
+          <header className="student-hero rounded-[2rem] p-6 lg:p-8">
           <button type="button" className="student-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><MenuIcon /></button>
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -461,6 +603,42 @@ export default function StudentPage() {
             </div>
           </div>
         </header>
+
+        {urgentLoans.length > 0 ? (
+          <div className="rounded-[1.75rem] border border-amber-300 bg-amber-50/90 p-5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="text-xl" aria-hidden="true">⚠️</span>
+                <div>
+                  <h3 className="font-semibold text-amber-900 dark:text-amber-200">
+                    {urgentLoans.some((l) => l.isOverdue) ? 'Overdue Loan Notice' : 'Access Expiring Soon'}
+                  </h3>
+                  <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
+                    {urgentLoans.map((loan) =>
+                      loan.isOverdue
+                        ? `"${loan.title}" is overdue by ${Math.abs(loan.diffDays)} day(s).`
+                        : `"${loan.title}" expires in ${loan.diffDays === 0 ? 'today' : `${loan.diffDays} day(s)`}.`
+                    ).join(' ')}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {urgentLoans.map((loan) => (
+                  <button
+                    key={loan.id}
+                    type="button"
+                    onClick={() => void handleLoanAction(loan.id, 'renew')}
+                    disabled={loanActionId === loan.id}
+                    className="rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-500 dark:text-slate-950"
+                  >
+                    {loanActionId === loan.id ? 'Renewing...' : `Renew "${loan.title?.slice(0, 16)}..." (+14d)`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <BookAssistant />
 
         <section className="continue-reading-panel rounded-[2rem] border border-paper-300 bg-paper-50 p-6 shadow-sm dark:border-forest-800 dark:bg-forest-900/60 lg:p-8" aria-hidden="true">
@@ -584,18 +762,6 @@ export default function StudentPage() {
                   </div>
                 </label>
                 <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><FilterIcon /><span>Availability</span></span>
-                  <select
-                    value={availability}
-                    onChange={(event) => setAvailability(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    <option value="all">All resources</option>
-                    <option value="available">Has physical copies</option>
-                    <option value="all-out">No physical copies</option>
-                  </select>
-                </label>
-                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
                   <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><SortIcon /><span>Sort by</span></span>
                   <select
                     value={catalogSort}
@@ -660,12 +826,12 @@ export default function StudentPage() {
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 dark:text-slate-400">Access</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">Temporary</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid access temporarily unavailable' : book.access_mode === 'restricted' ? 'Admin approval required' : 'Temporary'}</p>
                         </div>
                       </div>
 
                       <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span>Catalog copies: <strong className="text-slate-800 dark:text-slate-200">{book.available_copies}</strong> of {book.total_copies}</span>
+                        <span>Online resource · no stock limit</span>
                         {book.pdf_url ? (
                           <span className="rounded-md bg-pine-100 px-2 py-0.5 font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">
                             PDF Ready
@@ -868,6 +1034,8 @@ export default function StudentPage() {
 
           </aside>
         </section>
+        </>
+        )}
         </main>
       </div>
       {selectedBook ? (
@@ -877,12 +1045,12 @@ export default function StudentPage() {
               <div>
                 <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Request access</p>
                 <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Choose how long you need this digital resource.</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Automatic paid checkout is not available yet. Free and points-based e-books unlock immediately.' : 'Choose how long you need this digital resource.'}</p>
               </div>
               <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
             </div>
 
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {selectedBook.access_mode !== 'premium' ? <div className="mt-6 grid gap-3 sm:grid-cols-2">
               {accessDurationOptions.map((days) => (
                 <button
                   key={days}
@@ -894,23 +1062,23 @@ export default function StudentPage() {
                   <span className={`mt-1 block text-xs ${durationDays === String(days) ? 'text-paper-100/75 dark:text-forest-900/70' : 'text-slate-500 dark:text-slate-300'}`}>Configured access period</span>
                 </button>
               ))}
-            </div>
+            </div> : null}
 
             <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'restricted' ? 'Restricted access' : `${selectedBook.access_points} points`}
+                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'restricted' ? 'Restricted access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${selectedBook.access_points * Math.ceil(Number(durationDays) / 7)} points`}
                 </span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Choose the access period that fits your study plan.</p>
-              {selectedBook.access_mode === 'points' && selectedBook.access_points > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {selectedBook.access_points - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
+              {selectedBook.access_mode === 'premium' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Choose another free or points-based e-book for automatic access. Paid checkout will return when secure payment confirmation is available.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>}
+              {selectedBook.access_mode === 'points' && selectedBook.access_points * Math.ceil(Number(durationDays) / 7) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {selectedBook.access_points * Math.ceil(Number(durationDays) / 7) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
             </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'restricted' || (selectedBook.access_mode === 'points' && selectedBook.access_points > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'restricted' ? 'Administrator access required' : selectedBook.access_mode === 'points' ? `Unlock for ${selectedBook.access_points} points` : 'Unlock free access'}
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'restricted' || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && selectedBook.access_points * Math.ceil(Number(durationDays) / 7) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'restricted' ? 'Administrator access required' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${selectedBook.access_points * Math.ceil(Number(durationDays) / 7)} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
@@ -932,7 +1100,7 @@ export default function StudentPage() {
               <input required value={contributionForm.author} onChange={(event) => setContributionForm({ ...contributionForm, author: event.target.value })} placeholder="Author" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Why is this useful for the library?" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <input type="url" value={contributionForm.pdfUrl} onChange={(event) => setContributionForm({ ...contributionForm, pdfUrl: event.target.value })} placeholder="Optional public PDF URL" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. Do not submit copyrighted material unless the library has permission to store and share it.</p>
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. An administrator may send text extracted from an uploaded PDF to Google Gemini for an advisory usefulness review. Do not submit copyrighted material unless the library has permission to store and share it.</p>
               {contributionStatus ? <p className="rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm text-slate-700 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100">{contributionStatus}</p> : null}
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                 <button type="button" onClick={() => setContributionOpen(false)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
@@ -1004,8 +1172,9 @@ export default function StudentPage() {
               <button type="button" className="notification-modal-close" onClick={() => setNotificationsOpen(false)} aria-label="Close notifications">×</button>
             </div>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Important alerts for your borrowed books.</p>
+            {notificationError ? <div role="alert" className="mt-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><p>{notificationError}</p><button type="button" className="mt-2 font-semibold underline" onClick={() => setNotificationReloadToken((current) => current + 1)}>Retry</button></div> : null}
             <ul className="mt-6 space-y-3">
-              {systemNotifications.slice(0, 5).map((notification) => <li key={`system-${notification.id}`} className="rounded-[1.5rem] border border-pine-200 bg-pine-50 px-4 py-4 text-sm text-pine-900 dark:border-forest-700 dark:bg-forest-800/60 dark:text-paper-100"><div className="flex items-start justify-between gap-3"><div><strong>{notification.title}</strong><p className="mt-1">{notification.message}</p></div>{!notification.read_at ? <button type="button" className="text-xs font-semibold underline" onClick={() => { void fetch('/api/notifications', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: notification.id }) }); setSystemNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item)) }}>Mark read</button> : null}</div></li>)}
+              {systemNotifications.slice(0, 5).map((notification) => <li key={`system-${notification.id}`} className="rounded-[1.5rem] border border-pine-200 bg-pine-50 px-4 py-4 text-sm text-pine-900 dark:border-forest-700 dark:bg-forest-800/60 dark:text-paper-100"><div className="flex items-start justify-between gap-3"><div><strong>{notification.title}</strong><p className="mt-1">{notification.message}</p></div>{!notification.read_at ? <button type="button" className="text-xs font-semibold underline" onClick={() => void markNotificationRead(notification.id)}>Mark read</button> : null}</div></li>)}
               {borrowRequests.filter((request) => request.status === 'pending' || request.status === 'approved').slice(0, 3).map((request) => {
                 const dueDate = request.due_date ? new Date(request.due_date) : null
                 const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null

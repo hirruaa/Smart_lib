@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
+import { PointsSkeleton } from '@/components/skeletons'
 
 type Transaction = { id: number; amount: number; transaction_type: string; description: string; created_at: string }
 type Contribution = { id: number; title: string; status: string; points_awarded: number; created_at: string }
@@ -55,7 +56,7 @@ export default function PointsPage() {
   const spent = useMemo(() => Math.abs(transactions.filter((item) => item.amount < 0).reduce((sum, item) => sum + item.amount, 0)), [transactions])
   const approved = contributions.filter((item) => item.status === 'approved').length
 
-  if (loading) return <main className="surface-page min-h-screen p-6"><div className="surface-card mx-auto max-w-5xl p-8 text-sm text-slate-500">Loading points wallet...</div></main>
+  if (loading) return <PointsSkeleton />
 
   return (
     <main className="surface-page min-h-screen px-4 py-6 text-slate-900 dark:text-slate-100 sm:px-8">

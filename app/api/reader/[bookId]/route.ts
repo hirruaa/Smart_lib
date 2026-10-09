@@ -25,9 +25,10 @@ export async function GET(request: Request, { params }: { params: { bookId: stri
 
   const [{ data: profile }, { data: book }, { data: ownedContribution }] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
-    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path').eq('id', bookId).maybeSingle(),
+    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type').eq('id', bookId).maybeSingle(),
     supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
+  if (book?.catalog_type === 'physical') return NextResponse.json({ error: 'This title is only available as a physical library book.' }, { status: 409 })
   if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) return NextResponse.json({ error: 'Resource unavailable.' }, { status: 404 })
 
   const isAdmin = profile?.role === 'admin'
@@ -35,7 +36,7 @@ export async function GET(request: Request, { params }: { params: { bookId: stri
   if (!isAdmin && !isContributor) {
     const [loanResult, grantResult] = await Promise.all([
       supabase.from('borrow_requests').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'approved').is('returned_date', null).gt('due_date', new Date().toISOString()).maybeSingle(),
-      supabase.from('book_access_grants').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle(),
+      supabase.from('book_access_grants').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'active').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).maybeSingle(),
     ])
     if (grantResult.error && !isMissingTableError(grantResult.error)) return NextResponse.json({ error: 'Unable to verify temporary access.' }, { status: 500 })
     if (!loanResult.data && !grantResult.data) return NextResponse.json({ error: 'Active access required.' }, { status: 403 })

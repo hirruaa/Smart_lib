@@ -11,6 +11,8 @@ import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
 import ActionModal from '@/components/ActionModal'
 import PasswordInput from '@/components/PasswordInput'
+import { AdminDashboardSkeleton } from '@/components/skeletons'
+import { useDebounce } from '@/utils/useDebounce'
 
 const navGroups = [
   { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }] },
@@ -30,10 +32,9 @@ type Book = {
   storage_file_id?: string | null
   storage_path?: string | null
   access_points: number
-  access_mode: 'free' | 'points' | 'restricted'
+  access_mode: 'free' | 'points' | 'restricted' | 'premium'
+  premium_price: number
   access_duration_days: number
-  total_copies: number
-  available_copies: number
   created_at: string | null
 }
 
@@ -62,6 +63,25 @@ type Profile = {
   email: string
   role: string
   created_at: string | null
+  full_name?: string | null
+  school?: string | null
+  department?: string | null
+  course?: string | null
+  student_year?: string | null
+  faculty_rank_id?: number | null
+}
+
+type FacultyRank = { id: number; title: string; is_active: boolean }
+type AcademicCourse = { id: number; name: string; is_active: boolean }
+type FacultyCourse = { faculty_id: string; course_id: number }
+type MemberEditForm = {
+  role: 'student' | 'faculty'
+  school: string
+  department: string
+  course: string
+  studentYear: string
+  facultyRankId: string
+  courseIds: string[]
 }
 
 type AdminProfile = {
@@ -82,6 +102,14 @@ type Contribution = {
   status: string
   created_at: string | null
   review_feedback?: string | null
+  ai_screening_result?: {
+    recommendation: string
+    relevance_score: number
+    summary: string
+    usefulness: string
+    concerns: string[]
+    human_review_required: true
+  } | null
 }
 
 type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
@@ -110,10 +138,15 @@ export default function AdminPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
+  const [facultyRanks, setFacultyRanks] = useState<FacultyRank[]>([])
+  const [academicCourses, setAcademicCourses] = useState<AcademicCourse[]>([])
+  const [facultyCourses, setFacultyCourses] = useState<FacultyCourse[]>([])
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [screeningId, setScreeningId] = useState<number | null>(null)
   const [newBook, setNewBook] = useState({
     title: '',
     author: '',
@@ -123,7 +156,6 @@ export default function AdminPage() {
     access_points: '0',
     access_mode: 'free' as 'free' | 'points' | 'restricted',
     access_duration_days: '30',
-    total_copies: '1',
     description: '',
   })
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
@@ -133,10 +165,11 @@ export default function AdminPage() {
   const [materialFile, setMaterialFile] = useState<File | null>(null)
   const [materialStorageProvider, setMaterialStorageProvider] = useState<'google_drive' | 'supabase'>('supabase')
   const [bookSearch, setBookSearch] = useState('')
+  const debouncedBookSearch = useDebounce(bookSearch, 200)
   const [requestFilter, setRequestFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'revoked'>('all')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '' })
+  const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty', school: '', department: '', course: '', studentYear: '' })
   const [recognitionForm, setRecognitionForm] = useState({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
@@ -146,6 +179,10 @@ export default function AdminPage() {
   const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
   const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
   const [revisionDialog, setRevisionDialog] = useState<{ id: number; feedback: string } | null>(null)
+  const [editingMember, setEditingMember] = useState<Profile | null>(null)
+  const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
+  const [rankDraft, setRankDraft] = useState('')
+  const [courseDraft, setCourseDraft] = useState('')
 
   const handleDeleteBook = async (bookId: number, title: string) => {
     setConfirmAction({ type: 'deleteBook', id: bookId, label: title })
@@ -185,6 +222,7 @@ export default function AdminPage() {
 
     if (profileError) {
       setError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
+      setLoading(false)
       return
     }
 
@@ -192,7 +230,7 @@ export default function AdminPage() {
     const email = profileData?.email ?? currentUser.email
 
     if (role !== 'admin') {
-      if (role === 'student') {
+      if (role === 'student' || role === 'faculty') {
         router.replace('/dashboard/student')
       } else {
         router.replace('/dashboard')
@@ -205,10 +243,10 @@ export default function AdminPage() {
     const isMissingTableError = (error: { code?: string; message?: string } | null) =>
       Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-    const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes] = await Promise.all([
+    const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes, ranksRes, coursesRes, facultyCoursesRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, pdf_url, storage_provider, storage_file_id, storage_path, access_points, access_mode, access_duration_days, total_copies, available_copies, created_at')
+        .select('id, title, author, isbn, category, description, pdf_url, storage_provider, storage_file_id, storage_path, access_points, access_mode, premium_price, access_duration_days, created_at')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -216,34 +254,43 @@ export default function AdminPage() {
         .order('request_date', { ascending: false }),
       supabase
         .from('profiles')
-        .select('id, email, role, created_at')
-        .eq('role', 'student')
+        .select('id, email, role, created_at, full_name, school, department, course, student_year, faculty_rank_id')
+        .in('role', ['student', 'faculty'])
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
-        .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, created_at')
+        .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, ai_screening_result, ai_screened_at, created_at')
         .order('created_at', { ascending: false }),
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('book_access_grants').select('id,student_id,book_id,access_type,expires_at,status,reason').order('created_at', { ascending: false }).limit(100),
       supabase.from('rewards').select('id,name,description,points_cost,reward_type,stock,is_active').order('points_cost'),
+      supabase.from('faculty_ranks').select('id,title,is_active').order('title'),
+      supabase.from('academic_courses').select('id,name,is_active').order('name'),
+      supabase.from('faculty_courses').select('faculty_id,course_id'),
     ])
 
     // Optional insights modules may not exist yet in older Supabase projects.
     // Keep the control panel usable while those sections remain empty.
-    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error) {
-      const failedResource = [booksRes, requestsRes, studentsRes, contributionsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
+    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error || ranksRes.error || coursesRes.error || facultyCoursesRes.error) {
+      const failedResource = [booksRes, requestsRes, studentsRes, contributionsRes, ranksRes, coursesRes, facultyCoursesRes].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (failedResource) {
         setError(`Failed to load admin data: ${failedResource.message || 'Please check the Supabase schema.'}`)
+      } else if (ranksRes.error || coursesRes.error || facultyCoursesRes.error) {
+        setError('Academic titles and courses are not configured. Apply the academic catalog migration in Supabase.')
       }
     }
 
     setBooks((booksRes.data ?? []) as Book[])
     setRequests((requestsRes.data ?? []) as RequestItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
+    setFacultyRanks((ranksRes.data ?? []) as FacultyRank[])
+    setAcademicCourses((coursesRes.data ?? []) as AcademicCourse[])
+    setFacultyCourses((facultyCoursesRes.data ?? []) as FacultyCourse[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
     setAuditLogs((auditRes.data ?? []) as AuditLog[])
     setAccessGrants(((!grantsRes.error || !isMissingTableError(grantsRes.error)) ? (grantsRes.data ?? []) : []) as AccessGrant[])
     setRewards(((!rewardsRes.error || !isMissingTableError(rewardsRes.error)) ? (rewardsRes.data ?? []) : []) as Reward[])
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -252,17 +299,60 @@ export default function AdminPage() {
 
   const bookMap = useMemo(() => new Map(books.map((book) => [book.id, book])), [books])
   const studentMap = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const facultyRankMap = useMemo(() => new Map(facultyRanks.map((rank) => [rank.id, rank.title])), [facultyRanks])
+  const academicCourseMap = useMemo(() => new Map(academicCourses.map((course) => [course.id, course.name])), [academicCourses])
+  const facultyCourseMap = useMemo(() => {
+    const coursesByFaculty = new Map<string, string[]>()
+    facultyCourses.forEach(({ faculty_id, course_id }) => {
+      const name = academicCourseMap.get(course_id)
+      if (name) coursesByFaculty.set(faculty_id, [...(coursesByFaculty.get(faculty_id) ?? []), name])
+    })
+    return coursesByFaculty
+  }, [facultyCourses, academicCourseMap])
   const filteredBooks = useMemo(() => {
-    if (!bookSearch.trim()) return books
-    const q = bookSearch.toLowerCase()
-    return books.filter(
-      (b) =>
-        b.title.toLowerCase().includes(q) ||
-        b.author.toLowerCase().includes(q) ||
-        b.category.toLowerCase().includes(q) ||
-        (b.isbn && b.isbn.toLowerCase().includes(q))
+    if (!debouncedBookSearch.trim()) return books
+    const tokens = debouncedBookSearch.toLowerCase().trim().split(/\s+/)
+    return books.filter((b) =>
+      tokens.every(
+        (token) =>
+          b.title.toLowerCase().includes(token) ||
+          b.author.toLowerCase().includes(token) ||
+          b.category.toLowerCase().includes(token) ||
+          (b.isbn && b.isbn.toLowerCase().includes(token))
+      )
     )
-  }, [books, bookSearch])
+  }, [books, debouncedBookSearch])
+
+  // Realtime subscription for incoming borrow requests
+  useEffect(() => {
+    if (!profile || profile.role !== 'admin') return
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel('admin-realtime-requests')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'borrow_requests' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newReq = payload.new as RequestItem
+            setRequests((prev) => (prev.some((r) => r.id === newReq.id) ? prev : [newReq, ...prev]))
+            setActionMessage('New borrow request received!')
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = payload.new as RequestItem
+            setRequests((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)))
+          } else if (payload.eventType === 'DELETE') {
+            const deleted = payload.old as { id: number }
+            setRequests((prev) => prev.filter((r) => r.id !== deleted.id))
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [profile])
 
   const filteredRequests = useMemo(() => {
     if (requestFilter === 'all') return requests
@@ -410,29 +500,104 @@ export default function AdminPage() {
     setConfirmAction(null)
   }
 
-  const handleRoleChange = async (userId: string, role: 'student' | 'admin') => {
+  const openMemberEditor = (member: Profile) => {
+    setEditingMember(member)
+    setMemberEditForm({
+      role: member.role === 'faculty' ? 'faculty' : 'student',
+      school: member.school ?? '',
+      department: member.department ?? '',
+      course: member.course ?? '',
+      studentYear: member.student_year ?? '',
+      facultyRankId: member.faculty_rank_id ? String(member.faculty_rank_id) : '',
+      courseIds: facultyCourses.filter((assignment) => assignment.faculty_id === member.id).map((assignment) => String(assignment.course_id)),
+    })
+    setError(null)
+  }
+
+  const saveMemberProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingMember || !memberEditForm) return
     setSaving(true)
     setError(null)
     setActionMessage(null)
-
-    const supabase = getSupabase()
-    const { error } = await supabase.rpc('admin_set_profile_role', {
-      target_user_id: userId,
-      new_role: role,
+    const { error } = await getSupabase().rpc('admin_update_member_academics', {
+      target_user_id: editingMember.id,
+      new_role: memberEditForm.role,
+      new_school: memberEditForm.school.trim() || null,
+      new_department: memberEditForm.department.trim() || null,
+      new_course: memberEditForm.course.trim() || null,
+      new_student_year: memberEditForm.studentYear.trim() || null,
+      new_faculty_rank_id: memberEditForm.role === 'faculty' && memberEditForm.facultyRankId ? Number(memberEditForm.facultyRankId) : null,
+      new_course_ids: memberEditForm.role === 'faculty' ? memberEditForm.courseIds.map(Number) : [],
     })
-
     if (error) {
       setError(error.message)
     } else {
-      setActionMessage('User role updated.')
+      setEditingMember(null)
+      setMemberEditForm(null)
       await loadData()
+      setActionMessage('Member profile saved.')
     }
+    setSaving(false)
+  }
 
+  const addAcademicCatalogItem = async (kind: 'rank' | 'course', event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const name = (kind === 'rank' ? rankDraft : courseDraft).trim()
+    if (!name) return
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const supabase = getSupabase()
+    const { error } = kind === 'rank'
+      ? await supabase.from('faculty_ranks').insert({ title: name })
+      : await supabase.from('academic_courses').insert({ name })
+    if (error) {
+      setError(error.code === '23505' ? `That ${kind === 'rank' ? 'title' : 'course'} already exists.` : error.message)
+    } else {
+      if (kind === 'rank') setRankDraft('')
+      else setCourseDraft('')
+      await loadData()
+      setActionMessage(`${kind === 'rank' ? 'Faculty title' : 'Course'} added.`)
+    }
+    setSaving(false)
+  }
+
+  const setAcademicCatalogItemActive = async (kind: 'rank' | 'course', id: number, isActive: boolean) => {
+    setSaving(true)
+    setError(null)
+    const table = kind === 'rank' ? 'faculty_ranks' : 'academic_courses'
+    const { error } = await getSupabase().from(table).update({ is_active: isActive }).eq('id', id)
+    if (error) setError(error.message)
+    else {
+      await loadData()
+      setActionMessage(`${kind === 'rank' ? 'Faculty title' : 'Course'} ${isActive ? 'activated' : 'deactivated'}.`)
+    }
     setSaving(false)
   }
 
   const handleContributionReview = async (contributionId: number, decision: 'approved' | 'rejected') => {
     setReviewDialog({ id: contributionId, decision, reward: decision === 'approved' ? '25' : '0', accessPoints: '0' })
+  }
+
+  const handleContributionScreen = async (contributionId: number) => {
+    setScreeningId(contributionId)
+    setError(null)
+    setActionMessage(null)
+    try {
+      const response = await fetch(`/api/admin/contributions/${contributionId}/screen`, { method: 'POST' })
+      const result = await response.json()
+      if (!response.ok) {
+        setError(result.error || 'AI screening failed.')
+        return
+      }
+      setContributions((current) => current.map((item) => item.id === contributionId ? { ...item, ai_screening_result: result } : item))
+      setActionMessage('AI screening finished. Its suggestions are advisory; you must make the final decision.')
+    } catch (screenError) {
+      setError(screenError instanceof Error ? screenError.message : 'AI screening failed.')
+    } finally {
+      setScreeningId(null)
+    }
   }
 
   const executeContributionReview = async () => {
@@ -496,8 +661,8 @@ export default function AdminPage() {
     if (!response.ok) {
       setError(data.error || 'Unable to create student account.')
     } else {
-      setActionMessage(`Student account created for ${data.email}.`)
-      setNewStudent({ email: '', password: '', fullName: '' })
+      setActionMessage(`Member account created for ${data.email}.`)
+      setNewStudent({ email: '', password: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '' })
       await loadData()
     }
     setSaving(false)
@@ -609,7 +774,6 @@ export default function AdminPage() {
       setSaving(false)
       return
     }
-
     const { error } = await supabase.from('books').insert([
       {
         title: newBook.title,
@@ -621,17 +785,19 @@ export default function AdminPage() {
         description: newBook.description || null,
         access_points: Number(newBook.access_points) || 0,
         access_mode: newBook.access_mode,
+        premium_price: 0,
+        catalog_type: 'digital',
         access_duration_days: Number(newBook.access_duration_days) || 30,
-        total_copies: Number(newBook.total_copies) || 1,
-        available_copies: Number(newBook.total_copies) || 1,
+        total_copies: 0,
+        available_copies: 0,
       },
     ])
 
     if (error) {
       setError(error.message)
     } else {
-      setActionMessage('New book added to inventory successfully.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_points: '0', access_mode: 'free', access_duration_days: '30', total_copies: '1', description: '' })
+      setActionMessage('New e-book added to the online catalog.')
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_points: '0', access_mode: 'free', access_duration_days: '30', description: '' })
       setNewBookFile(null)
       await loadData()
     }
@@ -697,6 +863,10 @@ export default function AdminPage() {
         </aside>
 
         <main className="admin-workspace space-y-6">
+          {loading ? (
+            <AdminDashboardSkeleton />
+          ) : (
+            <>
           <header className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
             <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -787,9 +957,11 @@ export default function AdminPage() {
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage inventory, protected PDFs, and storage providers from one library workspace.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage online e-books, protected PDFs, access terms, and storage. Digital resources do not have stock limits.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => router.push('/dashboard/admin/physical')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Physical circulation</button>
+                  <button type="button" onClick={() => router.push('/dashboard/admin/ebook-payments')} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">Legacy e-book payments</button>
                   <input
                     value={bookSearch}
                     onChange={(e) => setBookSearch(e.target.value)}
@@ -815,7 +987,7 @@ export default function AdminPage() {
                       <th className="px-4 py-3 font-semibold">Title</th>
                       <th className="px-4 py-3 font-semibold">Author</th>
                       <th className="px-4 py-3 font-semibold">Category</th>
-                      <th className="px-4 py-3 font-semibold">Stock</th>
+                      <th className="px-4 py-3 font-semibold">Online access</th>
                       <th className="px-4 py-3 font-semibold">PDF</th>
                       <th className="px-4 py-3 font-semibold text-right">Actions</th>
                     </tr>
@@ -827,7 +999,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                          {book.available_copies} / {book.total_copies}
+                          {book.access_mode === 'premium' ? 'Paid access paused' : book.access_mode === 'points' ? `${book.access_points} points / 7 days` : book.access_mode === 'restricted' ? 'Restricted' : 'Free access'}
                         </td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
                           {book.pdf_url || book.storage_file_id || book.storage_path ? (
@@ -884,17 +1056,6 @@ export default function AdminPage() {
                     />
                   </label>
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Copies</span>
-                    <input
-                      type="number"
-                      min="1"
-                      value={newBook.total_copies}
-                      onChange={(event) => setNewBook({ ...newBook, total_copies: event.target.value })}
-                      required
-                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                    />
-                  </label>
-                  <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Points per 7 days</span>
                     <input
                       type="number"
@@ -904,7 +1065,7 @@ export default function AdminPage() {
                       required
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Use 0 for free access.</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Points charged per 7-day access period. Set 0 for free access.</span>
                   </label>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access mode</span>
@@ -917,6 +1078,7 @@ export default function AdminPage() {
                       <option value="points">Points-based access</option>
                       <option value="restricted">Restricted access</option>
                     </select>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">E-books unlock automatically when free or when the member has enough points. Paid checkout is paused until an online payment provider can confirm transactions automatically.</span>
                   </label>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration (days)</span>
@@ -1243,7 +1405,7 @@ export default function AdminPage() {
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Community contributions</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review suggested resources and reward useful additions with points.</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">AI screening is advisory only. Check the submitted PDF and make the final approval decision yourself.</p>
               </div>
               <div className="space-y-3">
                 {contributions.filter((contribution) => contribution.status === 'pending').length > 0 ? contributions.filter((contribution) => contribution.status === 'pending').map((contribution) => (
@@ -1254,8 +1416,16 @@ export default function AdminPage() {
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {students.find((student) => student.id === contribution.user_id)?.email ?? 'Unknown student'}</p>
                         {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
                         {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <a href={`/api/contributions/${contribution.id}/file`} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
+                        {contribution.ai_screening_result ? <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm dark:border-sky-900/50 dark:bg-sky-950/20">
+                          <p className="font-semibold text-sky-900 dark:text-sky-200">Gemini screening · {contribution.ai_screening_result.relevance_score}/100 · {contribution.ai_screening_result.recommendation}</p>
+                          <p className="mt-1 text-slate-700 dark:text-slate-300">{contribution.ai_screening_result.summary}</p>
+                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{contribution.ai_screening_result.usefulness}</p>
+                          {contribution.ai_screening_result.concerns.length ? <ul className="mt-2 list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{contribution.ai_screening_result.concerns.map((concern, index) => <li key={index}>{concern}</li>)}</ul> : null}
+                          <p className="mt-2 text-xs font-semibold text-sky-800 dark:text-sky-300">Always requires human review. AI does not verify copyright or authorship.</p>
+                        </div> : null}
                       </div>
                       <div className="flex shrink-0 gap-2">
+                        <button type="button" disabled={saving || screeningId !== null} onClick={() => void handleContributionScreen(contribution.id)} className="rounded-xl border border-sky-200 px-3 py-2 text-xs font-semibold text-sky-700 disabled:opacity-50 dark:border-sky-900/50 dark:text-sky-300">{screeningId === contribution.id ? 'Screening...' : contribution.ai_screening_result ? 'Screen again' : 'Screen with Gemini'}</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'rejected')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-300">Reject</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'approved')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Approve</button>
@@ -1272,49 +1442,78 @@ export default function AdminPage() {
           {section === 'users' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Student management</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review student loan activity.</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Member management</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage student and faculty accounts, academic details, and loan activity.</p>
+              </div>
+              <div className="mb-6 grid gap-4 xl:grid-cols-2">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Faculty titles and ranks</h3>
+                  <form onSubmit={(event) => void addAcademicCatalogItem('rank', event)} className="mt-3 flex gap-2">
+                    <input required maxLength={100} value={rankDraft} onChange={(event) => setRankDraft(event.target.value)} placeholder="e.g. Lecturer" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                    <button type="submit" disabled={saving} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Add title</button>
+                  </form>
+                  <ul className="mt-3 space-y-2">
+                    {facultyRanks.map((rank) => <li key={rank.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm dark:bg-slate-900"><span className={rank.is_active ? '' : 'text-slate-400 line-through'}>{rank.title}{rank.is_active ? '' : ' (inactive)'}</span><button type="button" disabled={saving} onClick={() => void setAcademicCatalogItemActive('rank', rank.id, !rank.is_active)} className="text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300">{rank.is_active ? 'Deactivate' : 'Reactivate'}</button></li>)}
+                    {facultyRanks.length === 0 ? <li className="text-sm text-slate-500">No titles added yet.</li> : null}
+                  </ul>
+                </section>
+                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Courses and programs</h3>
+                  <form onSubmit={(event) => void addAcademicCatalogItem('course', event)} className="mt-3 flex gap-2">
+                    <input required maxLength={120} value={courseDraft} onChange={(event) => setCourseDraft(event.target.value)} placeholder="e.g. Computer Science" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                    <button type="submit" disabled={saving} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Add course</button>
+                  </form>
+                  <ul className="mt-3 space-y-2">
+                    {academicCourses.map((course) => <li key={course.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm dark:bg-slate-900"><span className={course.is_active ? '' : 'text-slate-400 line-through'}>{course.name}{course.is_active ? '' : ' (inactive)'}</span><button type="button" disabled={saving} onClick={() => void setAcademicCatalogItemActive('course', course.id, !course.is_active)} className="text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300">{course.is_active ? 'Deactivate' : 'Reactivate'}</button></li>)}
+                    {academicCourses.length === 0 ? <li className="text-sm text-slate-500">No courses added yet.</li> : null}
+                  </ul>
+                </section>
               </div>
               <form onSubmit={handleCreateStudent} className="mb-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
                 <div className="mb-4">
-                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Create student account</h3>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">The account is created as a student and can sign in immediately.</p>
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Create member account</h3>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Create a student or faculty account that can sign in immediately.</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <input type="text" value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="student@example.com" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input type="text" maxLength={120} value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <PasswordInput required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <select value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' })} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                    <option value="student">Student</option>
+                    <option value="faculty">Faculty</option>
+                  </select>
+                  <input maxLength={120} value={newStudent.school} onChange={(event) => setNewStudent({ ...newStudent, school: event.target.value })} placeholder="School or college" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input maxLength={120} value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} placeholder="Department" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input maxLength={120} value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} placeholder="Course or program (students)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input maxLength={40} value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} placeholder="Year level (students)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                 </div>
-                <button type="submit" disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Creating...' : 'Create student account'}</button>
+                <button type="submit" disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Creating...' : 'Create member account'}</button>
               </form>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
                   <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
                     <tr>
-                      <th className="px-4 py-3 font-semibold">Email</th>
+                      <th className="px-4 py-3 font-semibold">Member</th>
                       <th className="px-4 py-3 font-semibold">Role</th>
+                      <th className="px-4 py-3 font-semibold">School / department</th>
+                      <th className="px-4 py-3 font-semibold">Program / teaching</th>
+                      <th className="px-4 py-3 font-semibold">Title / year</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
                       <th className="px-4 py-3 font-semibold">Overdue</th>
+                      <th className="px-4 py-3 font-semibold">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                     {studentDetails.map((student) => (
                       <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
-                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{student.email}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                          <select
-                            value={student.role}
-                            onChange={(event) => handleRoleChange(student.id, event.target.value as 'student' | 'admin')}
-                            disabled={saving}
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
-                            aria-label={`Role for ${student.email}`}
-                          >
-                            <option value="student">student</option>
-                            <option value="admin">admin</option>
-                          </select>
-                        </td>
+                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100"><span className="block font-medium">{student.full_name || '—'}</span><span className="text-xs text-slate-500">{student.email}</span></td>
+                        <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{student.role}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{[student.school, student.department].filter(Boolean).join(' · ') || '—'}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (facultyCourseMap.get(student.id)?.join(', ') || '—') : (student.course || '—')}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (student.faculty_rank_id ? facultyRankMap.get(student.faculty_rank_id) || '—' : '—') : (student.student_year || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.overdue_loans}</td>
+                        <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1322,7 +1521,72 @@ export default function AdminPage() {
               </div>
             </section>
           )}
+          </>
+          )}
         </main>
+        {editingMember && memberEditForm ? (
+          <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setEditingMember(null); setMemberEditForm(null) } }}>
+            <section className="my-6 w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="member-edit-title">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 id="member-edit-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Edit member profile</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{editingMember.full_name || editingMember.email} · {editingMember.email}</p>
+                </div>
+                <button type="button" disabled={saving} onClick={() => { setEditingMember(null); setMemberEditForm(null) }} className="rounded-lg border border-slate-300 px-3 py-1 text-sm dark:border-slate-700">Close</button>
+              </div>
+              <form onSubmit={(event) => void saveMemberProfile(event)} className="mt-5 space-y-4">
+                <label className="block text-sm font-medium">Role
+                  <select value={memberEditForm.role} onChange={(event) => setMemberEditForm({ ...memberEditForm, role: event.target.value as 'student' | 'faculty' })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950">
+                    <option value="student">Student</option>
+                    <option value="faculty">Faculty member</option>
+                  </select>
+                </label>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block text-sm font-medium">School / college<input maxLength={120} value={memberEditForm.school} onChange={(event) => setMemberEditForm({ ...memberEditForm, school: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+                  <label className="block text-sm font-medium">Department<input maxLength={120} value={memberEditForm.department} onChange={(event) => setMemberEditForm({ ...memberEditForm, department: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+                  {memberEditForm.role === 'student' ? <>
+                    <label className="block text-sm font-medium">Course / program
+                      <select value={memberEditForm.course} onChange={(event) => setMemberEditForm({ ...memberEditForm, course: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950">
+                        <option value="">Select a course</option>
+                        {memberEditForm.course && !academicCourses.some((item) => item.name === memberEditForm.course) ? <option value={memberEditForm.course}>{memberEditForm.course} (current)</option> : null}
+                        {academicCourses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-sm font-medium">Year level<input maxLength={40} value={memberEditForm.studentYear} onChange={(event) => setMemberEditForm({ ...memberEditForm, studentYear: event.target.value })} placeholder="e.g. 2nd year" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+                  </> : <>
+                    <label className="block text-sm font-medium sm:col-span-2">Academic title / rank
+                      <select value={memberEditForm.facultyRankId} onChange={(event) => setMemberEditForm({ ...memberEditForm, facultyRankId: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950">
+                        <option value="">No title selected</option>
+                        {facultyRanks.filter((rank) => rank.is_active || String(rank.id) === memberEditForm.facultyRankId).map((rank) => <option key={rank.id} value={rank.id}>{rank.title}{rank.is_active ? '' : ' (inactive)'}</option>)}
+                      </select>
+                    </label>
+                    <fieldset className="sm:col-span-2">
+                      <legend className="text-sm font-medium">Courses taught</legend>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {academicCourses.filter((item) => item.is_active || memberEditForm.courseIds.includes(String(item.id))).map((item) => (
+                          <label key={item.id} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
+                            <input type="checkbox" checked={memberEditForm.courseIds.includes(String(item.id))} onChange={(event) => setMemberEditForm({
+                              ...memberEditForm,
+                              courseIds: event.target.checked
+                                ? [...memberEditForm.courseIds, String(item.id)]
+                                : memberEditForm.courseIds.filter((id) => id !== String(item.id)),
+                            })} />
+                            {item.name}{item.is_active ? '' : ' (inactive)'}
+                          </label>
+                        ))}
+                        {academicCourses.length === 0 ? <p className="text-sm text-slate-500">Add courses to the catalog before assigning them to faculty.</p> : null}
+                      </div>
+                    </fieldset>
+                  </>}
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button type="button" disabled={saving} onClick={() => { setEditingMember(null); setMemberEditForm(null) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
+                  <button type="submit" disabled={saving} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Saving...' : 'Save profile'}</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        ) : null}
         <ActionModal
           open={confirmAction?.type === 'deleteBook'}
           title="Remove this book?"

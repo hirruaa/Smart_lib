@@ -1,12 +1,24 @@
 import './globals.css'
 import CookieConsent from '@/components/CookieConsent'
+import type { Metadata } from 'next'
 
-export const metadata = {
+export const metadata: Metadata = {
   title: {
     default: 'Smart Lib | Academic Digital Library & Study Workspace',
     template: '%s | Smart Lib',
   },
   description: 'Smart Lib - Role-based academic digital library, e-book lending, study notes, and research assistant.',
+  openGraph: {
+    type: 'website',
+    siteName: 'Smart Lib',
+    title: 'Smart Lib | Academic Digital Library & Study Workspace',
+    description: 'Explore library resources, read, and keep your study work together in Smart Lib.',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Smart Lib | Academic Digital Library & Study Workspace',
+    description: 'Explore library resources, read, and keep your study work together in Smart Lib.',
+  },
   icons: {
     icon: '/icon.svg',
   },

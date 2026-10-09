@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Please sign in to borrow a resource.' }, { status: 401 })
 
-    const { error } = await supabase.rpc('request_digital_loan', {
+    const { data: loan, error } = await supabase.rpc('request_digital_loan', {
       p_book_id: bookId,
       p_duration_days: durationDays,
     })
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message || 'Unable to create the digital loan request.' }, { status: 409 })
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, status: loan?.status, dueDate: loan?.due_date })
   } catch {
     return NextResponse.json({ error: 'Something went wrong while requesting digital access.' }, { status: 500 })
   }
