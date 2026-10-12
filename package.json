@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next build",
     "start": "next start",
-    "test": "node scripts/check_system.js"
+    "test": "node --test && node scripts/check_system.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
