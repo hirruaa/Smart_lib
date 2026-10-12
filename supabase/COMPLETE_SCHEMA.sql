@@ -1,7 +1,9 @@
 -- Smart Lib consolidated Supabase schema.
--- For a fresh project: run this file once in the Supabase SQL Editor.
--- For an existing project with data: use the individual migrations in SCHEMA.md, after a backup and staging verification.
--- Consolidated in dependency order from the maintained SQL files below.
+-- Fresh project: run this file once in the Supabase SQL Editor. It includes the
+-- current contribution-file, digital-access, faculty/department, and duration
+-- updates in dependency order. Do not run the individual migrations afterward.
+-- Existing project with data: use only reviewed, applicable migrations after
+-- testing against a backup in staging. The pgTAP tests remain separate.
 
 -- ============================================================================
 -- Core schema
@@ -448,23 +450,42 @@
   $$;
 
   create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
-  returns public.borrow_requests language plpgsql security definer set search_path = public as $$
+  returns public.borrow_requests
+  language plpgsql
+  security definer
+  set search_path = public
+  as $$
   declare
     requested public.borrow_requests;
     required_points integer;
     user_points integer;
     book_points integer;
     book_mode text;
+    book_catalog_type text;
   begin
     if auth.uid() is null then raise exception 'Authentication required'; end if;
-    if p_duration_days < 1 or p_duration_days > 90 then
-      raise exception 'Choose a lending period between 1 and 90 days';
+    if p_duration_days not in (1, 3, 7, 14, 30) then
+      raise exception 'Choose one of the available lending periods';
     end if;
 
-    select access_points, access_mode into book_points, book_mode from public.books where id = p_book_id;
+    select access_points, access_mode, catalog_type
+    into book_points, book_mode, book_catalog_type
+    from public.books where id = p_book_id;
     if book_points is null then raise exception 'Resource not found'; end if;
+    if book_catalog_type = 'physical' then
+      raise exception 'Physical books use the physical circulation workflow';
+    end if;
     if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
-    required_points := case when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points else 0 end;
+    if book_mode = 'premium' then
+      raise exception 'Paid e-book checkout is paused. Choose free or points-based access instead';
+    end if;
+    if book_mode not in ('free', 'points') then
+      raise exception 'This digital access mode is unavailable';
+    end if;
+    required_points := case
+      when book_mode = 'points' then ceil(book_points * p_duration_days / 7.0)::integer
+      else 0
+    end;
 
     perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
     if exists (
@@ -478,14 +499,20 @@
     select points_balance into user_points from public.profiles where id = auth.uid() for update;
     if user_points is null then raise exception 'Profile not found'; end if;
     if user_points < required_points then
-      raise exception 'You need % more points to unlock this resource for % days', required_points - user_points, p_duration_days;
+      raise exception 'You need % more points to unlock this resource for % days',
+        required_points - user_points, p_duration_days;
     end if;
 
     insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
-    values (auth.uid(), p_book_id, p_duration_days, required_points, 'approved', now() + make_interval(days => p_duration_days))
+    values (
+      auth.uid(), p_book_id, p_duration_days, required_points, 'approved',
+      now() + make_interval(days => p_duration_days)
+    )
     returning * into requested;
     if required_points > 0 then
-      update public.profiles set points_balance = points_balance - required_points where id = auth.uid();
+      update public.profiles
+      set points_balance = points_balance - required_points
+      where id = auth.uid();
       insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
       values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
     end if;
@@ -494,38 +521,6 @@
     return requested;
   end;
   $$;
-
-  create or replace function public.provision_profile()
-  returns trigger
-  language plpgsql
-  security definer
-  set search_path = public
-  as $$
-  begin
-    insert into public.profiles (id, email, role)
-    values (new.id, coalesce(new.email, ''), 'student')
-    on conflict (id) do update set email = excluded.email;
-    update public.profiles
-    set full_name = nullif(trim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
-        school = nullif(trim(coalesce(new.raw_user_meta_data ->> 'school', '')), ''),
-        department = nullif(trim(coalesce(new.raw_user_meta_data ->> 'department', '')), ''),
-        course = nullif(trim(coalesce(new.raw_user_meta_data ->> 'course', '')), ''),
-        student_year = nullif(trim(coalesce(new.raw_user_meta_data ->> 'student_year', '')), '')
-    where id = new.id;
-    return new;
-  end;
-  $$;
-
-  drop trigger if exists on_auth_user_created on auth.users;
-  create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function public.provision_profile();
-
-  -- Backfill accounts created before this schema was installed.
-  insert into public.profiles (id, email, role)
-  select id, coalesce(email, ''), 'student'
-  from auth.users
-  on conflict (id) do update set email = excluded.email;
 
   create or replace function public.prevent_student_role_change()
   returns trigger
@@ -1431,185 +1426,8 @@
   alter table public.books add column if not exists access_duration_days integer not null default 30;
 
 -- ============================================================================
--- Faculty roles, profile details, and automatic free/points digital access
--- ============================================================================
-
--- Adds faculty accounts, academic profile details, and automatic approval for
--- point-eligible digital access. Safe to run more than once.
-
-alter table public.profiles add column if not exists school text;
-alter table public.profiles add column if not exists department text;
-alter table public.profiles add column if not exists course text;
-alter table public.profiles add column if not exists student_year text;
-alter table public.profiles drop constraint if exists profiles_role_check;
-alter table public.profiles add constraint profiles_role_check
-  check (role in ('student', 'faculty', 'admin'));
-
-create or replace function public.provision_profile()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles (id, email, role)
-  values (new.id, coalesce(new.email, ''), 'student')
-  on conflict (id) do update set email = excluded.email;
-
-  update public.profiles
-  set full_name = nullif(trim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
-      school = nullif(trim(coalesce(new.raw_user_meta_data ->> 'school', '')), ''),
-      department = nullif(trim(coalesce(new.raw_user_meta_data ->> 'department', '')), ''),
-      course = nullif(trim(coalesce(new.raw_user_meta_data ->> 'course', '')), ''),
-      student_year = nullif(trim(coalesce(new.raw_user_meta_data ->> 'student_year', '')), '')
-  where id = new.id;
-  return new;
-end;
-$$;
-
-create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
-returns public.borrow_requests
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  requested public.borrow_requests;
-  required_points integer;
-  user_points integer;
-  book_points integer;
-  book_mode text;
-begin
-  if auth.uid() is null then raise exception 'Authentication required'; end if;
-  if p_duration_days < 1 or p_duration_days > 90 then
-    raise exception 'Choose a lending period between 1 and 90 days';
-  end if;
-
-  select access_points, access_mode into book_points, book_mode
-  from public.books where id = p_book_id;
-  if book_points is null then raise exception 'Resource not found'; end if;
-  if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
-  required_points := case
-    when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points
-    else 0
-  end;
-
-  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
-  if exists (
-    select 1 from public.borrow_requests
-    where student_id = auth.uid() and book_id = p_book_id
-      and (status = 'pending' or (status = 'approved' and returned_date is null and due_date > now()))
-  ) then
-    raise exception 'You already have an active request or loan for this resource';
-  end if;
-
-  select points_balance into user_points
-  from public.profiles where id = auth.uid() for update;
-  if user_points is null then raise exception 'Profile not found'; end if;
-  if user_points < required_points then
-    raise exception 'You need % more points to unlock this resource for % days',
-      required_points - user_points, p_duration_days;
-  end if;
-
-  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
-  values (
-    auth.uid(), p_book_id, p_duration_days, required_points, 'approved',
-    now() + make_interval(days => p_duration_days)
-  )
-  returning * into requested;
-
-  if required_points > 0 then
-    update public.profiles
-    set points_balance = points_balance - required_points
-    where id = auth.uid();
-    insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
-    values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
-  end if;
-
-  insert into public.notifications(user_id, event_type, title, message, reference_id)
-  values (auth.uid(), 'borrow_request_status', 'Access approved', 'Your digital library access is ready to use.', requested.id);
-  return requested;
-end;
-$$;
-
-create or replace function public.admin_set_profile_role(target_user_id uuid, new_role text)
-returns public.profiles
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  updated_profile public.profiles;
-begin
-  if not public.is_admin() then raise exception 'Administrator access required'; end if;
-  if new_role not in ('student', 'faculty', 'admin') then raise exception 'Invalid account role'; end if;
-  update public.profiles set role = new_role
-  where id = target_user_id
-  returning * into updated_profile;
-  if updated_profile.id is null then raise exception 'Profile not found'; end if;
-  return updated_profile;
-end;
-$$;
-
--- ============================================================================
 -- Administrator-managed academic catalogs
 -- ============================================================================
-
--- Adds administrator-managed faculty ranks and courses taught.
-
-alter table public.profiles add column if not exists faculty_rank_id bigint;
-
-create table if not exists public.faculty_ranks (
-  id bigint generated by default as identity primary key,
-  title text not null unique,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.academic_courses (
-  id bigint generated by default as identity primary key,
-  name text not null unique,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.faculty_courses (
-  faculty_id uuid not null references public.profiles(id) on delete cascade,
-  course_id bigint not null references public.academic_courses(id) on delete restrict,
-  created_at timestamptz not null default now(),
-  primary key (faculty_id, course_id)
-);
-
-alter table public.profiles drop constraint if exists profiles_faculty_rank_id_fkey;
-alter table public.profiles
-  add constraint profiles_faculty_rank_id_fkey
-  foreign key (faculty_rank_id) references public.faculty_ranks(id) on delete set null;
-
-create or replace function public.prevent_student_role_change()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if auth.uid() is not null
-    and not exists (select 1 from public.profiles where id = auth.uid() and role = 'admin') then
-    if old.role is distinct from new.role then
-      raise exception 'Only an administrator can change account roles';
-    end if;
-    if old.points_balance is distinct from new.points_balance then
-      raise exception 'Only an administrator or approved workflow can change points';
-    end if;
-    if old.email is distinct from new.email then
-      raise exception 'Email changes must be handled by account authentication';
-    end if;
-    if old.faculty_rank_id is distinct from new.faculty_rank_id then
-      raise exception 'Only an administrator can change faculty titles';
-    end if;
-  end if;
-  return new;
-end;
-$$;
 
 create or replace function public.admin_update_member_academics(
   target_user_id uuid,
@@ -2227,56 +2045,6 @@ create policy physical_book_covers_admin_delete on storage.objects for delete to
 
 alter table public.book_contributions add column if not exists ai_screening_result jsonb;
 alter table public.book_contributions add column if not exists ai_screened_at timestamptz;
-
-create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
-returns public.borrow_requests
-language plpgsql security definer set search_path = public
-as $$
-declare
-  requested public.borrow_requests;
-  required_points integer;
-  user_points integer;
-  book_points integer;
-  book_mode text;
-  book_catalog_type text;
-begin
-  if auth.uid() is null then raise exception 'Authentication required'; end if;
-  if p_duration_days < 1 or p_duration_days > 90 then
-    raise exception 'Choose a lending period between 1 and 90 days';
-  end if;
-  select access_points, access_mode, catalog_type into book_points, book_mode, book_catalog_type
-    from public.books where id = p_book_id;
-  if book_points is null then raise exception 'Resource not found'; end if;
-  if book_catalog_type = 'physical' or book_mode in ('restricted', 'premium') then
-    raise exception 'This resource requires administrator or verified premium access';
-  end if;
-  required_points := case when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points else 0 end;
-
-  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
-  if exists (
-    select 1 from public.borrow_requests where student_id = auth.uid() and book_id = p_book_id
-      and (status = 'pending' or (status = 'approved' and returned_date is null and due_date > now()))
-  ) then raise exception 'You already have an active request or loan for this resource'; end if;
-  select points_balance into user_points from public.profiles where id = auth.uid() for update;
-  if user_points is null then raise exception 'Profile not found'; end if;
-  if user_points < required_points then
-    raise exception 'You need % more points to unlock this resource for % days',
-      required_points - user_points, p_duration_days;
-  end if;
-  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
-  values (auth.uid(), p_book_id, p_duration_days, required_points, 'approved', now() + make_interval(days => p_duration_days))
-  returning * into requested;
-  if required_points > 0 then
-    update public.profiles set points_balance = points_balance - required_points where id = auth.uid();
-    insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
-    values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
-  end if;
-  insert into public.notifications(user_id, event_type, title, message, reference_id)
-  values (auth.uid(), 'borrow_request_status', 'Access approved',
-    'Your digital library access is ready to use.', requested.id);
-  return requested;
-end;
-$$;
 
 alter table public.physical_book_copies drop constraint if exists physical_book_copies_status_check;
 alter table public.physical_book_copies add constraint physical_book_copies_status_check
@@ -3017,95 +2785,6 @@ revoke all on function public.admin_review_book_contribution(bigint, text, integ
 grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
 grant execute on function public.admin_request_contribution_revision(bigint, text) to authenticated;
 
--- Optional points and recognition tables used by the student wallet and admin insights.
-create table if not exists public.recognition_awards (
-  id bigint generated by default as identity primary key,
-  student_id uuid not null references public.profiles(id) on delete cascade,
-  category text not null,
-  points integer not null check (points > 0),
-  reason text not null,
-  awarded_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.book_access_grants (
-  id bigint generated by default as identity primary key,
-  student_id uuid not null references public.profiles(id) on delete cascade,
-  book_id bigint not null references public.books(id) on delete cascade,
-  access_type text not null default 'admin_grant',
-  points_paid integer not null default 0 check (points_paid >= 0),
-  granted_at timestamptz not null default now(),
-  expires_at timestamptz,
-  status text not null default 'active' check (status in ('active', 'expired', 'revoked')),
-  reason text,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.rewards (
-  id bigint generated by default as identity primary key,
-  name text not null,
-  description text,
-  points_cost integer not null check (points_cost > 0),
-  reward_type text not null default 'academic',
-  stock integer check (stock is null or stock >= 0),
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.achievements (
-  id bigint generated by default as identity primary key,
-  name text not null unique,
-  description text not null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.user_achievements (
-  user_id uuid not null references public.profiles(id) on delete cascade,
-  achievement_id bigint not null references public.achievements(id) on delete cascade,
-  awarded_at timestamptz not null default now(),
-  primary key (user_id, achievement_id)
-);
-
-create table if not exists public.audit_logs (
-  id bigint generated by default as identity primary key,
-  actor_id uuid references public.profiles(id) on delete set null,
-  action text not null,
-  target_type text not null,
-  target_id bigint,
-  details jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-alter table public.recognition_awards enable row level security;
-alter table public.book_access_grants enable row level security;
-alter table public.rewards enable row level security;
-alter table public.achievements enable row level security;
-alter table public.user_achievements enable row level security;
-alter table public.audit_logs enable row level security;
-
-drop policy if exists recognition_awards_read_own_or_admin on public.recognition_awards;
-create policy recognition_awards_read_own_or_admin on public.recognition_awards
-for select to authenticated using (student_id = auth.uid() or public.is_admin());
-drop policy if exists book_access_grants_read_own_or_admin on public.book_access_grants;
-create policy book_access_grants_read_own_or_admin on public.book_access_grants
-for select to authenticated using (student_id = auth.uid() or public.is_admin());
-drop policy if exists rewards_read_authenticated on public.rewards;
-create policy rewards_read_authenticated on public.rewards
-for select to authenticated using (is_active or public.is_admin());
-drop policy if exists achievements_read_authenticated on public.achievements;
-create policy achievements_read_authenticated on public.achievements
-for select to authenticated using (true);
-drop policy if exists user_achievements_read_own_or_admin on public.user_achievements;
-create policy user_achievements_read_own_or_admin on public.user_achievements
-for select to authenticated using (user_id = auth.uid() or public.is_admin());
-drop policy if exists audit_logs_read_admin on public.audit_logs;
-create policy audit_logs_read_admin on public.audit_logs
-for select to authenticated using (public.is_admin());
-
-grant select on public.recognition_awards, public.book_access_grants, public.rewards,
-  public.achievements, public.user_achievements to authenticated;
-grant select on public.audit_logs to authenticated;
-
 -- ============================================================================
 -- Disable unverified paid e-book checkout
 -- ============================================================================
@@ -3200,79 +2879,6 @@ revoke all on function public.get_public_physical_catalog() from public;
 revoke all on function public.get_public_physical_copy(uuid) from public;
 grant execute on function public.get_public_physical_catalog() to anon, authenticated;
 grant execute on function public.get_public_physical_copy(uuid) to anon, authenticated;
-
-create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
-returns public.borrow_requests
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  requested public.borrow_requests;
-  required_points integer;
-  user_points integer;
-  book_points integer;
-  book_mode text;
-  book_catalog_type text;
-begin
-  if auth.uid() is null then raise exception 'Authentication required'; end if;
-  if p_duration_days < 1 or p_duration_days > 90 then
-    raise exception 'Choose a lending period between 1 and 90 days';
-  end if;
-
-  select access_points, access_mode, catalog_type
-  into book_points, book_mode, book_catalog_type
-  from public.books where id = p_book_id;
-  if book_points is null then raise exception 'Resource not found'; end if;
-  if book_catalog_type = 'physical' then raise exception 'Physical books use the physical circulation workflow'; end if;
-  if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
-  if book_mode = 'premium' then
-    raise exception 'Paid e-book checkout is paused. Choose free or points-based access instead';
-  end if;
-  if book_mode not in ('free', 'points') then raise exception 'This digital access mode is unavailable'; end if;
-
-  required_points := case
-    when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points
-    else 0
-  end;
-
-  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
-  if exists (
-    select 1 from public.borrow_requests
-    where student_id = auth.uid() and book_id = p_book_id
-      and (status = 'pending' or (status = 'approved' and returned_date is null and due_date > now()))
-  ) then
-    raise exception 'You already have an active request or loan for this resource';
-  end if;
-
-  select points_balance into user_points
-  from public.profiles where id = auth.uid() for update;
-  if user_points is null then raise exception 'Profile not found'; end if;
-  if user_points < required_points then
-    raise exception 'You need % more points to unlock this resource for % days',
-      required_points - user_points, p_duration_days;
-  end if;
-
-  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
-  values (
-    auth.uid(), p_book_id, p_duration_days, required_points, 'approved',
-    now() + make_interval(days => p_duration_days)
-  )
-  returning * into requested;
-
-  if required_points > 0 then
-    update public.profiles
-    set points_balance = points_balance - required_points
-    where id = auth.uid();
-    insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
-    values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
-  end if;
-
-  insert into public.notifications(user_id, event_type, title, message, reference_id)
-  values (auth.uid(), 'borrow_request_status', 'Access approved', 'Your digital library access is ready to use.', requested.id);
-  return requested;
-end;
-$$;
 
 revoke all on function public.request_premium_ebook_purchase(bigint, text, text)
 from public, anon, authenticated;
@@ -3970,35 +3576,32 @@ begin
 end;
 $$;
 
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.provision_profile();
+
+insert into public.profiles (id, email, role)
+select
+  u.id,
+  coalesce(u.email, ''),
+  case
+    when lower(trim(coalesce(u.raw_user_meta_data ->> 'member_type', ''))) = 'faculty'
+      and exists (
+        select 1
+        from public.academic_departments d
+        where d.is_active
+          and lower(d.name) = lower(trim(coalesce(u.raw_user_meta_data ->> 'department', '')))
+      )
+      then 'faculty'
+    else 'student'
+  end
+from auth.users u
+on conflict (id) do update set email = excluded.email;
+
 -- ============================================================================
 -- Protected profile-field updates
 -- ============================================================================
-
--- Prevent browser clients from changing protected profile fields.
--- Run this once for an existing Supabase project.
-
-create or replace function public.prevent_student_role_change()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if auth.uid() is not null
-    and not exists (select 1 from public.profiles where id = auth.uid() and role = 'admin') then
-    if old.role is distinct from new.role then
-      raise exception 'Only an administrator can change account roles';
-    end if;
-    if old.points_balance is distinct from new.points_balance then
-      raise exception 'Only an administrator or approved workflow can change points';
-    end if;
-    if old.email is distinct from new.email then
-      raise exception 'Email changes must be handled by account authentication';
-    end if;
-  end if;
-  return new;
-end;
-$$;
 
 -- ============================================================================
 -- Digital loan eligibility and points transaction
@@ -4015,69 +3618,5 @@ alter table public.borrow_requests
 alter table public.borrow_requests
   add constraint borrow_requests_duration_days_check
   check (duration_days between 1 and 90);
-
-create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
-returns public.borrow_requests language plpgsql security definer set search_path = public as $$
-declare
-  requested public.borrow_requests;
-  required_points integer;
-  user_points integer;
-  book_points integer;
-  book_mode text;
-  book_catalog_type text;
-begin
-  if auth.uid() is null then raise exception 'Authentication required'; end if;
-  if p_duration_days not in (1, 3, 7, 14, 30) then
-    raise exception 'Choose one of the available lending periods';
-  end if;
-
-  select access_points, access_mode, catalog_type
-  into book_points, book_mode, book_catalog_type
-  from public.books where id = p_book_id;
-  if book_points is null then raise exception 'Resource not found'; end if;
-  if book_catalog_type = 'physical' then raise exception 'Physical books use the physical circulation workflow'; end if;
-  if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
-  if book_mode = 'premium' then
-    raise exception 'Paid e-book checkout is paused. Choose free or points-based access instead';
-  end if;
-  if book_mode not in ('free', 'points') then raise exception 'This digital access mode is unavailable'; end if;
-
-  required_points := case
-    when book_mode = 'points' then ceil(book_points * p_duration_days / 7.0)::integer
-    else 0
-  end;
-
-  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
-
-  if exists (
-    select 1 from public.borrow_requests
-    where student_id = auth.uid() and book_id = p_book_id
-      and (status = 'pending' or (status = 'approved' and returned_date is null and due_date > now()))
-  ) then
-    raise exception 'You already have an active request or loan for this resource';
-  end if;
-
-  select points_balance into user_points from public.profiles where id = auth.uid() for update;
-  if user_points is null then raise exception 'Profile not found'; end if;
-  if user_points < required_points then
-    raise exception 'You need % more points to unlock this resource for % days', required_points - user_points, p_duration_days;
-  end if;
-
-  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
-  values (
-    auth.uid(), p_book_id, p_duration_days, required_points, 'approved',
-    now() + make_interval(days => p_duration_days)
-  )
-  returning * into requested;
-  if required_points > 0 then
-    update public.profiles set points_balance = points_balance - required_points where id = auth.uid();
-    insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
-    values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
-  end if;
-  insert into public.notifications(user_id, event_type, title, message, reference_id)
-  values (auth.uid(), 'borrow_request_status', 'Access approved', 'Your digital library access is ready to use.', requested.id);
-  return requested;
-end;
-$$;
 
 grant execute on function public.request_digital_loan(bigint, integer) to authenticated;
