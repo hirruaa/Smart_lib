@@ -8,7 +8,7 @@ type Book = {
   author: string
   category?: string
   description?: string
-  pdf_url?: string | null
+  has_document?: boolean
 }
 
 type Loan = {
@@ -47,6 +47,7 @@ export default function BookAssistant() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage])
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const sessionLoadedRef = useRef(false)
@@ -119,7 +120,10 @@ export default function BookAssistant() {
       const response = await fetch('/api/recommend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: trimmedQuery }),
+        body: JSON.stringify({
+          query: trimmedQuery,
+          history: messages.slice(-8).map(({ role, text }) => ({ role, content: text })),
+        }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data?.error || 'The assistant could not answer right now.')
@@ -139,6 +143,8 @@ export default function BookAssistant() {
       }
     } catch (err: any) {
       setError(err.message || String(err))
+      setQuery(trimmedQuery)
+      setMessages((current) => current.filter((message) => message.id !== userMessage.id))
     } finally {
       setLoading(false)
     }
@@ -176,6 +182,7 @@ export default function BookAssistant() {
 
       const remaining = sessions.filter((session) => session.id !== selectedSession.id)
       setSessions(remaining)
+      setConfirmDeleteSessionId(null)
       if (selectedSession.id === sessionId) {
         const nextSession = remaining[0]
         if (nextSession) {
@@ -203,7 +210,7 @@ export default function BookAssistant() {
         <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 
-      {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <div key={session.id} className={`assistant-session-item ${session.id === sessionId ? 'active' : ''}`}><button type="button" className="assistant-session-select" onClick={() => void selectSession(session)}>{session.title}</button>{deletingSessionId === session.id ? <span className="assistant-session-confirm"><span>Delete?</span><button type="button" onClick={() => void deleteSession(session)} aria-label={`Confirm deleting ${session.title}`}>Yes</button><button type="button" onClick={() => setDeletingSessionId(null)} aria-label="Cancel deleting conversation">No</button></span> : <button type="button" className="assistant-session-delete" onClick={() => setDeletingSessionId(session.id)} aria-label={`Delete ${session.title}`} title="Delete conversation">×</button>}</div>)}</div> : null}
+      {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <div key={session.id} className={`assistant-session-item ${session.id === sessionId ? 'active' : ''}`}><button type="button" className="assistant-session-select" onClick={() => void selectSession(session)}>{session.title}</button>{confirmDeleteSessionId === session.id ? <span className="assistant-session-confirm"><span>{deletingSessionId === session.id ? 'Deleting…' : 'Delete?'}</span><button type="button" onClick={() => void deleteSession(session)} disabled={deletingSessionId !== null} aria-label={`Confirm deleting ${session.title}`}>Yes</button><button type="button" onClick={() => setConfirmDeleteSessionId(null)} disabled={deletingSessionId !== null} aria-label="Cancel deleting conversation">No</button></span> : <button type="button" className="assistant-session-delete" onClick={() => setConfirmDeleteSessionId(session.id)} disabled={deletingSessionId !== null} aria-label={`Delete ${session.title}`} title="Delete conversation">×</button>}</div>)}</div> : null}
 
       <div className="assistant-thread" aria-live="polite">
         {messages.map((message) => (
@@ -212,7 +219,7 @@ export default function BookAssistant() {
             <div className="assistant-message-body">
               <p>{message.text}</p>
               {message.loans?.length ? <div className="assistant-inline-results">{message.loans.map((loan) => <div key={loan.id} className="assistant-result"><strong>{loan.books?.title || 'Book'}</strong><span>{loan.status}{loan.due_date ? ` · expires ${new Date(loan.due_date).toLocaleDateString()}` : ''}</span></div>)}</div> : null}
-              {message.results?.length ? <div className="assistant-inline-results">{message.results.map((book) => <div key={book.id} className="assistant-result"><div><span className="assistant-result-category">{book.category}</span><h3>{book.title}</h3><span>{book.author}</span></div>{book.pdf_url ? <a href={`/reader/${book.id}`}>Open in reader</a> : null}</div>)}</div> : null}
+              {message.results?.length ? <div className="assistant-inline-results">{message.results.map((book) => <div key={book.id} className="assistant-result"><div><span className="assistant-result-category">{book.category}</span><h3>{book.title}</h3><span>{book.author}</span></div>{book.has_document ? <a href={`/reader/${book.id}`}>Open in reader</a> : null}</div>)}</div> : null}
             </div>
           </div>
         ))}
@@ -227,7 +234,7 @@ export default function BookAssistant() {
         <textarea value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSearch() } }} placeholder="Message your library assistant..." rows={1} aria-label="Message your library assistant" />
         <button type="submit" className="assistant-submit" disabled={loading || !query.trim()} aria-label="Send message">Send</button>
       </form>
-      <p className="assistant-disclaimer">Assistant responses are based on your library catalog and account data.</p>
+      <p className="assistant-disclaimer">Gemini uses your message, recent chat context, matching catalog details, and—when asked—your own loan details to reply. Don’t share sensitive information.</p>
       </section> : null}
     </>
   )

@@ -154,9 +154,9 @@ These are **proposed acceptance targets**, not measured current performance:
 | Area | Routes / screen | Current behavior |
 |---|---|---|
 | Public | `/`, `/login`, `/register`, `/verify-email`, `/reset-password`, `/privacy`, `/terms` | Landing/auth/legal screens; no public physical-catalog route today |
-| Student and faculty | `/dashboard/student`, `/library`, `/physical-library`, `/study`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus library, reader, study, assistant, profile, and points surfaces |
+| Student and faculty | `/dashboard/student`, `/library`, `/physical-library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus library, reader, in-reader notes/highlights/progress, assistant, profile, and points surfaces |
 | Administrator | `/dashboard/admin`, `/dashboard/admin/physical`, `/dashboard/admin/ebook-payments` | Admin management, physical circulation, and reconciliation of legacy e-book payment submissions |
-| Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*`, `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
+| Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*` (reader annotations only), `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
 
 ### 3.2 Recommended navigation flow
 
@@ -169,12 +169,12 @@ Public landing
   ├─ Register → verify email → profile role = student by default
   └─ Sign in → resolve trusted profile role
        ├─ student/faculty → member dashboard
-       │    ├─ Digital resource → free/points unlocks immediately; paid e-book checkout is currently paused
+       │    ├─ Digital resource → free/points unlocks immediately; access expires automatically at the due date
        │    ├─ Physical title → select loan option/payment → pending reservation
        │    │    └─ Librarian verifies payment and identity → checkout + receipt
        │    │          └─ reminder → return / renew if policy allows / report missing
        │    ├─ Waitlist → offer → request/claim → checkout
-       │    ├─ Study hub → reader → notes/highlights/progress
+       │    ├─ Continue reading → reader → in-reader notes/highlights/progress
        │    └─ Assistant / points / profile / contributions
        └─ admin → member and catalog management
             ├─ Add title and initial copies → create QR labels

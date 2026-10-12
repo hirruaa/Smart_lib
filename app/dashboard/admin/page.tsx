@@ -367,6 +367,16 @@ export default function AdminPage() {
     return requests.filter((r) => r.status === requestFilter)
   }, [requests, requestFilter])
 
+  const now = Date.now()
+  const isActiveDigitalAccess = (request: RequestItem) =>
+    request.status === 'approved' &&
+    !request.returned_date &&
+    Boolean(request.due_date && new Date(request.due_date).getTime() > now)
+  const isExpiredDigitalAccess = (request: RequestItem) =>
+    request.status === 'approved' &&
+    !request.returned_date &&
+    Boolean(request.due_date && new Date(request.due_date).getTime() <= now)
+
   const materials = useMemo(
     () =>
       books
@@ -382,19 +392,18 @@ export default function AdminPage() {
   )
 
   const pendingRequests = requests.filter((request) => request.status === 'pending')
-  const overdueLoans = requests.filter(
-    (request) => request.status === 'approved' && request.due_date && new Date(request.due_date) < new Date()
-  )
+  const expiredAccess = requests.filter(isExpiredDigitalAccess)
+  const activeDigitalAccess = requests.filter(isActiveDigitalAccess)
 
   const studentDetails = students.map((student) => {
-    const studentLoans = requests.filter((request) => request.student_id === student.id && request.status === 'approved')
-    const activeLoans = studentLoans.length
-    const overdueCount = studentLoans.filter((request) => request.due_date && new Date(request.due_date) < new Date()).length
+    const studentLoans = requests.filter((request) => request.student_id === student.id)
+    const activeLoans = studentLoans.filter(isActiveDigitalAccess).length
+    const expiredAccessCount = studentLoans.filter(isExpiredDigitalAccess).length
 
     return {
       ...student,
       active_loans: activeLoans,
-      overdue_loans: overdueCount,
+      expired_access: expiredAccessCount,
     }
   })
 
@@ -925,8 +934,8 @@ export default function AdminPage() {
               <p className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">{pendingRequests.length}</p>
             </div>
             <div className="rounded-[1.75rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-              <p className="text-sm text-slate-500 dark:text-slate-400">Overdue loans</p>
-              <p className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">{overdueLoans.length}</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Expired e-book access</p>
+              <p className="mt-4 text-3xl font-semibold text-slate-900 dark:text-slate-100">{expiredAccess.length}</p>
             </div>
           </section>
 
@@ -946,18 +955,18 @@ export default function AdminPage() {
             <section className="admin-overview-grid grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
               <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Pending actions</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Items that need an administrator decision.</p></div>
+                  <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Requests and recent expirations</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review pending requests and track e-book access that has ended automatically.</p></div>
                   <button type="button" onClick={exportLoanReport} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Export loan report</button>
                 </div>
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left dark:border-amber-900/50 dark:bg-amber-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">Borrow requests</span><strong className="mt-2 block text-2xl text-amber-950 dark:text-amber-100">{pendingRequests.length}</strong><span className="text-xs text-amber-800/75 dark:text-amber-300/80">Awaiting review</span></button>
                   <button type="button" onClick={() => setSection('contributions')} className="admin-action-tile rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left dark:border-sky-900/50 dark:bg-sky-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-300">Contributions</span><strong className="mt-2 block text-2xl text-sky-950 dark:text-sky-100">{contributions.filter((item) => item.status === 'pending').length}</strong><span className="text-xs text-sky-800/75 dark:text-sky-300/80">Awaiting review</span></button>
-                  <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-rose-200 bg-rose-50 p-4 text-left dark:border-rose-900/50 dark:bg-rose-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-rose-800 dark:text-rose-300">Overdue loans</span><strong className="mt-2 block text-2xl text-rose-950 dark:text-rose-100">{overdueLoans.length}</strong><span className="text-xs text-rose-800/75 dark:text-rose-300/80">Need follow-up</span></button>
+                  <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left dark:border-slate-700 dark:bg-slate-800/60"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Expired access</span><strong className="mt-2 block text-2xl text-slate-950 dark:text-slate-100">{expiredAccess.length}</strong><span className="text-xs text-slate-600 dark:text-slate-400">No return required</span></button>
                 </div>
-                <div className="mt-6 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700"><tr><th className="px-3 py-3">Student</th><th className="px-3 py-3">Book</th><th className="px-3 py-3">Due</th><th className="px-3 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{[...pendingRequests, ...overdueLoans].slice(0, 6).map((request) => <tr key={`overview-${request.id}`}><td className="px-3 py-3 text-slate-700 dark:text-slate-200">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{request.due_date ? new Date(request.due_date).toLocaleDateString() : '—'}</td><td className="px-3 py-3 capitalize text-slate-600 dark:text-slate-300">{request.status === 'approved' ? 'overdue' : request.status}</td></tr>)}</tbody></table>{pendingRequests.length + overdueLoans.length === 0 ? <p className="px-3 py-6 text-sm text-slate-500">No urgent actions right now.</p> : null}</div>
+                <div className="mt-6 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700"><tr><th className="px-3 py-3">Member</th><th className="px-3 py-3">Book</th><th className="px-3 py-3">End date</th><th className="px-3 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{[...pendingRequests, ...expiredAccess].slice(0, 6).map((request) => <tr key={`overview-${request.id}`}><td className="px-3 py-3 text-slate-700 dark:text-slate-200">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{request.due_date ? new Date(request.due_date).toLocaleDateString() : '—'}</td><td className="px-3 py-3 capitalize text-slate-600 dark:text-slate-300">{isExpiredDigitalAccess(request) ? 'expired' : request.status}</td></tr>)}</tbody></table>{pendingRequests.length + expiredAccess.length === 0 ? <p className="px-3 py-6 text-sm text-slate-500">No pending requests or expired access.</p> : null}</div>
               </div>
               <div className="space-y-6">
-                <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library health</h2><div className="mt-5 space-y-4"><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Digital materials</span><strong className="text-slate-900 dark:text-slate-100">{materials.length} / {books.length || 1}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, books.length ? materials.length / books.length * 100 : 0)}%` }} /></div></div><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Active access</span><strong className="text-slate-900 dark:text-slate-100">{requests.filter((item) => item.status === 'approved' && !item.returned_date).length}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-sky-500" style={{ width: `${Math.min(100, requests.length ? requests.filter((item) => item.status === 'approved' && !item.returned_date).length / requests.length * 100 : 0)}%` }} /></div></div></div></div>
+                <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library health</h2><div className="mt-5 space-y-4"><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Digital materials</span><strong className="text-slate-900 dark:text-slate-100">{materials.length} / {books.length || 1}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, books.length ? materials.length / books.length * 100 : 0)}%` }} /></div></div><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Active access</span><strong className="text-slate-900 dark:text-slate-100">{activeDigitalAccess.length}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-sky-500" style={{ width: `${Math.min(100, requests.length ? activeDigitalAccess.length / requests.length * 100 : 0)}%` }} /></div></div></div></div>
                 <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Recent activity</h2><div className="mt-4 space-y-3">{requests.slice(0, 5).map((request) => <div key={`activity-${request.id}`} className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 text-sm last:border-0 dark:border-slate-800"><div><p className="font-medium text-slate-800 dark:text-slate-100">{studentMap.get(request.student_id)?.email ?? 'Student'} requested {bookMap.get(request.book_id)?.title ?? 'a resource'}</p><p className="mt-1 text-xs text-slate-500">{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'Recently'}</p></div><span className="capitalize text-xs text-slate-500">{request.status}</span></div>)}{requests.length === 0 ? <p className="text-sm text-slate-500">No activity yet.</p> : null}</div></div>
               </div>
             </section>
@@ -973,8 +982,9 @@ export default function AdminPage() {
                 totalBooks={books.length}
                 totalStudents={students.length}
                 totalRequests={requests.length}
-                totalLoansActive={requests.filter((r) => r.status === 'approved' && !r.returned_date).length}
+                totalLoansActive={activeDigitalAccess.length}
                 totalReturned={requests.filter((r) => r.status === 'returned').length}
+                totalExpired={expiredAccess.length}
                 categoryStats={categoryStats}
                 monthlyStats={monthlyStats}
                 storageCount={storageCount}
@@ -1095,7 +1105,7 @@ export default function AdminPage() {
                       required
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Points charged per 7-day access period. Set 0 for free access.</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Base rate per 7 days. Shorter or longer access periods are prorated and rounded up to a whole point. Set 0 for free access.</span>
                   </label>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access mode</span>
@@ -1208,7 +1218,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'N/A'}</td>
-                        <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{request.status}</td>
+                        <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{isExpiredDigitalAccess(request) ? 'expired' : request.status}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
                           {request.status === 'pending' ? (
                             <div className="flex flex-wrap gap-2">
@@ -1229,7 +1239,7 @@ export default function AdminPage() {
                                 Reject
                               </button>
                             </div>
-                          ) : request.status === 'approved' && !request.returned_date ? (
+                          ) : isActiveDigitalAccess(request) ? (
                             <button
                               type="button"
                               disabled={saving}
@@ -1560,7 +1570,7 @@ export default function AdminPage() {
                       <th className="px-4 py-3 font-semibold">Program / teaching</th>
                       <th className="px-4 py-3 font-semibold">Title / year</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
-                      <th className="px-4 py-3 font-semibold">Overdue</th>
+                      <th className="px-4 py-3 font-semibold">Expired access</th>
                       <th className="px-4 py-3 font-semibold">Actions</th>
                     </tr>
                   </thead>
@@ -1573,7 +1583,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (facultyCourseMap.get(student.id)?.join(', ') || '—') : (student.course || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (student.faculty_rank_id ? facultyRankMap.get(student.faculty_rank_id) || '—' : '—') : (student.student_year || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.overdue_loans}</td>
+                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.expired_access}</td>
                         <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button></td>
                       </tr>
                     ))}

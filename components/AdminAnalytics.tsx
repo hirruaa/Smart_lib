@@ -17,6 +17,7 @@ interface AdminAnalyticsProps {
   totalRequests: number
   totalLoansActive: number
   totalReturned: number
+  totalExpired: number
   categoryStats: CategoryStat[]
   monthlyStats: MonthlyStat[]
   storageCount: number
@@ -28,12 +29,13 @@ export default function AdminAnalytics({
   totalRequests,
   totalLoansActive,
   totalReturned,
+  totalExpired,
   categoryStats,
   monthlyStats,
   storageCount,
 }: AdminAnalyticsProps) {
   const fulfillmentRate = totalRequests > 0
-    ? Math.round(((totalLoansActive + totalReturned) / totalRequests) * 100)
+    ? Math.round(((totalLoansActive + totalReturned + totalExpired) / totalRequests) * 100)
     : 100
 
   // Calculate highest request month for chart normalization
@@ -55,7 +57,7 @@ export default function AdminAnalytics({
               {fulfillmentRate}%
             </span>
             <span className="text-xs text-emerald-600 dark:text-emerald-400">
-              Approved or completed
+              Granted, returned, or expired
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
@@ -79,7 +81,7 @@ export default function AdminAnalytics({
             </span>
           </div>
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            {totalReturned} loans completed / returned
+            {totalReturned} returned · {totalExpired} expired
           </p>
         </div>
 

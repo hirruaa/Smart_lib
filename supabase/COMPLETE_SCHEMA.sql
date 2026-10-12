@@ -906,7 +906,7 @@
   grant execute on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint, bigint[]) to authenticated;
   grant execute on function public.admin_decide_borrow_request(bigint, text) to authenticated;
   grant execute on function public.renew_digital_loan(bigint, integer) to authenticated;
-  grant execute on function public.return_digital_loan(bigint) to authenticated;
+  revoke all on function public.return_digital_loan(bigint) from public, anon, authenticated;
   grant execute on function public.revoke_digital_loan(bigint) to authenticated;
 
   -- Do not grant direct student inserts. Student requests must use the validated RPC.
@@ -4027,8 +4027,8 @@ declare
   book_catalog_type text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
-  if p_duration_days < 1 or p_duration_days > 90 then
-    raise exception 'Choose a lending period between 1 and 90 days';
+  if p_duration_days not in (1, 3, 7, 14, 30) then
+    raise exception 'Choose one of the available lending periods';
   end if;
 
   select access_points, access_mode, catalog_type
@@ -4043,7 +4043,7 @@ begin
   if book_mode not in ('free', 'points') then raise exception 'This digital access mode is unavailable'; end if;
 
   required_points := case
-    when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points
+    when book_mode = 'points' then ceil(book_points * p_duration_days / 7.0)::integer
     else 0
   end;
 

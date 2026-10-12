@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const bookId = Number(body.bookId)
     const durationDays = Number(body.durationDays)
 
-    if (!Number.isInteger(bookId) || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > 90) {
+    if (!Number.isInteger(bookId) || ![1, 3, 7, 14, 30].includes(durationDays)) {
       return NextResponse.json({ error: 'Choose a valid lending period.' }, { status: 400 })
     }
 
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message || 'Unable to create the digital loan request.' }, { status: 409 })
     }
 
-    return NextResponse.json({ success: true, status: loan?.status, dueDate: loan?.due_date })
+    return NextResponse.json({ success: true, status: loan?.status, dueDate: loan?.due_date, pointsCost: loan?.points_cost })
   } catch {
     return NextResponse.json({ error: 'Something went wrong while requesting digital access.' }, { status: 500 })
   }

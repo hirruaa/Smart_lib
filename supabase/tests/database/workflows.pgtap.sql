@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
 -- Apply COMPLETE_SCHEMA.sql to a disposable local/staging database first.
 begin;
-select plan(40);
+select plan(47);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -15,7 +15,7 @@ insert into auth.users (
    'authenticated', 'authenticated', 'qa-admin@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now())
 on conflict (id) do nothing;
 
-update public.profiles set role = 'student', points_balance = 8
+update public.profiles set role = 'student', points_balance = 30
 where id = 'd3600000-0000-4000-8000-000000000001';
 update public.profiles set role = 'student', points_balance = 0
 where id = 'd3600000-0000-4000-8000-000000000002';
@@ -27,8 +27,13 @@ values
   (910001, 'QA free digital resource', 'QA Author', 'QA', 'digital', 'free', 0),
   (910002, 'QA points digital resource', 'QA Author', 'QA', 'digital', 'points', 3),
   (910003, 'QA insufficient-points resource', 'QA Author', 'QA', 'digital', 'points', 5),
-  (910004, 'QA physical resource', 'QA Author', 'QA', 'physical', 'free', 0)
+  (910004, 'QA physical resource', 'QA Author', 'QA', 'physical', 'free', 0),
+  (910005, 'QA three-day resource', 'QA Author', 'QA', 'digital', 'points', 3),
+  (910006, 'QA seven-day resource', 'QA Author', 'QA', 'digital', 'points', 3),
+  (910007, 'QA fourteen-day resource', 'QA Author', 'QA', 'digital', 'points', 3)
 on conflict (id) do nothing;
+insert into public.borrow_requests (student_id, book_id, status, due_date, duration_days, points_cost)
+values ('d3600000-0000-4000-8000-000000000001', 910002, 'approved', now() - interval '1 day', 7, 3);
 insert into public.borrow_requests (student_id, book_id, status, due_date, duration_days, points_cost)
 values ('d3600000-0000-4000-8000-000000000002', 910003, 'approved', now() + interval '7 days', 7, 0);
 insert into public.faculty_ranks (id, title, is_active)
@@ -130,9 +135,26 @@ select is(
 
 select is((public.request_digital_loan(910001, 7)).status, 'approved', 'Free digital access is approved immediately');
 select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910001), 0, 'Free digital access costs zero points');
-select is((public.request_digital_loan(910002, 14)).status, 'approved', 'Eligible points access is approved immediately');
-select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910002), 6, 'Points access is charged per seven-day period');
-select is((select points_balance from public.profiles where id = auth.uid()), 2, 'Points are debited exactly once');
+select throws_ok(
+  $$ select public.request_digital_loan(910002, 2) $$,
+  'P0001',
+  'Choose one of the available lending periods',
+  'Digital access accepts only one of the displayed durations'
+);
+select is((public.request_digital_loan(910002, 1)).status, 'approved', 'Expired access does not block a new one-day points unlock');
+select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910002 and due_date > now()), 1, 'One-day access charges the prorated point cost');
+select is((public.request_digital_loan(910005, 3)).status, 'approved', 'Three-day points access is approved immediately');
+select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910005 and due_date > now()), 2, 'Three-day access charges the prorated point cost');
+select is((public.request_digital_loan(910006, 7)).status, 'approved', 'Seven-day points access is approved immediately');
+select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910006 and due_date > now()), 3, 'Seven-day access charges the configured weekly point cost');
+select is((public.request_digital_loan(910007, 14)).status, 'approved', 'Eligible points access is approved immediately');
+select is((select points_cost from public.borrow_requests where student_id = auth.uid() and book_id = 910007 and due_date > now()), 6, 'Fourteen-day access charges the prorated point cost');
+select is((select points_balance from public.profiles where id = auth.uid()), 18, 'Points are debited exactly once for each unlocked period');
+select is(
+  has_function_privilege('authenticated', 'public.return_digital_loan(bigint)', 'EXECUTE'),
+  false,
+  'Members cannot manually return digital access'
+);
 select throws_ok(
   $$ select public.request_digital_loan(910002, 14) $$,
   'P0001',
@@ -140,15 +162,10 @@ select throws_ok(
   'A duplicate active digital loan is rejected'
 );
 select throws_ok(
-  $$ select public.request_digital_loan(910003, 7) $$,
+  $$ select public.request_digital_loan(910003, 30) $$,
   'P0001',
-  'You need 3 more points to unlock this resource for 7 days',
+  'You need 4 more points to unlock this resource for 30 days',
   'Insufficient points prevent a digital loan'
-);
-select is(
-  (public.return_digital_loan((select id from public.borrow_requests where student_id = auth.uid() and book_id = 910002))).status,
-  'returned',
-  'A student can return their own digital loan'
 );
 select throws_ok(
   $$ select public.admin_confirm_physical_checkout(910004) $$,
@@ -198,7 +215,7 @@ select is(
 );
 select is(
   (select points_balance from public.profiles where id = 'd3600000-0000-4000-8000-000000000001'),
-  6,
+  22,
   'The contributor receives the reviewed reward points'
 );
 select is(
@@ -221,7 +238,7 @@ select throws_ok(
 );
 select is(
   (select points_balance from public.profiles where id = 'd3600000-0000-4000-8000-000000000001'),
-  6,
+  22,
   'A duplicate approval does not award points again'
 );
 select is(

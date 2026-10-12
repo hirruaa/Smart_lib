@@ -259,7 +259,7 @@ The current application is a Next.js web application using React/TypeScript and 
 
 ### System boundaries
 
-- Browser application: public landing/catalog, authentication, member workspaces, reader/study tools, and admin workflows.
+- Browser application: public landing/catalog, authentication, member workspaces, reader-based notes/highlights/progress, and admin workflows.
 - Application server/API routes: session-aware protected file access, member/admin operations, notifications, AI calls, and scheduled job entry points.
 - Supabase: authoritative authentication/profile data, relational records, transaction/authorization functions, and storage.
 - Optional external services: Gemini, Google Drive, payment provider (future), and email delivery worker/provider (future).

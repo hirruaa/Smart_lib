@@ -51,6 +51,10 @@ Each `.jsonl.gz` archive contains application table rows, Supabase Auth account 
 
 Legacy Drive PDFs without Smart Lib-specific `appProperties` remain eligible for retrieval when their database record identifies the file; contradictory metadata is still rejected. This compatibility has not yet been verified against a live Drive account. Contributions stored outside the supported Drive records or the owner-scoped Supabase paths require a reviewed migration before approval or access; do not broaden file access to arbitrary external URLs.
 
+GCash receipt reference scanning uses browser-side OCR to suggest a labeled numeric reference from the selected image; the receipt image is not sent to Gemini for extraction. OCR can misread characters, so the user must confirm the value and the librarian must verify payment independently. The scanner is not a payment-verification mechanism.
+
+The library chat assistant uses the server-only `GEMINI_API_KEY` to generate responses grounded in authenticated catalog search results and, for loan questions, the signed-in user's own limited loan details. Configure the key in local `.env.local` for development and in the hosting provider's server-side environment settings for deployment. User prompts and a short recent chat history are sent to Google Gemini; see the Privacy Policy for details.
+
 ---
 
 Created with care by **H-STUDIO**.

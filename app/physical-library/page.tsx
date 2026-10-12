@@ -6,6 +6,7 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import { PhysicalLibrarySkeleton } from '@/components/skeletons'
+import { extractGcashReference } from '@/utils/gcashReceipt'
 
 type Book = { id: number; title: string; author: string; category: string; description: string | null; isbn: string | null; cover_image_url: string | null; catalog_type: string }
 type Copy = { id: number; book_id: number; copy_code: string; qr_token: string; status: string; due_date: string | null }
@@ -157,16 +158,20 @@ export default function PhysicalLibraryPage() {
     if (!file) { setError('Choose the GCash receipt image first.'); return }
     setExtractingBookId(bookId)
     setError('')
-    const formData = new FormData()
-    formData.append('image', file)
-    const response = await fetch('/api/ai/extract-payment-reference', { method: 'POST', body: formData })
-    const result = await response.json()
-    if (!response.ok) setError(result.error || 'Unable to read the transaction reference.')
-    else if (result.reference) {
-      setReferences((current) => ({ ...current, [bookId]: result.reference }))
-      setMessage(`Gemini found a possible reference (${Math.round(result.confidence * 100)}% confidence). Check it against your receipt; this does not verify payment.`)
-    } else setError('No transaction reference was detected. Enter it manually from the receipt.')
-    setExtractingBookId(null)
+    try {
+      const result = await extractGcashReference(file)
+      const reference = result.reference
+      if (reference) {
+        setReferences((current) => ({ ...current, [bookId]: reference }))
+        setMessage(`Possible GCash reference found: ${reference}. Confirm it matches your receipt. OCR does not verify payment.`)
+      } else {
+        setError('No labeled GCash reference number was detected. Enter it manually from the receipt.')
+      }
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'Unable to scan the GCash receipt. Enter the reference manually.')
+    } finally {
+      setExtractingBookId(null)
+    }
   }
 
   const cancelRequest = async (requestId: number) => {
@@ -327,9 +332,13 @@ export default function PhysicalLibraryPage() {
               </label>
               {paymentMethod[book.id] === 'gcash' ? <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                 <label className="block text-sm font-medium">GCash transaction reference<input required value={references[book.id] ?? ''} onChange={(event) => setReferences({ ...references, [book.id]: event.target.value })} maxLength={100} className={`${control} mt-1.5`} placeholder="Enter reference from GCash receipt" /></label>
-                <label className="block text-sm font-medium">Upload payment receipt<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => setProofFiles({ ...proofFiles, [book.id]: event.target.files?.[0] ?? null })} className={`${control} mt-1.5`} /></label>
-                <p className="text-xs text-slate-500">Optional reference extraction sends this image to Google Gemini. Review the result manually; it cannot verify payment. The librarian still checks the proof and reference.</p>
-                <button type="button" disabled={extractingBookId === book.id} onClick={() => void extractPaymentReference(book.id, proofFiles[book.id] ?? null)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-700">{extractingBookId === book.id ? 'Reading receipt...' : 'Extract reference with Gemini'}</button>
+                <label className="block text-sm font-medium">Upload payment receipt<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                  const file = event.target.files?.[0] ?? null
+                  setProofFiles((current) => ({ ...current, [book.id]: file }))
+                  setReferences((current) => ({ ...current, [book.id]: '' }))
+                }} className={`${control} mt-1.5`} /></label>
+                <p className="text-xs text-slate-500">Scan the image on this device to suggest a GCash reference number. The image is not sent to Gemini for this scan. Check the result manually; the librarian still verifies payment.</p>
+                <button type="button" disabled={extractingBookId === book.id} onClick={() => void extractPaymentReference(book.id, proofFiles[book.id] ?? null)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-700">{extractingBookId === book.id ? 'Scanning on this device...' : 'Scan GCash receipt'}</button>
               </div> : null}
               {activeRequest ? <div className="space-y-2"><p className="rounded-xl bg-slate-100 p-3 text-sm capitalize dark:bg-slate-800">Your request: {activeRequest.status.replace('_', ' ')}</p>{activeRequest.status === 'pending' ? <button type="button" disabled={busyBookId === activeRequest.id} onClick={() => void cancelRequest(activeRequest.id)} className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50">Cancel request</button> : null}</div> : <button type="button" disabled={busyBookId === book.id} onClick={() => void submitRequest(book.id)} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{busyBookId === book.id ? 'Submitting...' : offerActive ? 'Accept reserved copy' : scannedCopy?.status === 'available' ? `Request scanned copy ${scannedCopy.copy_code}` : scannedCopy && available > 0 ? 'Request another available copy' : 'Request this book'}</button>}
             </div> : available > 0 ? <p className="mt-4 text-sm text-slate-500">Loan periods and fees are not configured yet; ask the librarian.</p> : borrowedCount > 0 ? <div className="mt-4">{waitlistEntry ? <p className="rounded-xl bg-slate-100 p-3 text-sm dark:bg-slate-800">{waitlistEntry.offered_copy_id ? 'Your reservation is being refreshed.' : 'You are in the availability queue. A copy will be reserved for the next member in line.'}</p> : <button type="button" disabled={busyBookId === book.id} onClick={() => void joinWaitlist(book.id)} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{busyBookId === book.id ? 'Joining...' : 'Join availability queue'}</button>}</div> : null}

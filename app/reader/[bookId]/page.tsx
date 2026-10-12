@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
-import React from 'react'
 import EReader from '@/components/EReader'
+import ReaderContentProtection from '@/components/ReaderContentProtection'
 import ReaderSessionGuard from '@/components/ReaderSessionGuard'
 import { createClient } from '@/utils/supabase/server'
 
@@ -80,13 +80,9 @@ export default async function Page({ params }: Props) {
     <div className="reader-page min-h-screen bg-paper-100 text-slate-900 dark:bg-forest-900 dark:text-paper-100">
       <ReaderSessionGuard>
         <div className="mx-auto max-w-7xl px-4 pb-8 sm:px-8">
-          <div
-            className="reader-protected-content"
-            onContextMenu={(event) => event.preventDefault()}
-            style={{ '--reader-watermark': JSON.stringify(viewerLabel) } as React.CSSProperties}
-          >
+          <ReaderContentProtection viewerLabel={viewerLabel}>
             <EReader bookId={bookId} pdfUrl={resolvedPdfUrl} title={book.title} />
-          </div>
+          </ReaderContentProtection>
         </div>
       </ReaderSessionGuard>
     </div>

@@ -1,15 +1,31 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
+import { streamGoogleDrivePdf } from '@/utils/googleDrive'
 
-function parseRange(value: string | null, size: number) {
+function parseRange(value: string | null, size: number | null) {
   if (!value) return null
   const match = /^bytes=(\d*)-(\d*)$/.exec(value)
-  if (!match || (!match[1] && !match[2])) return null
+  if (!match || (!match[1] && !match[2])) return 'invalid'
+  if (size === null) return { header: value }
+
   const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]))
   const end = match[2] ? Number(match[2]) : size - 1
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start >= size) return 'invalid'
-  return { start, end: Math.min(end, size - 1) }
+  return { header: `bytes=${start}-${Math.min(end, size - 1)}` }
+}
+
+function responseHeaders(source?: Headers | Record<string, unknown>) {
+  const headers = new Headers({
+    'Content-Type': 'application/pdf',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })
+  for (const name of ['content-length', 'content-range', 'accept-ranges']) {
+    const value = source instanceof Headers ? source.get(name) : source?.[name]
+    if (typeof value === 'string') headers.set(name, value)
+  }
+  return headers
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ bookId: string }> }) {
@@ -25,7 +41,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
 
   const [{ data: profile }, { data: book }, { data: ownedContribution }] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
-    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type').eq('id', bookId).maybeSingle(),
+    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type,file_size').eq('id', bookId).maybeSingle(),
     supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
   if (book?.catalog_type === 'physical') return NextResponse.json({ error: 'This title is only available as a physical library book.' }, { status: 409 })
@@ -46,24 +62,48 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
     return NextResponse.json({ error: 'External resources must be migrated to protected library storage.' }, { status: 409 })
   }
 
-  let bytes: Uint8Array
+  const fileSize = Number.isFinite(Number(book.file_size)) && Number(book.file_size) > 0 ? Number(book.file_size) : null
+  const range = parseRange(request.headers.get('range'), fileSize)
+  if (range === 'invalid') {
+    return new Response(null, {
+      status: 416,
+      headers: fileSize === null ? undefined : { 'Content-Range': `bytes */${fileSize}` },
+    })
+  }
+
   if (book.storage_provider === 'google_drive' && book.storage_file_id) {
-    try { bytes = new Uint8Array(await downloadGoogleDrivePdf(book.storage_file_id)) } catch { return NextResponse.json({ error: 'Unable to retrieve the protected document.' }, { status: 404 }) }
-  } else {
-    const cleanPath = (book.storage_path || book.pdf_url || '').replace(/^ebooks\//, '')
-    const { data: file, error } = await supabase.storage.from('ebooks').download(cleanPath)
-    if (error || !file) return NextResponse.json({ error: 'Unable to retrieve the protected document.' }, { status: 404 })
-    bytes = new Uint8Array(await file.arrayBuffer())
+    try {
+      const file = await streamGoogleDrivePdf(book.storage_file_id, undefined, range?.header)
+      const headers = responseHeaders(file.headers)
+      if (range && file.status === 200) {
+        return NextResponse.json({ error: 'The document provider did not honor the requested byte range.' }, { status: 502 })
+      }
+      return new Response(file.body, { status: file.status || 200, headers })
+    } catch (error) {
+      console.error('Unable to stream the protected Google Drive PDF.', error)
+      return NextResponse.json({ error: 'Unable to retrieve the protected document.' }, { status: 502 })
+    }
   }
-  const range = parseRange(request.headers.get('range'), bytes.byteLength)
-  if (range === 'invalid') return new NextResponse(null, { status: 416, headers: { 'Content-Range': `bytes */${bytes.byteLength}` } })
-  const headers = new Headers({ 'Content-Type': 'application/pdf', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' })
-  if (!range) {
-    headers.set('Content-Length', String(bytes.byteLength))
-    return new Response(bytes as unknown as BodyInit, { status: 200, headers })
+
+  const cleanPath = (book.storage_path || book.pdf_url || '').replace(/^ebooks\//, '')
+  const { data: signedFile, error } = await supabase.storage.from('ebooks').createSignedUrl(cleanPath, 60)
+  if (error || !signedFile) {
+    console.error('Unable to create a protected PDF read URL.', error)
+    return NextResponse.json({ error: 'Unable to retrieve the protected document.' }, { status: 502 })
   }
-  const chunk = bytes.slice(range.start, range.end + 1)
-  headers.set('Content-Length', String(chunk.byteLength))
-  headers.set('Content-Range', `bytes ${range.start}-${range.end}/${bytes.byteLength}`)
-  return new Response(chunk as unknown as BodyInit, { status: 206, headers })
+  const upstream = await fetch(signedFile.signedUrl, {
+    headers: range ? { Range: range.header } : undefined,
+    cache: 'no-store',
+  })
+  if (!upstream.ok && upstream.status !== 206 && upstream.status !== 416) {
+    console.error('Protected PDF storage returned an unsuccessful response.', upstream.status)
+    return NextResponse.json({ error: 'Unable to retrieve the protected document.' }, { status: 502 })
+  }
+  if (range && upstream.status === 200) {
+    return NextResponse.json({ error: 'The document provider did not honor the requested byte range.' }, { status: 502 })
+  }
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: responseHeaders(upstream.headers),
+  })
 }

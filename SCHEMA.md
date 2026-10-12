@@ -62,7 +62,7 @@ Workflow:
 - Only the librarian/admin checkout action marks a copy borrowed and marks the payment paid. It issues a receipt number; borrowers can view and print the digital receipt from their account.
 - Members can join a FIFO waitlist for titles with no available copies. On return, cancellation, rejection, reservation expiry, or copy addition, the database reserves an eligible copy for only the next member for 24 hours. The member accepts the offer by selecting an active loan option and submitting the normal request; otherwise the scheduled job expires the offer and advances the queue. Copy assignment and offer creation occur transactionally.
 - Overdue and lost items prevent new physical requests until resolved. This is a library-only hold and does not affect enrollment, grades, or transcripts.
-- GCash references may be entered manually or optionally extracted from a receipt image with Gemini. OCR is only a convenience and does not verify payment. Uploaded proof is private and is only available to its owner and library administrators.
+- GCash references may be entered manually or optionally extracted from a receipt image with browser-side OCR. OCR is only a convenience and does not verify payment. Uploaded proof is private and is only available to its owner and library administrators.
 - A scheduler should call `/api/cron/physical-reminders` at least every 15 minutes with `Authorization: Bearer <CRON_SECRET>` to create due-soon/overdue in-app notifications. Configure `CRON_SECRET` and `SUPABASE_SERVICE_ROLE_KEY` only in the server environment. Actual email sending requires a separate worker/provider; the endpoint does not claim an email has been sent.
 
 ### Automatic e-book access and AI review
@@ -73,12 +73,13 @@ Workflow:
 | `public.book_access_grants` | Other explicit, administrator-issued access grants; not required for ordinary free/points e-book unlocks. |
 | Legacy `public.ebook_purchase_requests` | Retained for any historical GCash submissions; new submissions are disabled while no online payment provider is configured. |
 | Contribution AI screening | Gemini scores and summarizes a contributed PDF as an advisory; every result requires a human administrator decision. |
+| Library chat assistant | Gemini answers using matching catalog records and, for a signed-in user's own loan questions, limited loan status details. |
 
 Free and points-based e-books unlock immediately after the database confirms the request; eligible point costs are deducted atomically. E-books do not consume physical stock and do not wait for librarian approval. The current project has no online payment gateway account or verified payment webhook, so paid e-book checkout is paused: the app no longer accepts new receipt uploads, and new premium listings are blocked. Existing premium entries are shown as unavailable until an administrator configures them for free/points access or a payment provider is integrated.
 
 When a payment provider is selected, the intended flow is provider checkout → signed server-side payment event → idempotent grant and receipt issuance. A user-uploaded screenshot or transaction reference alone must never unlock a paid e-book. This automatic paid flow does not exist yet. Physical book payments and checkout remain a separate librarian-confirmed workflow.
 
-`GEMINI_API_KEY` is server-only; `GEMINI_MODEL` is optional and defaults to `gemini-2.5-flash`. Contribution screening sends extracted PDF text (up to 40 pages / 60,000 characters) to Google Gemini. Receipt extraction is not used for e-book access while paid checkout is paused. Contribution review remains advisory and the administrator makes the final decision. Without a Gemini key, the regular manual contribution-review workflow remains available.
+`GEMINI_API_KEY` is server-only; `GEMINI_MODEL` is optional and defaults to `gemini-3.8-flash`. If a configured model returns Google's explicit retirement notice with its recommended replacement model, the server retries once using that replacement. Transient HTTP 503 responses are retried twice with backoff, honoring a bounded `Retry-After` delay when provided. The library chat sends the user's message, up to eight recent conversation messages, matching catalog details, and (for loan questions) up to 20 of that signed-in user's loan status/title/due-date records to Google Gemini. Contribution screening sends extracted PDF text (up to 40 pages / 60,000 characters) to Google Gemini. GCash physical-loan receipt scanning uses browser-side OCR to suggest a labeled reference number; it does not verify payment, and the librarian must still check the merchant record. Paid e-book checkout remains paused. Contribution review remains advisory and the administrator makes the final decision. Without a Gemini key, the regular manual contribution-review workflow remains available.
 
 The reading-session cover blurs the reader when the browser tab is hidden or the window loses focus. It is a privacy deterrent, not reliable screenshot prevention; screenshots may still be captured while the page is active.
 
@@ -117,13 +118,14 @@ Represents a member's digital access request.
 | `book_id` | `bigint` | References `books.id` |
 | `status` | `text` | `approved` immediately for free/point-eligible access, or `pending` for admin-reviewed requests |
 | `request_date` | `timestamptz` | Created when student requests |
-| `due_date` | `timestamptz` | Set when admin approves |
-| `returned_date` | `timestamptz` | Set when returned |
+| `due_date` | `timestamptz` | Set when digital access is unlocked; reader access expires automatically at this time |
+| `returned_date` | `timestamptz` | Historical closure field; members do not manually return digital loans |
 | `notes` | `text` | Optional admin or student notes |
 
 Behavior:
-- `request_digital_loan()` checks access eligibility, prevents duplicate active loans, and verifies the member's balance atomically.
-- Eligible requests are immediately approved. Point-priced materials deduct `access_points` once per seven-day period selected; free materials cost zero.
+- `request_digital_loan()` checks access eligibility, prevents duplicate active loans, and verifies the member's balance atomically. It accepts the dashboard periods of 1, 3, 7, 14, and 30 days.
+- Eligible free and points-based requests are immediately approved and unlocked when submitted; no librarian approval is required. For point-priced materials, `access_points` is the 7-day rate and the selected period costs `ceil(access_points * duration_days / 7)` points, rounded up to a whole point. Free materials cost zero.
+- An approved digital loan is active only while its `due_date` is in the future. The reader API denies file access after expiration, the member dashboard removes it from active access and lists it as expired, and members can renew only before expiration. Authenticated members cannot execute the legacy `return_digital_loan()` RPC.
 - Restricted materials remain administrator-only.
 - The selected lending duration sets the due date; a confirmation appears in the member notification list.
 
@@ -296,7 +298,7 @@ For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supa
 
 **Do not run it against an existing database with data.** Existing installations need applicable migrations reviewed against their actual schema state and tested against a backup in staging before production. The repository's migration files are not a complete database migration history. In particular, `supabase/migrations/20261012_harden_contribution_files.sql` adds database-level required-path, traversal, legacy-path, and owner-read handling; `supabase/migrations/20261013_faculty_signup_departments.sql` is a separate faculty/department change.
 
-The behavioral pgTAP suite is `supabase/tests/database/workflows.pgtap.sql`. It is separate from `npm test` and must run against a disposable local Supabase database after its schema and applicable migrations are applied. It has not been validated in this environment because Supabase CLI, Docker, and PostgreSQL test tools are unavailable.
+The behavioral pgTAP suite is `supabase/tests/database/workflows.pgtap.sql`. It is separate from `npm test` and must run against a disposable local Supabase database after its schema and applicable migrations are applied. The duration-based digital access migration is `supabase/migrations/20261014_duration_based_points.sql`; it also revokes authenticated execution of the legacy manual digital-return RPC. It has not been validated in this environment because Supabase CLI, Docker, and PostgreSQL test tools are unavailable.
 
 Set `GEMINI_API_KEY` in the server environment to enable contribution screening; set `GEMINI_MODEL` only when selecting a different supported model. Set `CRON_SECRET` and configure a scheduler that calls `/api/cron/physical-reminders` at least every 15 minutes, sending the configured bearer token. Do not expose these values with `NEXT_PUBLIC_` variables. Free/points digital access is automatic; physical borrowing and contribution acceptance remain librarian/admin-controlled. Paid e-book checkout must remain disabled until a provider webhook can verify payment automatically.
 

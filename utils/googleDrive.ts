@@ -86,11 +86,11 @@ export async function uploadGoogleDrivePdf(input: { buffer: Buffer; fileName: st
   return { fileId: result.data.id, fileName: result.data.name || input.fileName, fileSize: Number(result.data.size || input.buffer.byteLength), mimeType: result.data.mimeType || 'application/pdf' }
 }
 
-export async function downloadGoogleDrivePdf(fileId: string, expectedOwnerId?: string) {
+export async function streamGoogleDrivePdf(fileId: string, expectedOwnerId?: string, range?: string) {
   const drive = driveClient()
   const metadata = await drive.files.get({
     fileId,
-    fields: 'mimeType,trashed,appProperties',
+    fields: 'mimeType,trashed,appProperties,size',
     supportsAllDrives: true,
   })
   if (
@@ -104,8 +104,32 @@ export async function downloadGoogleDrivePdf(fileId: string, expectedOwnerId?: s
   ) {
     throw new Error('The Google Drive file is not an active PDF owned by this contribution.')
   }
-  const result = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
-  return Buffer.from(result.data as ArrayBuffer)
+  const result = await drive.files.get(
+    { fileId, alt: 'media', supportsAllDrives: true },
+    { responseType: 'stream', headers: range ? { Range: range } : undefined },
+  )
+  return {
+    body: Readable.toWeb(result.data as Readable) as ReadableStream<Uint8Array>,
+    status: result.status,
+    headers: result.headers,
+    size: Number(metadata.data.size || 0),
+  }
+}
+
+export async function downloadGoogleDrivePdf(fileId: string, expectedOwnerId?: string) {
+  const result = await streamGoogleDrivePdf(fileId, expectedOwnerId)
+  const chunks: Buffer[] = []
+  const reader = result.body.getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks)
 }
 
 export async function downloadGoogleDriveBackupPdf(fileId: string) {

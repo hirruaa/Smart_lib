@@ -15,6 +15,9 @@ const nextConfig = {
       },
     ]
   },
+  async redirects() {
+    return [{ source: '/study', destination: '/dashboard', permanent: false }]
+  },
   webpack(config) {
     config.resolve.fallback = {
       ...(config.resolve.fallback || {}),
