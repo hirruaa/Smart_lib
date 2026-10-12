@@ -2,12 +2,14 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 import PasswordInput from '@/components/PasswordInput'
 
 type AuthMode = 'login' | 'signup' | 'forgot'
+type MemberType = 'student' | 'faculty'
+type AcademicDepartment = { id: number; name: string }
 
 interface AuthFormProps {
   defaultMode: 'login' | 'signup'
@@ -19,13 +21,49 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
+  const [memberType, setMemberType] = useState<MemberType>('student')
   const [school, setSchool] = useState('')
   const [department, setDepartment] = useState('')
+  const [departments, setDepartments] = useState<AcademicDepartment[]>([])
+  const [departmentError, setDepartmentError] = useState<string | null>(null)
+  const [departmentsLoading, setDepartmentsLoading] = useState(false)
   const [course, setCourse] = useState('')
   const [studentYear, setStudentYear] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (mode !== 'signup') return
+    let active = true
+    setDepartmentsLoading(true)
+
+    void (async () => {
+      try {
+        const { data, error } = await getSupabase()
+          .from('academic_departments')
+          .select('id, name')
+          .order('name')
+        if (!active) return
+        if (error) {
+          setDepartmentError('Department choices are unavailable. Please contact the library administrator.')
+          return
+        }
+        setDepartments(data ?? [])
+        setDepartmentError(null)
+      } catch (error) {
+        if (active) {
+          setDepartmentError(error instanceof Error
+            ? `Department choices are unavailable. ${error.message}`
+            : 'Department choices are unavailable. Please contact the library administrator.')
+        }
+      } finally {
+        if (active) setDepartmentsLoading(false)
+      }
+    })()
+
+    return () => { active = false }
+  }, [mode])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -37,17 +75,26 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
 
     try {
       if (mode === 'signup') {
+        if (memberType === 'faculty' && !department) {
+          setErrorMsg('Select your department to create a faculty account.')
+          return
+        }
+        if (memberType === 'faculty' && (departmentError || departments.length === 0)) {
+          setErrorMsg(departmentError ?? 'Faculty registration is not available until the administrator adds departments.')
+          return
+        }
         const origin = typeof window !== 'undefined' ? window.location.origin : ''
         const result = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
+              member_type: memberType,
               full_name: fullName.trim() || undefined,
               school: school.trim() || undefined,
-              department: department.trim() || undefined,
-              course: course.trim() || undefined,
-              student_year: studentYear.trim() || undefined,
+              department: department || undefined,
+              course: memberType === 'student' ? course.trim() || undefined : undefined,
+              student_year: memberType === 'student' ? studentYear.trim() || undefined : undefined,
             },
             emailRedirectTo: `${origin}/auth/callback?next=/verify-email`,
           },
@@ -171,6 +218,28 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {mode === 'signup' && (
             <>
+              <fieldset>
+                <legend className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">I am joining as</legend>
+                <div className="mt-2 grid grid-cols-2 gap-3">
+                  {(['student', 'faculty'] as const).map((type) => (
+                    <label key={type} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition ${memberType === type ? 'border-pine-600 bg-pine-50 text-pine-900 dark:border-pine-300 dark:bg-forest-800 dark:text-paper-100' : 'border-paper-300 text-slate-700 dark:border-forest-700 dark:text-slate-200'} ${type === 'faculty' && departments.length === 0 ? 'opacity-60' : ''}`}>
+                      <input
+                        type="radio"
+                        name="memberType"
+                        value={type}
+                        checked={memberType === type}
+                        onChange={() => { setMemberType(type); setDepartment('') }}
+                        disabled={type === 'faculty' && (departmentsLoading || Boolean(departmentError) || departments.length === 0)}
+                        className="accent-pine-700"
+                      />
+                      {type === 'student' ? 'Student' : 'Faculty member'}
+                    </label>
+                  ))}
+                </div>
+                {departmentsLoading ? <p role="status" className="mt-2 text-xs text-slate-500 dark:text-slate-400">Loading department choices...</p> : null}
+                {departmentError ? <p role="status" className="mt-2 text-xs text-amber-700 dark:text-amber-300">{departmentError}</p> : null}
+                {!departmentsLoading && !departmentError && departments.length === 0 ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Faculty sign-up opens after the administrator adds department choices.</p> : null}
+              </fieldset>
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Full Name</span>
                 <input type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Ada Lovelace" />
@@ -181,17 +250,22 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
                   <input maxLength={120} value={school} onChange={(event) => setSchool(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="School or college" />
                 </label>
                 <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Department</span>
-                  <input maxLength={120} value={department} onChange={(event) => setDepartment(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Department" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Department{memberType === 'faculty' ? ' *' : ''}</span>
+                  <select required={memberType === 'faculty'} value={department} onChange={(event) => setDepartment(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100">
+                    <option value="">Select a department{memberType === 'student' ? ' (optional)' : ''}</option>
+                    {departments.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                  </select>
                 </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Course / program</span>
-                  <input maxLength={120} value={course} onChange={(event) => setCourse(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Course or program" />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Year level</span>
-                  <input maxLength={40} value={studentYear} onChange={(event) => setStudentYear(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="e.g. 2nd year" />
-                </label>
+                {memberType === 'student' ? <>
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Course / program</span>
+                    <input maxLength={120} value={course} onChange={(event) => setCourse(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Course or program" />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Year level</span>
+                    <input maxLength={40} value={studentYear} onChange={(event) => setStudentYear(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="e.g. 2nd year" />
+                  </label>
+                </> : <p className="self-center text-xs leading-5 text-slate-500 dark:text-slate-400">Faculty accounts can browse, borrow, read, and earn points just like student accounts. Your title and teaching assignments can be added by an administrator.</p>}
               </div>
             </>
           )}
@@ -252,7 +326,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
               ? 'Send Reset Link'
               : isLogin
               ? 'Sign in'
-              : 'Create student account'}
+              : `Create ${memberType} account`}
           </button>
         </form>
 

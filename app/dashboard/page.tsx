@@ -46,7 +46,9 @@ export default function DashboardPage() {
           return
         }
 
-        router.replace(role === 'admin' ? '/dashboard/admin' : '/dashboard/student')
+        const section = window.location.hash
+        const dashboardPath = role === 'admin' ? '/dashboard/admin' : role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student'
+        router.replace(`${dashboardPath}${section}`)
       } catch (error) {
         if (active) {
           setAuthError(error instanceof Error

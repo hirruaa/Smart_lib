@@ -12,11 +12,11 @@ function parseRange(value: string | null, size: number) {
   return { start, end: Math.min(end, size - 1) }
 }
 
-export async function GET(request: Request, { params }: { params: { bookId: string } }) {
-  const bookId = Number(params.bookId)
+export async function GET(request: Request, { params }: { params: Promise<{ bookId: string }> }) {
+  const bookId = Number((await params).bookId)
   if (!Number.isInteger(bookId) || bookId < 1) return NextResponse.json({ error: 'Invalid resource.' }, { status: 400 })
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 

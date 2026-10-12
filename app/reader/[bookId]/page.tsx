@@ -4,10 +4,12 @@ import EReader from '@/components/EReader'
 import ReaderSessionGuard from '@/components/ReaderSessionGuard'
 import { createClient } from '@/utils/supabase/server'
 
-type Props = { params: { bookId: string } }
+type Props = { params: Promise<{ bookId: string }> }
 
 export default async function Page({ params }: Props) {
-  const supabase = createClient()
+  const { bookId: rawBookId } = await params
+  const bookId = Number(rawBookId)
+  const supabase = await createClient()
   const { data: authData } = await supabase.auth.getUser()
   const user = authData.user
   const isMissingTableError = (error: { code?: string; message?: string } | null) =>
@@ -19,7 +21,7 @@ export default async function Page({ params }: Props) {
 
   const [{ data: profile }, { data: ownedContribution }] = await Promise.all([
     supabase.from('profiles').select('role,full_name').eq('id', user.id).maybeSingle(),
-    supabase.from('book_contributions').select('id').eq('approved_book_id', Number(params.bookId)).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
+    supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
   const isAdmin = profile?.role === 'admin'
   const isContributor = Boolean(ownedContribution)
@@ -28,7 +30,7 @@ export default async function Page({ params }: Props) {
       .from('borrow_requests')
       .select('id')
       .eq('student_id', user.id)
-      .eq('book_id', Number(params.bookId))
+      .eq('book_id', bookId)
       .eq('status', 'approved')
       .is('returned_date', null)
       .gt('due_date', new Date().toISOString())
@@ -37,7 +39,7 @@ export default async function Page({ params }: Props) {
       .from('book_access_grants')
       .select('id')
       .eq('student_id', user.id)
-      .eq('book_id', Number(params.bookId))
+      .eq('book_id', bookId)
       .eq('status', 'active')
       .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .maybeSingle(),
@@ -54,7 +56,7 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Active access required</h1><p className="mt-2">Request temporary digital access from the library before opening this resource.</p></div></div>
   }
 
-  const { data } = await supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,title,access_mode,catalog_type').eq('id', Number(params.bookId)).maybeSingle()
+  const { data } = await supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,title,access_mode,catalog_type').eq('id', bookId).maybeSingle()
   const book = (data as any) ?? null
 
   if (book?.catalog_type === 'physical') {
@@ -66,7 +68,7 @@ export default async function Page({ params }: Props) {
   }
 
   let resolvedPdfUrl = book.pdf_url || ''
-  if (book.storage_provider === 'google_drive' || book.storage_provider === 'supabase' || !resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) resolvedPdfUrl = `/api/reader/${params.bookId}`
+  if (book.storage_provider === 'google_drive' || book.storage_provider === 'supabase' || !resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) resolvedPdfUrl = `/api/reader/${rawBookId}`
 
   if ((book.access_mode === 'points' || book.access_mode === 'restricted') && (book.pdf_url.startsWith('http://') || book.pdf_url.startsWith('https://'))) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Protected file migration required</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">This paid or restricted resource must be stored in the library&apos;s protected PDF storage before it can be opened.</p></div></div>
@@ -83,7 +85,7 @@ export default async function Page({ params }: Props) {
             onContextMenu={(event) => event.preventDefault()}
             style={{ '--reader-watermark': JSON.stringify(viewerLabel) } as React.CSSProperties}
           >
-            <EReader bookId={Number(params.bookId)} pdfUrl={resolvedPdfUrl} title={book.title} />
+            <EReader bookId={bookId} pdfUrl={resolvedPdfUrl} title={book.title} />
           </div>
         </div>
       </ReaderSessionGuard>

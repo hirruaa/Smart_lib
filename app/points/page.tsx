@@ -62,7 +62,7 @@ export default function PointsPage() {
     <main className="surface-page min-h-screen px-4 py-6 text-slate-900 dark:text-slate-100 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="surface-card flex flex-wrap items-center justify-between gap-4 p-6">
-          <div><button type="button" onClick={() => router.push('/dashboard/student')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Student dashboard</button><p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Points wallet</p><h1 className="mt-2 text-3xl font-semibold">Your academic contributions</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Track what you earned, spent, unlocked, and received through recognition.</p></div>
+          <div><button type="button" onClick={() => router.push('/dashboard')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Member dashboard</button><p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Points wallet</p><h1 className="mt-2 text-3xl font-semibold">Your academic contributions</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Track what you earned, spent, unlocked, and received through recognition.</p></div>
           <div className="rounded-2xl bg-forest-900 px-6 py-5 text-paper-100"><p className="text-xs uppercase tracking-wider text-paper-100/70">Available points</p><strong className="mt-2 block text-4xl">{balance}</strong></div>
         </header>
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div> : null}

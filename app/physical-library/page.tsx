@@ -58,7 +58,9 @@ export default function PhysicalLibraryPage() {
     try {
       const supabase = getSupabase()
       const { data: { user }, error: authError } = await supabase.auth.getUser()
-      if (authError) throw new Error(`Unable to check your sign-in status: ${authError.message}`)
+      if (authError && authError.name !== 'AuthSessionMissingError') {
+        throw new Error(`Unable to check your sign-in status: ${authError.message}`)
+      }
       if (!user) {
         const { data, error: catalogError } = await supabase.rpc('get_public_physical_catalog')
         if (catalogError) throw new Error(`Unable to load the public physical catalog: ${catalogError.message}`)
@@ -265,7 +267,7 @@ export default function PhysicalLibraryPage() {
     <div className="print:hidden">
     <div className="mx-auto max-w-6xl space-y-6">
       <header className={panel}>
-        {!browseOnly ? <button type="button" onClick={() => router.push('/dashboard/student')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Member dashboard</button> : <button type="button" onClick={() => router.push('/')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Smart Lib home</button>}
+        {!browseOnly ? <button type="button" onClick={() => router.push('/dashboard')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Member dashboard</button> : <button type="button" onClick={() => router.push('/')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Smart Lib home</button>}
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Physical collection</p><h1 className="mt-2 text-3xl font-semibold">Browse {browseOnly ? 'the collection' : 'and request books'}</h1><p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-300">Check copy availability and expected returns before visiting. Borrower identities are never shown in this catalog.</p></div>
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, author, category" className={`${control} max-w-sm`} />

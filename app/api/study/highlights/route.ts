@@ -6,7 +6,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const bookId = url.searchParams.get('book_id')
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()
   const user = userData.user
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -24,7 +24,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()
   const user = userData.user
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

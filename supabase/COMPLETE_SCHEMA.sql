@@ -577,8 +577,10 @@
   returns public.book_contributions language plpgsql security definer set search_path = public as $$
   declare
     submitted public.book_contributions;
+    owner_path text;
   begin
     if auth.uid() is null then raise exception 'Authentication required'; end if;
+    owner_path := 'contributions/' || auth.uid()::text || '/';
     if nullif(trim(p_title), '') is null or nullif(trim(p_author), '') is null then
       raise exception 'Title and author are required';
     end if;
@@ -599,6 +601,7 @@
   declare
     contribution public.book_contributions;
     created_book_id bigint;
+    owner_path text;
   begin
     if not public.is_admin() then raise exception 'Administrator access required'; end if;
     if decision not in ('approved', 'rejected') then raise exception 'Invalid contribution decision'; end if;
@@ -895,6 +898,7 @@
   grant select, insert, update, delete on public.faculty_courses to authenticated;
   grant usage, select on all sequences in schema public to authenticated;
   grant execute on function public.search_books(text, integer) to authenticated;
+  revoke all on function public.request_digital_loan(bigint, integer) from public, anon;
   grant execute on function public.request_digital_loan(bigint, integer) to authenticated;
   grant execute on function public.submit_book_contribution(text, text, text, text) to authenticated;
   grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
@@ -1108,13 +1112,20 @@
   as $$
   declare
     submitted public.book_contributions;
+    owner_path text;
   begin
     if auth.uid() is null then raise exception 'Authentication required'; end if;
+    owner_path := 'contributions/' || auth.uid()::text || '/';
     if nullif(trim(p_title), '') is null or nullif(trim(p_author), '') is null then
       raise exception 'Title and author are required';
     end if;
-    if p_storage_provider not in ('supabase', 'google_drive', 'external') then
-      raise exception 'Invalid storage provider';
+    if p_storage_provider is distinct from 'supabase' then
+      raise exception 'Contributions must use private Supabase storage';
+    end if;
+    if p_storage_file_id is not null
+      or (p_storage_path is not null and p_storage_path not like owner_path || '%')
+      or (p_pdf_url is not null and p_pdf_url is distinct from p_storage_path) then
+      raise exception 'Contribution files must use the submitter private storage folder';
     end if;
     if p_file_size is not null and (p_file_size < 0 or p_file_size > 52428800) then
       raise exception 'PDF files must be 50 MB or smaller';
@@ -1138,7 +1149,7 @@
     contribution_author text,
     contribution_description text default null,
     contribution_pdf_url text default null,
-    contribution_storage_provider text default 'supabase',
+    contribution_storage_provider text default null,
     contribution_storage_file_id text default null,
     contribution_storage_path text default null,
     contribution_file_name text default null,
@@ -1152,22 +1163,34 @@
   as $$
   declare
     updated_contribution public.book_contributions;
+    owner_path text;
   begin
     if auth.uid() is null then raise exception 'Authentication required'; end if;
+    owner_path := 'contributions/' || auth.uid()::text || '/';
     if nullif(trim(contribution_title), '') is null or nullif(trim(contribution_author), '') is null then
       raise exception 'Title and author are required';
     end if;
+    if contribution_storage_provider is not null and contribution_storage_provider is distinct from 'supabase' then
+      raise exception 'Contributions must use private Supabase storage';
+    end if;
+    if contribution_storage_file_id is not null
+      or (contribution_storage_path is not null and contribution_storage_path not like owner_path || '%')
+      or (contribution_pdf_url is not null and contribution_pdf_url is distinct from contribution_storage_path) then
+      raise exception 'Contribution files must use the submitter private storage folder';
+    end if;
+
     update public.book_contributions
     set title = trim(contribution_title),
         author = trim(contribution_author),
         description = nullif(trim(contribution_description), ''),
-        pdf_url = nullif(trim(contribution_pdf_url), ''),
-        storage_provider = contribution_storage_provider,
-        storage_file_id = nullif(trim(contribution_storage_file_id), ''),
-        storage_path = nullif(trim(contribution_storage_path), ''),
-        file_name = nullif(trim(contribution_file_name), ''),
-        file_size = contribution_file_size,
-        mime_type = nullif(trim(contribution_mime_type), ''),
+        pdf_url = coalesce(nullif(trim(contribution_pdf_url), ''), pdf_url),
+        storage_provider = coalesce(contribution_storage_provider,
+          case when contribution_storage_path is not null then 'supabase' else storage_provider end),
+        storage_file_id = coalesce(nullif(trim(contribution_storage_file_id), ''), storage_file_id),
+        storage_path = coalesce(nullif(trim(contribution_storage_path), ''), storage_path),
+        file_name = coalesce(nullif(trim(contribution_file_name), ''), file_name),
+        file_size = coalesce(contribution_file_size, file_size),
+        mime_type = coalesce(nullif(trim(contribution_mime_type), ''), mime_type),
         status = 'pending',
         review_feedback = null,
         reviewed_by = null,
@@ -1310,8 +1333,11 @@
   end;
   $$;
 
+  revoke all on function public.submit_book_contribution_v2(text, text, text, text, text, text, text, text, bigint, text) from public, anon;
   grant execute on function public.submit_book_contribution_v2(text, text, text, text, text, text, text, text, bigint, text) to authenticated;
+  revoke all on function public.student_resubmit_contribution_v2(bigint, text, text, text, text, text, text, text, text, bigint, text) from public, anon;
   grant execute on function public.student_resubmit_contribution_v2(bigint, text, text, text, text, text, text, text, text, bigint, text) to authenticated;
+  revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer) from public, anon;
   grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
   grant execute on function public.admin_request_contribution_revision(bigint, text) to authenticated;
   grant execute on function public.admin_award_recognition(uuid, text, integer, text) to authenticated;
@@ -2751,13 +2777,20 @@ set search_path = public
 as $$
 declare
   submitted public.book_contributions;
+  owner_path text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
+  owner_path := 'contributions/' || auth.uid()::text || '/';
   if nullif(trim(p_title), '') is null or nullif(trim(p_author), '') is null then
     raise exception 'Title and author are required';
   end if;
-  if p_storage_provider not in ('supabase', 'google_drive', 'external') then
-    raise exception 'Invalid storage provider';
+  if p_storage_provider is distinct from 'supabase' then
+    raise exception 'Contributions must use private Supabase storage';
+  end if;
+  if p_storage_file_id is not null
+    or (p_storage_path is not null and p_storage_path not like owner_path || '%')
+    or (p_pdf_url is not null and p_pdf_url is distinct from p_storage_path) then
+    raise exception 'Contribution files must use the submitter private storage folder';
   end if;
   if p_file_size is not null and (p_file_size < 0 or p_file_size > 52428800) then
     raise exception 'PDF files must be 50 MB or smaller';
@@ -2781,7 +2814,7 @@ create or replace function public.student_resubmit_contribution_v2(
   contribution_author text,
   contribution_description text default null,
   contribution_pdf_url text default null,
-  contribution_storage_provider text default 'supabase',
+  contribution_storage_provider text default null,
   contribution_storage_file_id text default null,
   contribution_storage_path text default null,
   contribution_file_name text default null,
@@ -2795,22 +2828,33 @@ set search_path = public
 as $$
 declare
   updated_contribution public.book_contributions;
+  owner_path text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
+  owner_path := 'contributions/' || auth.uid()::text || '/';
   if nullif(trim(contribution_title), '') is null or nullif(trim(contribution_author), '') is null then
     raise exception 'Title and author are required';
+  end if;
+  if contribution_storage_provider is not null and contribution_storage_provider is distinct from 'supabase' then
+    raise exception 'Contributions must use private Supabase storage';
+  end if;
+  if contribution_storage_file_id is not null
+    or (contribution_storage_path is not null and contribution_storage_path not like owner_path || '%')
+    or (contribution_pdf_url is not null and contribution_pdf_url is distinct from contribution_storage_path) then
+    raise exception 'Contribution files must use the submitter private storage folder';
   end if;
   update public.book_contributions
   set title = trim(contribution_title),
       author = trim(contribution_author),
       description = nullif(trim(contribution_description), ''),
-      pdf_url = nullif(trim(contribution_pdf_url), ''),
-      storage_provider = contribution_storage_provider,
-      storage_file_id = nullif(trim(contribution_storage_file_id), ''),
-      storage_path = nullif(trim(contribution_storage_path), ''),
-      file_name = nullif(trim(contribution_file_name), ''),
-      file_size = contribution_file_size,
-      mime_type = nullif(trim(contribution_mime_type), ''),
+      pdf_url = coalesce(nullif(trim(contribution_pdf_url), ''), pdf_url),
+      storage_provider = coalesce(contribution_storage_provider,
+        case when contribution_storage_path is not null then 'supabase' else storage_provider end),
+      storage_file_id = coalesce(nullif(trim(contribution_storage_file_id), ''), storage_file_id),
+      storage_path = coalesce(nullif(trim(contribution_storage_path), ''), storage_path),
+      file_name = coalesce(nullif(trim(contribution_file_name), ''), file_name),
+      file_size = coalesce(contribution_file_size, file_size),
+      mime_type = coalesce(nullif(trim(contribution_mime_type), ''), mime_type),
       status = 'pending',
       review_feedback = null,
       reviewed_by = null,
@@ -2847,6 +2891,14 @@ begin
   if contribution.id is null or contribution.status <> 'pending' then raise exception 'Pending contribution not found'; end if;
 
   if decision = 'approved' then
+    owner_path := 'contributions/' || contribution.user_id::text || '/';
+    if contribution.storage_provider is distinct from 'supabase'
+      or contribution.storage_file_id is not null
+      or (contribution.storage_path is not null and contribution.storage_path not like owner_path || '%')
+      or (contribution.pdf_url is not null and contribution.pdf_url is distinct from contribution.storage_path) then
+      raise exception 'Contribution file must be in the submitter private storage folder before approval';
+    end if;
+
     insert into public.books(
       title, author, category, description, pdf_url,
       storage_provider, storage_file_id, storage_path, file_name, file_size, mime_type, access_points
@@ -2896,8 +2948,11 @@ begin
 end;
 $$;
 
+revoke all on function public.submit_book_contribution_v2(text, text, text, text, text, text, text, text, bigint, text) from public, anon;
 grant execute on function public.submit_book_contribution_v2(text, text, text, text, text, text, text, text, bigint, text) to authenticated;
+revoke all on function public.student_resubmit_contribution_v2(bigint, text, text, text, text, text, text, text, text, bigint, text) from public, anon;
 grant execute on function public.student_resubmit_contribution_v2(bigint, text, text, text, text, text, text, text, text, bigint, text) to authenticated;
+revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer) from public, anon;
 grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
 grant execute on function public.admin_request_contribution_revision(bigint, text) to authenticated;
 
@@ -3777,6 +3832,84 @@ alter table public.borrow_requests
   check (duration_days between 1 and 90);
 
 -- ============================================================================
+-- Faculty signup and department catalog
+-- ============================================================================
+
+create table if not exists public.academic_departments (
+  id bigint generated by default as identity primary key,
+  name text not null,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+insert into public.academic_departments (name)
+select min(trim(department))
+from public.profiles
+where nullif(trim(department), '') is not null
+group by lower(trim(department))
+on conflict do nothing;
+
+create unique index if not exists academic_departments_name_lower_unique
+  on public.academic_departments (lower(name));
+
+alter table public.academic_departments enable row level security;
+
+drop policy if exists academic_departments_read_active on public.academic_departments;
+create policy academic_departments_read_active
+  on public.academic_departments
+  for select to anon, authenticated
+  using (is_active or public.is_admin());
+
+drop policy if exists academic_departments_admin_manage on public.academic_departments;
+create policy academic_departments_admin_manage
+  on public.academic_departments
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+grant select on public.academic_departments to anon, authenticated;
+grant insert, update, delete on public.academic_departments to authenticated;
+grant usage, select on sequence public.academic_departments_id_seq to authenticated;
+
+create or replace function public.provision_profile()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  requested_role text;
+begin
+  requested_role := case
+    when lower(trim(coalesce(new.raw_user_meta_data ->> 'member_type', ''))) = 'faculty' then 'faculty'
+    else 'student'
+  end;
+
+  if requested_role = 'faculty' and not exists (
+    select 1
+    from public.academic_departments
+    where is_active
+      and lower(name) = lower(trim(coalesce(new.raw_user_meta_data ->> 'department', '')))
+  ) then
+    raise exception 'Choose an active department to create a faculty account';
+  end if;
+
+  insert into public.profiles (id, email, role)
+  values (new.id, coalesce(new.email, ''), requested_role)
+  on conflict (id) do update set email = excluded.email;
+
+  update public.profiles
+  set full_name = nullif(trim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
+      school = nullif(trim(coalesce(new.raw_user_meta_data ->> 'school', '')), ''),
+      department = nullif(trim(coalesce(new.raw_user_meta_data ->> 'department', '')), ''),
+      course = nullif(trim(coalesce(new.raw_user_meta_data ->> 'course', '')), ''),
+      student_year = nullif(trim(coalesce(new.raw_user_meta_data ->> 'student_year', '')), '')
+  where id = new.id;
+  return new;
+end;
+$$;
+
+-- ============================================================================
 -- Protected profile-field updates
 -- ============================================================================
 
@@ -3829,15 +3962,29 @@ declare
   required_points integer;
   user_points integer;
   book_points integer;
+  book_mode text;
+  book_catalog_type text;
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
   if p_duration_days < 1 or p_duration_days > 90 then
     raise exception 'Choose a lending period between 1 and 90 days';
   end if;
 
-  select access_points into book_points from public.books where id = p_book_id;
+  select access_points, access_mode, catalog_type
+  into book_points, book_mode, book_catalog_type
+  from public.books where id = p_book_id;
   if book_points is null then raise exception 'Resource not found'; end if;
-  required_points := ceil(p_duration_days / 7.0)::integer * book_points;
+  if book_catalog_type = 'physical' then raise exception 'Physical books use the physical circulation workflow'; end if;
+  if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
+  if book_mode = 'premium' then
+    raise exception 'Paid e-book checkout is paused. Choose free or points-based access instead';
+  end if;
+  if book_mode not in ('free', 'points') then raise exception 'This digital access mode is unavailable'; end if;
+
+  required_points := case
+    when book_mode = 'points' then ceil(p_duration_days / 7.0)::integer * book_points
+    else 0
+  end;
 
   perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text || ':' || p_book_id::text, 0));
 
@@ -3855,14 +4002,19 @@ begin
     raise exception 'You need % more points to unlock this resource for % days', required_points - user_points, p_duration_days;
   end if;
 
-  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost)
-  values (auth.uid(), p_book_id, p_duration_days, required_points)
+  insert into public.borrow_requests(student_id, book_id, duration_days, points_cost, status, due_date)
+  values (
+    auth.uid(), p_book_id, p_duration_days, required_points, 'approved',
+    now() + make_interval(days => p_duration_days)
+  )
   returning * into requested;
   if required_points > 0 then
     update public.profiles set points_balance = points_balance - required_points where id = auth.uid();
     insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
     values (auth.uid(), -required_points, 'access_unlock', requested.id, 'Unlocked digital access');
   end if;
+  insert into public.notifications(user_id, event_type, title, message, reference_id)
+  values (auth.uid(), 'borrow_request_status', 'Access approved', 'Your digital library access is ready to use.', requested.id);
   return requested;
 end;
 $$;

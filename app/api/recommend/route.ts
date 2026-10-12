@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     const query = (body.query || '').toString().trim()
     if (!query) return NextResponse.json({ error: 'Empty query' }, { status: 400 })
 
-    const supabase = createClient()
+    const supabase = await createClient()
     const intent = getIntent(query)
     const { data: authData } = await supabase.auth.getUser()
     const user = authData.user

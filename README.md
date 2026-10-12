@@ -26,6 +26,29 @@ Smart Lib’s assistant can help you discover resources, explore research topics
 
 Smart Lib is made for focused study, small steps, and big progress.
 
+## Local testing and deployment configuration
+
+Playwright requires a separate `.env.test.local` file and refuses remote Supabase URLs. This prevents local tests from inheriting production credentials from `.env.local`.
+
+1. Install and start Docker Desktop with WSL 2 enabled, then install the Supabase CLI.
+2. Start a local Supabase instance and copy `.env.test.example` to `.env.test.local`.
+3. Fill the test file with the local API URL, anon key, and service-role key reported by `supabase status -o env`. Keep this file local; never commit it or use production keys here.
+4. Apply and verify the schema only in the local instance before running database tests. `supabase/COMPLETE_SCHEMA.sql` is for a fresh database, not a production upgrade. For an existing database, review and apply `supabase/migrations/20261013_faculty_signup_departments.sql` in staging first; it adds the department catalog, enables faculty self-registration with an administrator-managed department, and retains existing department names. The SQL files are not a complete migration history, so review their order and effects before automating resets or applying them to any populated database.
+5. Run `npm test` to execute the system check and Playwright suite.
+
+For deployment, configure the real Supabase project values in the Vercel project's environment settings using `.env.example` as a variable-name reference. Set `NEXT_PUBLIC_SITE_URL` to the canonical HTTPS origin. Do not deploy `.env.test.local` values or include service-role/provider secrets in `NEXT_PUBLIC_*` variables.
+
+## Google Drive backups
+
+Smart Lib can create a daily compressed logical snapshot in Google Drive and lets administrators trigger one from **Admin → Backups**. Vercel schedules the backup at 02:00 UTC using [`vercel.json`](vercel.json). No old backup is deleted automatically.
+
+1. Create a dedicated Google Drive folder for backups and restrict its access to the people authorized to handle student, faculty, and library records. Do not use a broadly shared folder.
+2. Configure the server-only `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REFRESH_TOKEN` values already used by Drive integration, plus `GOOGLE_DRIVE_BACKUP_FOLDER_ID` with that folder's ID. The OAuth account must be able to create files in it and read existing Smart Lib PDFs.
+3. Set `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY`, and a long random `CRON_SECRET` in Vercel's server environment. Never expose these values with a `NEXT_PUBLIC_` prefix. Vercel sends the cron secret as a bearer token.
+4. Deploy the project and confirm the Vercel Cron entry is enabled. Use **Admin → Backups → Create backup now** for an initial snapshot, then check the Vercel function logs and the Drive folder after the scheduled run.
+
+Each `.jsonl.gz` archive contains application table rows, Supabase Auth account IDs and metadata (not passwords, password hashes, sessions, or tokens), every Supabase Storage object, and Smart Lib PDFs in Drive referenced by books and contributions. Missing optional tables are listed in the archive's final summary; other export or upload errors fail the run. These are logical exports, not point-in-time database dumps: use Supabase's native backup/PITR facilities as an additional disaster-recovery layer, and test any restoration procedure against an isolated project before relying on it. Data in Drive folders not referenced by the book/contribution records is not copied.
+
 ---
 
 Created with care by **H-STUDIO**.

@@ -18,6 +18,8 @@ const requiredSchemaObjects = [
   'reviews',
   'wishlists',
   'fines',
+  'academic_departments',
+  'provision_profile',
 ]
 
 for (const objectName of requiredSchemaObjects) {
@@ -45,6 +47,9 @@ const requiredFiles = [
   'components/BookAssistant.tsx',
   'app/physical-library/page.tsx',
   'app/dashboard/admin/physical/page.tsx',
+  'app/dashboard/faculty/page.tsx',
+  'components/MemberDashboard.tsx',
+  'supabase/migrations/20261013_faculty_signup_departments.sql',
 ]
 
 for (const file of requiredFiles) {

@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 
 export async function GET() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (!user && authError?.name === 'AuthSessionMissingError') {
+    return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
+  }
   if (authError) {
     console.error('Notification authentication lookup failed.', authError)
     return NextResponse.json({ error: 'Unable to verify your session.' }, { status: 500 })
@@ -20,8 +23,11 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (!user && authError?.name === 'AuthSessionMissingError') {
+    return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
+  }
   if (authError) {
     console.error('Notification update authentication lookup failed.', authError)
     return NextResponse.json({ error: 'Unable to verify your session.' }, { status: 500 })

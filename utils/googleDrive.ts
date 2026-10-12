@@ -11,11 +11,41 @@ export function isGoogleDriveConfigured() {
   )
 }
 
+export function isGoogleDriveBackupConfigured() {
+  return isGoogleDriveConfigured() && Boolean(process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID)
+}
+
 function driveClient() {
   if (!isGoogleDriveConfigured()) throw new Error('Google Drive storage is not configured.')
   const auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET)
   auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
   return google.drive({ version: 'v3', auth })
+}
+
+export async function uploadGoogleDriveBackup(input: { body: Readable; fileName: string }) {
+  if (!isGoogleDriveBackupConfigured()) throw new Error('A dedicated Google Drive backup folder is not configured.')
+  const drive = driveClient()
+  const folder = await drive.files.get({
+    fileId: process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID!,
+    fields: 'id,mimeType,trashed',
+    supportsAllDrives: true,
+  })
+  if (folder.data.trashed || folder.data.mimeType !== 'application/vnd.google-apps.folder') {
+    throw new Error('The configured Google Drive backup destination is not an active folder.')
+  }
+
+  const result = await drive.files.create({
+    requestBody: {
+      name: input.fileName,
+      parents: [folder.data.id!],
+      appProperties: { smart_lib_type: 'backup', smart_lib_format: 'jsonl-gzip-v1' },
+    },
+    media: { mimeType: 'application/gzip', body: input.body },
+    fields: 'id,name,size,mimeType',
+    supportsAllDrives: true,
+  })
+  if (!result.data.id) throw new Error('Google Drive did not return a backup file ID.')
+  return { fileId: result.data.id, fileName: result.data.name || input.fileName, fileSize: Number(result.data.size || 0) }
 }
 
 async function folderId(drive: ReturnType<typeof google.drive>, name: string) {
@@ -56,8 +86,41 @@ export async function uploadGoogleDrivePdf(input: { buffer: Buffer; fileName: st
   return { fileId: result.data.id, fileName: result.data.name || input.fileName, fileSize: Number(result.data.size || input.buffer.byteLength), mimeType: result.data.mimeType || 'application/pdf' }
 }
 
-export async function downloadGoogleDrivePdf(fileId: string) {
+export async function downloadGoogleDrivePdf(fileId: string, expectedOwnerId?: string) {
   const drive = driveClient()
+  if (expectedOwnerId) {
+    const metadata = await drive.files.get({
+      fileId,
+      fields: 'mimeType,trashed,appProperties',
+      supportsAllDrives: true,
+    })
+    if (
+      metadata.data.trashed ||
+      metadata.data.mimeType !== 'application/pdf' ||
+      metadata.data.appProperties?.smart_lib_owner !== expectedOwnerId ||
+      metadata.data.appProperties?.smart_lib_type !== 'pdf'
+    ) {
+      throw new Error('The Google Drive PDF does not belong to this contribution.')
+    }
+  }
+  const result = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
+  return Buffer.from(result.data as ArrayBuffer)
+}
+
+export async function downloadGoogleDriveBackupPdf(fileId: string) {
+  const drive = driveClient()
+  const metadata = await drive.files.get({
+    fileId,
+    fields: 'mimeType,trashed,appProperties',
+    supportsAllDrives: true,
+  })
+  if (
+    metadata.data.trashed ||
+    metadata.data.mimeType !== 'application/pdf' ||
+    metadata.data.appProperties?.smart_lib_type !== 'pdf'
+  ) {
+    throw new Error(`Google Drive file "${fileId}" is not an active Smart Lib PDF.`)
+  }
   const result = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
   return Buffer.from(result.data as ArrayBuffer)
 }

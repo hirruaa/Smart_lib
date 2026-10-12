@@ -6,13 +6,13 @@ import { askGemini } from '@/utils/gemini'
 export const runtime = 'nodejs'
 export const maxDuration = 90
 
-export async function POST(_request: Request, { params }: { params: { contributionId: string } }) {
-  const contributionId = Number(params.contributionId)
+export async function POST(_request: Request, { params }: { params: Promise<{ contributionId: string }> }) {
+  const contributionId = Number((await params).contributionId)
   if (!Number.isInteger(contributionId) || contributionId < 1) {
     return NextResponse.json({ error: 'Invalid contribution.' }, { status: 400 })
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
   const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
@@ -21,7 +21,7 @@ export async function POST(_request: Request, { params }: { params: { contributi
 
   const { data: contribution, error: contributionError } = await supabase
     .from('book_contributions')
-    .select('id,title,author,description,pdf_url,storage_provider,storage_file_id,storage_path,file_size,status')
+    .select('id,user_id,title,author,description,pdf_url,storage_provider,storage_file_id,storage_path,file_size,status')
     .eq('id', contributionId)
     .maybeSingle()
   if (contributionError) return NextResponse.json({ error: contributionError.message }, { status: 500 })
@@ -30,11 +30,14 @@ export async function POST(_request: Request, { params }: { params: { contributi
   try {
     let pdf: Buffer
     if (contribution.storage_provider === 'google_drive' && contribution.storage_file_id) {
-      pdf = await downloadGoogleDrivePdf(contribution.storage_file_id)
+      pdf = await downloadGoogleDrivePdf(contribution.storage_file_id, contribution.user_id)
     } else {
       const path = (contribution.storage_path || contribution.pdf_url || '').replace(/^ebooks\//, '')
-      if (!path || /^https?:\/\//i.test(path)) {
+      if (/^https?:\/\//i.test(path)) {
         return NextResponse.json({ error: 'AI screening requires a PDF stored in protected library storage.' }, { status: 409 })
+      }
+      if (!path || !path.startsWith(`contributions/${contribution.user_id}/`) || path.split('/').some((segment: string) => segment === '.' || segment === '..')) {
+        return NextResponse.json({ error: 'The submitted PDF is not stored in the contributor’s private folder.' }, { status: 409 })
       }
       const { data, error } = await supabase.storage.from('ebooks').download(path)
       if (error || !data) return NextResponse.json({ error: 'Unable to retrieve the submitted PDF for screening.' }, { status: 502 })
@@ -47,7 +50,7 @@ export async function POST(_request: Request, { params }: { params: { contributi
       return NextResponse.json({ error: 'The submitted file is not a valid PDF.' }, { status: 415 })
     }
 
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.js')
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const document = await pdfjs.getDocument({ data: new Uint8Array(pdf), useSystemFonts: true, isEvalSupported: false }).promise
     const pageTexts: string[] = []
     for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 40); pageNumber += 1) {

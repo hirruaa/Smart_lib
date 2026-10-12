@@ -7,7 +7,7 @@ import { apiError, boundedText } from '@/utils/api'
 export const runtime = 'nodejs'
 
 export async function POST(request: Request) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
   let form: FormData
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const fileId = new URL(request.url).searchParams.get('fileId')
   if (!user || !fileId || !isGoogleDriveConfigured()) return NextResponse.json({ error: 'Invalid cleanup request.' }, { status: 400 })

@@ -297,3 +297,11 @@ For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supa
 The individual SQL scripts have been removed; this repository now keeps one schema file. **Do not run it against an existing database with data.** Existing installations need a separately reviewed migration created from their actual schema state, tested against a backup in staging before production.
 
 Set `GEMINI_API_KEY` in the server environment to enable contribution screening; set `GEMINI_MODEL` only when selecting a different supported model. Set `CRON_SECRET` and configure a scheduler that calls `/api/cron/physical-reminders` at least every 15 minutes, sending the configured bearer token. Do not expose these values with `NEXT_PUBLIC_` variables. Free/points digital access is automatic; physical borrowing and contribution acceptance remain librarian/admin-controlled. Paid e-book checkout must remain disabled until a provider webhook can verify payment automatically.
+
+## 11. Application backups
+
+The administrator can manually create a backup from **Admin → Backups**. Vercel also schedules `/api/cron/drive-backup` daily at 02:00 UTC. The endpoint requires `CRON_SECRET`; manual requests require an authenticated administrator. Both use the Supabase service-role key only on the server.
+
+Backups are compressed JSON Lines archives in a dedicated Google Drive folder configured by `GOOGLE_DRIVE_BACKUP_FOLDER_ID`. Configure that folder with appropriately restricted access; the project does not automatically delete older snapshots. Archives include application table rows, Supabase Auth account metadata (excluding passwords and sessions), Supabase Storage object contents, and Smart Lib-managed Drive PDFs referenced by books and contributions. They do not copy unrelated files from Drive. A missing optional database table is disclosed in the archive summary; other read failures abort the backup.
+
+This application-level export is not a transactionally consistent database dump and cannot restore passwords or active sessions. Use Supabase-native backups/PITR as an additional recovery layer, and validate logical restoration in an isolated Supabase project before applying anything to production.

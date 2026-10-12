@@ -4,13 +4,13 @@ import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
 
 export const runtime = 'nodejs'
 
-export async function GET(_request: Request, { params }: { params: { contributionId: string } }) {
-  const contributionId = Number(params.contributionId)
+export async function GET(_request: Request, { params }: { params: Promise<{ contributionId: string }> }) {
+  const contributionId = Number((await params).contributionId)
   if (!Number.isInteger(contributionId) || contributionId < 1) {
     return NextResponse.json({ error: 'Invalid contribution.' }, { status: 400 })
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
@@ -25,7 +25,7 @@ export async function GET(_request: Request, { params }: { params: { contributio
 
   if (contribution.storage_provider === 'google_drive' && contribution.storage_file_id) {
     try {
-      const bytes = await downloadGoogleDrivePdf(contribution.storage_file_id)
+      const bytes = await downloadGoogleDrivePdf(contribution.storage_file_id, contribution.user_id)
       return new Response(bytes as unknown as BodyInit, {
         headers: {
           'Content-Type': contribution.mime_type || 'application/pdf',
@@ -40,8 +40,11 @@ export async function GET(_request: Request, { params }: { params: { contributio
   }
 
   const path = (contribution.storage_path || contribution.pdf_url || '').replace(/^ebooks\//, '')
-  if (!path || path.startsWith('http://') || path.startsWith('https://')) {
-    if (path.startsWith('http://') || path.startsWith('https://')) return NextResponse.redirect(path)
+  const ownerPrefix = `contributions/${contribution.user_id}/`
+  if (/^https?:\/\//i.test(path)) {
+    return NextResponse.json({ error: 'External contribution files are not supported. Upload the PDF to library storage.' }, { status: 409 })
+  }
+  if (!path || !path.startsWith(ownerPrefix) || path.split('/').some((segment: string) => segment === '.' || segment === '..')) {
     return NextResponse.json({ error: 'Contribution file is unavailable.' }, { status: 404 })
   }
 

@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 
 export async function POST(request: Request) {
-  const sessionClient = createClient()
+  const sessionClient = await createClient()
   const { data: { user } } = await sessionClient.auth.getUser()
 
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
@@ -45,11 +45,29 @@ export async function POST(request: Request) {
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+  if (role === 'faculty') {
+    if (!department) return NextResponse.json({ error: 'Choose a department for the faculty account.' }, { status: 400 })
+    const { data: departmentChoice, error: departmentError } = await adminClient
+      .from('academic_departments')
+      .select('id')
+      .eq('name', department)
+      .eq('is_active', true)
+      .maybeSingle()
+    if (departmentError) return apiError('Faculty departments are not configured. Apply the faculty signup migration first.', 503, departmentError)
+    if (!departmentChoice) return NextResponse.json({ error: 'Choose an active department from the catalog.' }, { status: 400 })
+  }
   const { data: created, error } = await adminClient.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    user_metadata: { full_name: fullName, role, school, department, course, student_year: studentYear },
+    user_metadata: {
+      full_name: fullName,
+      member_type: role,
+      school,
+      department,
+      course: role === 'student' ? course : '',
+      student_year: role === 'student' ? studentYear : '',
+    },
   })
 
   if (error) return apiError('Unable to create the member account. The email may already be registered.', 409, error)
@@ -59,8 +77,8 @@ export async function POST(request: Request) {
       full_name: fullName || null,
       school: school || null,
       department: department || null,
-      course: course || null,
-      student_year: studentYear || null,
+      course: role === 'student' ? course || null : null,
+      student_year: role === 'student' ? studentYear || null : null,
       role,
     }).eq('id', created.user.id)
     if (profileUpdateError) {

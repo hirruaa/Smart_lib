@@ -15,7 +15,7 @@ import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 
 const navGroups = [
-  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }] },
+  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }, { label: 'Backups', section: 'backups' }] },
   { label: 'Library', items: [{ label: 'Books', section: 'books' }, { label: 'PDF materials', section: 'materials' }, { label: 'Contributions', section: 'contributions' }] },
   { label: 'Insights & points', items: [{ label: 'Analytics', section: 'analytics' }, { label: 'Recognition', section: 'recognition' }, { label: 'Rewards', section: 'rewards' }, { label: 'Access grants', section: 'grants' }, { label: 'Audit log', section: 'audit' }] },
 ]
@@ -73,6 +73,7 @@ type Profile = {
 
 type FacultyRank = { id: number; title: string; is_active: boolean }
 type AcademicCourse = { id: number; name: string; is_active: boolean }
+type AcademicDepartment = { id: number; name: string; is_active: boolean }
 type FacultyCourse = { faculty_id: string; course_id: number }
 type MemberEditForm = {
   role: 'student' | 'faculty'
@@ -126,6 +127,7 @@ function AdminNavIcon({ section }: { section: string }) {
     users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
     materials: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
     recognition: <><path d="M12 3 14 8l5 .5-3.8 3.3 1.2 5.2-4.4-2.8-4.4 2.8 1.2-5.2L5 8.5 10 8z" /></>,
+    backups: <><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H20v14H6.5A2.5 2.5 0 0 1 4 16.5z" /><path d="M4 8h13M4 16h13M9 12h6" /></>,
   }
 
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{paths[section]}</svg>
@@ -140,6 +142,7 @@ export default function AdminPage() {
   const [students, setStudents] = useState<Profile[]>([])
   const [facultyRanks, setFacultyRanks] = useState<FacultyRank[]>([])
   const [academicCourses, setAcademicCourses] = useState<AcademicCourse[]>([])
+  const [academicDepartments, setAcademicDepartments] = useState<AcademicDepartment[]>([])
   const [facultyCourses, setFacultyCourses] = useState<FacultyCourse[]>([])
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -172,6 +175,8 @@ export default function AdminPage() {
   const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty', school: '', department: '', course: '', studentYear: '' })
   const [recognitionForm, setRecognitionForm] = useState({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [backupLoading, setBackupLoading] = useState(false)
+  const [backupMessage, setBackupMessage] = useState<string | null>(null)
   const [accessGrants, setAccessGrants] = useState<AccessGrant[]>([])
   const [grantForm, setGrantForm] = useState({ studentId: '', bookId: '', duration: '7', reason: '' })
   const [rewards, setRewards] = useState<Reward[]>([])
@@ -183,6 +188,7 @@ export default function AdminPage() {
   const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
   const [rankDraft, setRankDraft] = useState('')
   const [courseDraft, setCourseDraft] = useState('')
+  const [departmentDraft, setDepartmentDraft] = useState('')
 
   const handleDeleteBook = async (bookId: number, title: string) => {
     setConfirmAction({ type: 'deleteBook', id: bookId, label: title })
@@ -231,7 +237,7 @@ export default function AdminPage() {
 
     if (role !== 'admin') {
       if (role === 'student' || role === 'faculty') {
-        router.replace('/dashboard/student')
+        router.replace(role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student')
       } else {
         router.replace('/dashboard')
       }
@@ -243,7 +249,7 @@ export default function AdminPage() {
     const isMissingTableError = (error: { code?: string; message?: string } | null) =>
       Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-    const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes, ranksRes, coursesRes, facultyCoursesRes] = await Promise.all([
+    const [booksRes, requestsRes, studentsRes, contributionsRes, auditRes, grantsRes, rewardsRes, ranksRes, coursesRes, facultyCoursesRes, departmentsRes] = await Promise.all([
       supabase
         .from('books')
         .select('id, title, author, isbn, category, description, pdf_url, storage_provider, storage_file_id, storage_path, access_points, access_mode, premium_price, access_duration_days, created_at')
@@ -267,16 +273,17 @@ export default function AdminPage() {
       supabase.from('faculty_ranks').select('id,title,is_active').order('title'),
       supabase.from('academic_courses').select('id,name,is_active').order('name'),
       supabase.from('faculty_courses').select('faculty_id,course_id'),
+      supabase.from('academic_departments').select('id,name,is_active').order('name'),
     ])
 
     // Optional insights modules may not exist yet in older Supabase projects.
     // Keep the control panel usable while those sections remain empty.
-    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error || ranksRes.error || coursesRes.error || facultyCoursesRes.error) {
-      const failedResource = [booksRes, requestsRes, studentsRes, contributionsRes, ranksRes, coursesRes, facultyCoursesRes].find((result) => result.error && !isMissingTableError(result.error))?.error
+    if (booksRes.error || requestsRes.error || studentsRes.error || contributionsRes.error || ranksRes.error || coursesRes.error || facultyCoursesRes.error || departmentsRes.error) {
+      const failedResource = [booksRes, requestsRes, studentsRes, contributionsRes, ranksRes, coursesRes, facultyCoursesRes, departmentsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (failedResource) {
         setError(`Failed to load admin data: ${failedResource.message || 'Please check the Supabase schema.'}`)
-      } else if (ranksRes.error || coursesRes.error || facultyCoursesRes.error) {
-        setError('Academic titles and courses are not configured. Apply the academic catalog migration in Supabase.')
+      } else if (ranksRes.error || coursesRes.error || facultyCoursesRes.error || departmentsRes.error) {
+        setError('Academic catalogs are not configured. Apply the academic catalog and faculty signup migrations in Supabase.')
       }
     }
 
@@ -285,6 +292,7 @@ export default function AdminPage() {
     setStudents((studentsRes.data ?? []) as Profile[])
     setFacultyRanks((ranksRes.data ?? []) as FacultyRank[])
     setAcademicCourses((coursesRes.data ?? []) as AcademicCourse[])
+    setAcademicDepartments((departmentsRes.data ?? []) as AcademicDepartment[])
     setFacultyCourses((facultyCoursesRes.data ?? []) as FacultyCourse[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
     setAuditLogs((auditRes.data ?? []) as AuditLog[])
@@ -541,9 +549,9 @@ export default function AdminPage() {
     setSaving(false)
   }
 
-  const addAcademicCatalogItem = async (kind: 'rank' | 'course', event: FormEvent<HTMLFormElement>) => {
+  const addAcademicCatalogItem = async (kind: 'rank' | 'course' | 'department', event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const name = (kind === 'rank' ? rankDraft : courseDraft).trim()
+    const name = (kind === 'rank' ? rankDraft : kind === 'course' ? courseDraft : departmentDraft).trim()
     if (!name) return
     setSaving(true)
     setError(null)
@@ -551,27 +559,30 @@ export default function AdminPage() {
     const supabase = getSupabase()
     const { error } = kind === 'rank'
       ? await supabase.from('faculty_ranks').insert({ title: name })
-      : await supabase.from('academic_courses').insert({ name })
+      : kind === 'course'
+        ? await supabase.from('academic_courses').insert({ name })
+        : await supabase.from('academic_departments').insert({ name })
     if (error) {
-      setError(error.code === '23505' ? `That ${kind === 'rank' ? 'title' : 'course'} already exists.` : error.message)
+      setError(error.code === '23505' ? `That ${kind === 'rank' ? 'title' : kind === 'course' ? 'course' : 'department'} already exists.` : error.message)
     } else {
       if (kind === 'rank') setRankDraft('')
-      else setCourseDraft('')
+      else if (kind === 'course') setCourseDraft('')
+      else setDepartmentDraft('')
       await loadData()
-      setActionMessage(`${kind === 'rank' ? 'Faculty title' : 'Course'} added.`)
+      setActionMessage(`${kind === 'rank' ? 'Faculty title' : kind === 'course' ? 'Course' : 'Department'} added.`)
     }
     setSaving(false)
   }
 
-  const setAcademicCatalogItemActive = async (kind: 'rank' | 'course', id: number, isActive: boolean) => {
+  const setAcademicCatalogItemActive = async (kind: 'rank' | 'course' | 'department', id: number, isActive: boolean) => {
     setSaving(true)
     setError(null)
-    const table = kind === 'rank' ? 'faculty_ranks' : 'academic_courses'
+    const table = kind === 'rank' ? 'faculty_ranks' : kind === 'course' ? 'academic_courses' : 'academic_departments'
     const { error } = await getSupabase().from(table).update({ is_active: isActive }).eq('id', id)
     if (error) setError(error.message)
     else {
       await loadData()
-      setActionMessage(`${kind === 'rank' ? 'Faculty title' : 'Course'} ${isActive ? 'activated' : 'deactivated'}.`)
+      setActionMessage(`${kind === 'rank' ? 'Faculty title' : kind === 'course' ? 'Course' : 'Department'} ${isActive ? 'activated' : 'deactivated'}.`)
     }
     setSaving(false)
   }
@@ -825,16 +836,35 @@ export default function AdminPage() {
     URL.revokeObjectURL(url)
   }
 
+  const createBackup = async () => {
+    setBackupLoading(true)
+    setBackupMessage(null)
+    try {
+      const response = await fetch('/api/admin/backups', { method: 'POST' })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Backup failed.')
+      const { backup } = result
+      const skipped = backup.skippedTables?.length
+        ? ` Incomplete schema: these tables were absent and skipped: ${backup.skippedTables.join(', ')}.`
+        : ''
+      setBackupMessage(`Backup created: ${backup.fileName} · ${backup.rows} table rows · ${backup.authUsers} user accounts · ${backup.storageObjects + backup.drivePdfs} files.${skipped}`)
+    } catch (backupError) {
+      setBackupMessage(backupError instanceof Error ? backupError.message : 'Backup failed.')
+    } finally {
+      setBackupLoading(false)
+    }
+  }
+
   return (
     <div className="admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
       <div className={`admin-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
-        <aside className={`admin-sidebar ${sidebarOpen ? 'admin-sidebar-open' : ''}`}>
+        <aside id="admin-navigation" className={`admin-sidebar ${sidebarOpen ? 'admin-sidebar-open' : ''}`}>
           <div className="mb-8 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
             <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
           </div>
-          <button type="button" className="admin-sidebar-toggle" onClick={() => { setSidebarCollapsed((current) => !current); setSidebarOpen(false) }} aria-label={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><span aria-hidden="true">☰</span></button>
+          <button type="button" className="admin-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{sidebarOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}</svg></button>
           <nav className="admin-nav-groups">
             {navGroups.map((group) => <div key={group.label} className="admin-nav-group">
               <p className="admin-nav-group-label">{group.label}</p>
@@ -868,7 +898,7 @@ export default function AdminPage() {
           ) : (
             <>
           <header className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-            <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
+            <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Admin</p>
@@ -1386,6 +1416,22 @@ export default function AdminPage() {
             </section>
           )}
 
+          {section === 'backups' && (
+            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Data backups</h2>
+              <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                Create a compressed snapshot in the configured Google Drive backup folder. Automatic backups run daily at 02:00 UTC. Backups are never automatically deleted.
+              </p>
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
+                Snapshots include application database rows, account identity/profile metadata, and Supabase Storage files. Passwords and active sessions are not exportable. Restrict access to the Drive backup folder and verify restores in an isolated Supabase project.
+              </div>
+              {backupMessage ? <p role="status" className="mt-4 break-words text-sm text-slate-700 dark:text-slate-200">{backupMessage}</p> : null}
+              <button type="button" onClick={() => void createBackup()} disabled={backupLoading} className="pine-action mt-5 rounded-2xl px-5 py-3 text-sm font-semibold disabled:opacity-50">
+                {backupLoading ? 'Creating backup…' : 'Create backup now'}
+              </button>
+            </section>
+          )}
+
           {section === 'rewards' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
               <div className="mb-6"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Rewards catalog</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Create non-monetary rewards students can redeem with earned points.</p></div>
@@ -1468,6 +1514,18 @@ export default function AdminPage() {
                     {academicCourses.length === 0 ? <li className="text-sm text-slate-500">No courses added yet.</li> : null}
                   </ul>
                 </section>
+                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Departments</h3>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Active departments are shown as choices when faculty members register.</p>
+                  <form onSubmit={(event) => void addAcademicCatalogItem('department', event)} className="mt-3 flex gap-2">
+                    <input required maxLength={120} value={departmentDraft} onChange={(event) => setDepartmentDraft(event.target.value)} placeholder="e.g. Computer Science" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                    <button type="submit" disabled={saving} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Add department</button>
+                  </form>
+                  <ul className="mt-3 space-y-2">
+                    {academicDepartments.map((department) => <li key={department.id} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm dark:bg-slate-900"><span className={department.is_active ? '' : 'text-slate-400 line-through'}>{department.name}{department.is_active ? '' : ' (inactive)'}</span><button type="button" disabled={saving} onClick={() => void setAcademicCatalogItemActive('department', department.id, !department.is_active)} className="text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300">{department.is_active ? 'Deactivate' : 'Reactivate'}</button></li>)}
+                    {academicDepartments.length === 0 ? <li className="text-sm text-slate-500">No departments added yet.</li> : null}
+                  </ul>
+                </section>
               </div>
               <form onSubmit={handleCreateStudent} className="mb-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/60">
                 <div className="mb-4">
@@ -1478,12 +1536,15 @@ export default function AdminPage() {
                   <input type="text" maxLength={120} value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <PasswordInput required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <select value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' })} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                  <select value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty', department: '' })} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                     <option value="student">Student</option>
                     <option value="faculty">Faculty</option>
                   </select>
                   <input maxLength={120} value={newStudent.school} onChange={(event) => setNewStudent({ ...newStudent, school: event.target.value })} placeholder="School or college" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <input maxLength={120} value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} placeholder="Department" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <select required={newStudent.role === 'faculty'} value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                    <option value="">Department{newStudent.role === 'faculty' ? ' (required)' : ' (optional)'}</option>
+                    {academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                  </select>
                   <input maxLength={120} value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} placeholder="Course or program (students)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input maxLength={40} value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} placeholder="Year level (students)" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                 </div>

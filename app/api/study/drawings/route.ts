@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'A valid book and page are required.' }, { status: 400 })
   }
 
-  const supabase = createClient()
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
@@ -51,7 +51,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Invalid drawing data.' }, { status: 400 })
     }
 
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
