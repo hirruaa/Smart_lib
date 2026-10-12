@@ -292,9 +292,11 @@ erDiagram
 
 ## 10. Initialization
 
-For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql) once in the Supabase SQL Editor. This is the canonical, consolidated setup schema and includes the physical circulation prerequisite before dependent SQL runs.
+For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql) once in the Supabase SQL Editor. This is the canonical, consolidated setup schema and includes the physical circulation prerequisite before dependent SQL runs. It accepts the current owner-scoped `contributions/{userId}/...` path and the legacy `ebooks/contributions/{userId}/...` path for contribution access and review.
 
-The individual SQL scripts have been removed; this repository now keeps one schema file. **Do not run it against an existing database with data.** Existing installations need a separately reviewed migration created from their actual schema state, tested against a backup in staging before production.
+**Do not run it against an existing database with data.** Existing installations need applicable migrations reviewed against their actual schema state and tested against a backup in staging before production. The repository's migration files are not a complete database migration history. In particular, `supabase/migrations/20261012_harden_contribution_files.sql` adds database-level required-path, traversal, legacy-path, and owner-read handling; `supabase/migrations/20261013_faculty_signup_departments.sql` is a separate faculty/department change.
+
+The behavioral pgTAP suite is `supabase/tests/database/workflows.pgtap.sql`. It is separate from `npm test` and must run against a disposable local Supabase database after its schema and applicable migrations are applied. It has not been validated in this environment because Supabase CLI, Docker, and PostgreSQL test tools are unavailable.
 
 Set `GEMINI_API_KEY` in the server environment to enable contribution screening; set `GEMINI_MODEL` only when selecting a different supported model. Set `CRON_SECRET` and configure a scheduler that calls `/api/cron/physical-reminders` at least every 15 minutes, sending the configured bearer token. Do not expose these values with `NEXT_PUBLIC_` variables. Free/points digital access is automatic; physical borrowing and contribution acceptance remain librarian/admin-controlled. Paid e-book checkout must remain disabled until a provider webhook can verify payment automatically.
 

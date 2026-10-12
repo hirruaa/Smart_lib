@@ -88,20 +88,21 @@ export async function uploadGoogleDrivePdf(input: { buffer: Buffer; fileName: st
 
 export async function downloadGoogleDrivePdf(fileId: string, expectedOwnerId?: string) {
   const drive = driveClient()
-  if (expectedOwnerId) {
-    const metadata = await drive.files.get({
-      fileId,
-      fields: 'mimeType,trashed,appProperties',
-      supportsAllDrives: true,
-    })
-    if (
-      metadata.data.trashed ||
-      metadata.data.mimeType !== 'application/pdf' ||
-      metadata.data.appProperties?.smart_lib_owner !== expectedOwnerId ||
-      metadata.data.appProperties?.smart_lib_type !== 'pdf'
-    ) {
-      throw new Error('The Google Drive PDF does not belong to this contribution.')
-    }
+  const metadata = await drive.files.get({
+    fileId,
+    fields: 'mimeType,trashed,appProperties',
+    supportsAllDrives: true,
+  })
+  if (
+    metadata.data.trashed ||
+    metadata.data.mimeType !== 'application/pdf' ||
+    (expectedOwnerId !== undefined &&
+      metadata.data.appProperties?.smart_lib_owner !== undefined &&
+      metadata.data.appProperties.smart_lib_owner !== expectedOwnerId) ||
+    (metadata.data.appProperties?.smart_lib_type !== undefined &&
+      metadata.data.appProperties.smart_lib_type !== 'pdf')
+  ) {
+    throw new Error('The Google Drive file is not an active PDF owned by this contribution.')
   }
   const result = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
   return Buffer.from(result.data as ArrayBuffer)
@@ -117,7 +118,8 @@ export async function downloadGoogleDriveBackupPdf(fileId: string) {
   if (
     metadata.data.trashed ||
     metadata.data.mimeType !== 'application/pdf' ||
-    metadata.data.appProperties?.smart_lib_type !== 'pdf'
+    (metadata.data.appProperties?.smart_lib_type !== undefined &&
+      metadata.data.appProperties.smart_lib_type !== 'pdf')
   ) {
     throw new Error(`Google Drive file "${fileId}" is not an active Smart Lib PDF.`)
   }

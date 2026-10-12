@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
 -- Apply COMPLETE_SCHEMA.sql to a disposable local/staging database first.
 begin;
-select plan(34);
+select plan(40);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -55,12 +55,50 @@ insert into public.book_contributions (
   'contributions/d3600000-0000-4000-8000-000000000001/qa-contribution.pdf',
   'qa-contribution.pdf', 1024, 'application/pdf'
 );
+insert into public.book_contributions (
+  id, user_id, title, author, pdf_url, status, storage_provider, storage_file_id, file_name, file_size, mime_type
+) values (
+  910021, 'd3600000-0000-4000-8000-000000000001',
+  'QA legacy Drive contribution', 'QA Contributor', 'legacy-drive-file-id',
+  'pending', 'google_drive', 'legacy-drive-file-id', 'legacy.pdf', 1024, 'application/pdf'
+);
+insert into public.book_contributions (
+  id, user_id, title, author, pdf_url, status, storage_provider, storage_path, file_name, file_size, mime_type
+) values (
+  910022, 'd3600000-0000-4000-8000-000000000001',
+  'QA legacy prefixed contribution', 'QA Contributor',
+  'ebooks/contributions/d3600000-0000-4000-8000-000000000001/legacy.pdf',
+  'pending', 'supabase',
+  'ebooks/contributions/d3600000-0000-4000-8000-000000000001/legacy.pdf',
+  'legacy.pdf', 1024, 'application/pdf'
+);
 insert into public.reading_progress (user_id, book_id, current_page, total_pages)
 values ('d3600000-0000-4000-8000-000000000002', 910001, 3, 20)
 on conflict (user_id, book_id) do update set current_page = excluded.current_page;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000001', true);
+
+select throws_ok(
+  $$ select public.submit_book_contribution_v2(
+    'QA missing file', 'QA Author', null, null, 'supabase', null, null, 'missing.pdf', 1024, 'application/pdf'
+  ) $$,
+  'P0001',
+  'Contribution files must use the submitter private storage folder',
+  'A contribution without a storage path is rejected'
+);
+select throws_ok(
+  $$ select public.submit_book_contribution_v2(
+    'QA traversal file', 'QA Author', null,
+    'contributions/d3600000-0000-4000-8000-000000000001/../private.pdf',
+    'supabase', null,
+    'contributions/d3600000-0000-4000-8000-000000000001/../private.pdf',
+    'private.pdf', 1024, 'application/pdf'
+  ) $$,
+  'P0001',
+  'Contribution files must use the submitter private storage folder',
+  'A contribution path containing traversal segments is rejected'
+);
 
 select throws_ok(
   $$ update public.profiles set role = 'admin' where id = auth.uid() $$,
@@ -197,6 +235,26 @@ select is(
   (select count(*)::integer from public.books where title = 'QA contributed resource'),
   1,
   'A duplicate approval does not publish a second library resource'
+);
+select is(
+  (public.admin_review_book_contribution(910021, 'approved', 0, 0)).status,
+  'approved',
+  'An administrator can approve a legacy Google Drive contribution'
+);
+select is(
+  (select storage_file_id from public.books where title = 'QA legacy Drive contribution'),
+  'legacy-drive-file-id',
+  'Approving a legacy Drive contribution preserves its file ID'
+);
+select is(
+  (public.admin_review_book_contribution(910022, 'approved', 0, 0)).status,
+  'approved',
+  'An administrator can approve a legacy ebooks-prefixed contribution path'
+);
+select is(
+  (select storage_path from public.books where title = 'QA legacy prefixed contribution'),
+  'ebooks/contributions/d3600000-0000-4000-8000-000000000001/legacy.pdf',
+  'Approving a legacy prefixed path preserves its existing file location'
 );
 select is(
   (public.admin_update_member_academics(

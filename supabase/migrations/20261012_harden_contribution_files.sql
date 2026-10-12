@@ -32,9 +32,14 @@ begin
   if p_storage_provider is distinct from 'supabase' then
     raise exception 'Contributions must use private Supabase storage';
   end if;
-  if p_storage_file_id is not null
-    or (p_storage_path is not null and p_storage_path not like owner_path || '%')
-    or (p_pdf_url is not null and p_pdf_url is distinct from p_storage_path) then
+  if nullif(trim(p_storage_path), '') is null
+    or p_storage_file_id is not null
+    or (
+      p_storage_path not like owner_path || '%'
+      and p_storage_path not like 'ebooks/' || owner_path || '%'
+    )
+    or regexp_replace(p_storage_path, '^ebooks/', '') ~ '(^|/)(\.|\.\.)(/|$)'
+    or nullif(trim(p_pdf_url), '') is distinct from nullif(trim(p_storage_path), '') then
     raise exception 'Contribution files must use the submitter private storage folder';
   end if;
   if p_file_size is not null and (p_file_size < 0 or p_file_size > 52428800) then
@@ -84,9 +89,16 @@ begin
   if contribution_storage_provider is not null and contribution_storage_provider is distinct from 'supabase' then
     raise exception 'Contributions must use private Supabase storage';
   end if;
-  if contribution_storage_file_id is not null
-    or (contribution_storage_path is not null and contribution_storage_path not like owner_path || '%')
-    or (contribution_pdf_url is not null and contribution_pdf_url is distinct from contribution_storage_path) then
+  if contribution_storage_path is not null and (
+    nullif(trim(contribution_storage_path), '') is null
+    or contribution_storage_path not like owner_path || '%'
+      and contribution_storage_path not like 'ebooks/' || owner_path || '%'
+    or regexp_replace(contribution_storage_path, '^ebooks/', '') ~ '(^|/)(\.|\.\.)(/|$)'
+    or nullif(trim(contribution_pdf_url), '') is distinct from nullif(trim(contribution_storage_path), '')
+  ) then
+    raise exception 'Contribution files must use the submitter private storage folder';
+  end if;
+  if contribution_storage_file_id is not null then
     raise exception 'Contribution files must use the submitter private storage folder';
   end if;
   if contribution_file_size is not null and (contribution_file_size < 0 or contribution_file_size > 52428800) then
@@ -115,6 +127,20 @@ begin
   if updated_contribution.id is null then
     raise exception 'Contribution is not available for revision';
   end if;
+  if updated_contribution.storage_provider = 'google_drive' then
+    if nullif(trim(updated_contribution.storage_file_id), '') is null then
+      raise exception 'Google Drive contribution is missing its file ID';
+    end if;
+  elsif updated_contribution.storage_provider is distinct from 'supabase'
+    or nullif(trim(updated_contribution.storage_path), '') is null
+    or (
+      updated_contribution.storage_path not like owner_path || '%'
+      and updated_contribution.storage_path not like 'ebooks/' || owner_path || '%'
+    )
+    or regexp_replace(updated_contribution.storage_path, '^ebooks/', '') ~ '(^|/)(\.|\.\.)(/|$)'
+    or nullif(trim(updated_contribution.pdf_url), '') is distinct from nullif(trim(updated_contribution.storage_path), '') then
+    raise exception 'Contribution file must be in the submitter private storage folder before resubmission';
+  end if;
   return updated_contribution;
 end;
 $$;
@@ -134,7 +160,6 @@ declare
   contribution public.book_contributions;
   created_book_id bigint;
   owner_path text;
-  owner_path text;
 begin
   if not public.is_admin() then raise exception 'Administrator access required'; end if;
   if decision not in ('approved', 'rejected') then raise exception 'Invalid contribution decision'; end if;
@@ -146,10 +171,18 @@ begin
 
   if decision = 'approved' then
     owner_path := 'contributions/' || contribution.user_id::text || '/';
-    if contribution.storage_provider is distinct from 'supabase'
-      or contribution.storage_file_id is not null
-      or (contribution.storage_path is not null and contribution.storage_path not like owner_path || '%')
-      or (contribution.pdf_url is not null and contribution.pdf_url is distinct from contribution.storage_path) then
+    if contribution.storage_provider = 'google_drive' then
+      if nullif(trim(contribution.storage_file_id), '') is null then
+        raise exception 'Google Drive contribution is missing its file ID';
+      end if;
+    elsif contribution.storage_provider is distinct from 'supabase'
+      or nullif(trim(contribution.storage_path), '') is null
+      or (
+        contribution.storage_path not like owner_path || '%'
+        and contribution.storage_path not like 'ebooks/' || owner_path || '%'
+      )
+      or regexp_replace(contribution.storage_path, '^ebooks/', '') ~ '(^|/)(\.|\.\.)(/|$)'
+      or nullif(trim(contribution.pdf_url), '') is distinct from nullif(trim(contribution.storage_path), '') then
       raise exception 'Contribution file must be in the submitter private storage folder before approval';
     end if;
 
@@ -187,5 +220,13 @@ revoke all on function public.student_resubmit_contribution_v2(bigint, text, tex
 grant execute on function public.student_resubmit_contribution_v2(bigint, text, text, text, text, text, text, text, text, bigint, text) to authenticated;
 revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer) from public, anon;
 grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
+
+drop policy if exists "Owners read legacy contribution PDFs" on storage.objects;
+create policy "Owners read legacy contribution PDFs" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'ebooks'
+  and name like 'ebooks/contributions/' || auth.uid()::text || '/%'
+);
 
 commit;

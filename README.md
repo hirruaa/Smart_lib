@@ -33,8 +33,8 @@ Playwright requires a separate `.env.test.local` file and refuses remote Supabas
 1. Install and start Docker Desktop with WSL 2 enabled, then install the Supabase CLI.
 2. Start a local Supabase instance and copy `.env.test.example` to `.env.test.local`.
 3. Fill the test file with the local API URL, anon key, and service-role key reported by `supabase status -o env`. Keep this file local; never commit it or use production keys here.
-4. Apply and verify the schema only in the local instance before running database tests. `supabase/COMPLETE_SCHEMA.sql` is for a fresh database, not a production upgrade. For an existing database, review and apply `supabase/migrations/20261013_faculty_signup_departments.sql` in staging first; it adds the department catalog, enables faculty self-registration with an administrator-managed department, and retains existing department names. The SQL files are not a complete migration history, so review their order and effects before automating resets or applying them to any populated database.
-5. Run `npm test` to execute the system check and Playwright suite.
+4. Apply and verify the schema only in the local instance before running database tests. `supabase/COMPLETE_SCHEMA.sql` is for a fresh database, not a production upgrade. For an existing database, review and test the applicable SQL migrations in staging first. `20261012_harden_contribution_files.sql` tightens contribution-file validation while retaining owner access to the supported legacy `ebooks/contributions/{userId}/...` storage path and Google Drive records with a file ID; `20261013_faculty_signup_departments.sql` adds the department catalog and faculty self-registration. The SQL files are not a complete migration history, so review their order and effects against the actual database before applying them to any populated environment.
+5. Run `npm test` for the system check and Playwright suite. The pgTAP workflow suite at `supabase/tests/database/workflows.pgtap.sql` is a separate database test and must be run explicitly against the isolated local database; `npm test` does not execute it.
 
 For deployment, configure the real Supabase project values in the Vercel project's environment settings using `.env.example` as a variable-name reference. Set `NEXT_PUBLIC_SITE_URL` to the canonical HTTPS origin. Do not deploy `.env.test.local` values or include service-role/provider secrets in `NEXT_PUBLIC_*` variables.
 
@@ -48,6 +48,8 @@ Smart Lib can create a daily compressed logical snapshot in Google Drive and let
 4. Deploy the project and confirm the Vercel Cron entry is enabled. Use **Admin → Backups → Create backup now** for an initial snapshot, then check the Vercel function logs and the Drive folder after the scheduled run.
 
 Each `.jsonl.gz` archive contains application table rows, Supabase Auth account IDs and metadata (not passwords, password hashes, sessions, or tokens), every Supabase Storage object, and Smart Lib PDFs in Drive referenced by books and contributions. Missing optional tables are listed in the archive's final summary; other export or upload errors fail the run. These are logical exports, not point-in-time database dumps: use Supabase's native backup/PITR facilities as an additional disaster-recovery layer, and test any restoration procedure against an isolated project before relying on it. Data in Drive folders not referenced by the book/contribution records is not copied.
+
+Legacy Drive PDFs without Smart Lib-specific `appProperties` remain eligible for retrieval when their database record identifies the file; contradictory metadata is still rejected. This compatibility has not yet been verified against a live Drive account. Contributions stored outside the supported Drive records or the owner-scoped Supabase paths require a reviewed migration before approval or access; do not broaden file access to arbitrary external URLs.
 
 ---
 
