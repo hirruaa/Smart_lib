@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { streamGoogleDrivePdf } from '@/utils/googleDrive'
+import { apiError } from '@/utils/api'
 
 function parseRange(value: string | null, size: number | null) {
   if (!value) return null
@@ -33,17 +34,27 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
   if (!Number.isInteger(bookId) || bookId < 1) return NextResponse.json({ error: 'Invalid resource.' }, { status: 400 })
 
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError && authError.name !== 'AuthSessionMissingError') {
+    return apiError('Unable to verify your session.', 500, authError)
+  }
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
   const isMissingTableError = (error: { code?: string; message?: string } | null) =>
     Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-  const [{ data: profile }, { data: book }, { data: ownedContribution }] = await Promise.all([
+  const [
+    { data: profile, error: profileError },
+    { data: book, error: bookError },
+    { data: ownedContribution, error: contributionError },
+  ] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
     supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type,file_size').eq('id', bookId).maybeSingle(),
     supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
+  if (profileError) return apiError('Unable to verify your library role.', 500, profileError)
+  if (bookError) return apiError('Unable to retrieve this library resource.', 500, bookError)
+  if (contributionError) return apiError('Unable to verify contribution access.', 500, contributionError)
   if (book?.catalog_type === 'physical') return NextResponse.json({ error: 'This title is only available as a physical library book.' }, { status: 409 })
   if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) return NextResponse.json({ error: 'Resource unavailable.' }, { status: 404 })
 
@@ -54,7 +65,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
       supabase.from('borrow_requests').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'approved').is('returned_date', null).gt('due_date', new Date().toISOString()).maybeSingle(),
       supabase.from('book_access_grants').select('id').eq('student_id', user.id).eq('book_id', bookId).eq('status', 'active').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).maybeSingle(),
     ])
-    if (grantResult.error && !isMissingTableError(grantResult.error)) return NextResponse.json({ error: 'Unable to verify temporary access.' }, { status: 500 })
+    if (loanResult.error) return apiError('Unable to verify your digital access.', 500, loanResult.error)
+    if (grantResult.error && !isMissingTableError(grantResult.error)) {
+      return apiError('Unable to verify temporary access.', 500, grantResult.error)
+    }
     if (!loanResult.data && !grantResult.data) return NextResponse.json({ error: 'Active access required.' }, { status: 403 })
   }
 

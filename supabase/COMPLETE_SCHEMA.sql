@@ -1400,7 +1400,7 @@
         where (b.storage_path = name or b.pdf_url = name or b.pdf_url like '%' || name)
           and bag.student_id = auth.uid()
           and bag.status = 'active'
-          and bag.expires_at > now()
+          and (bag.expires_at is null or bag.expires_at > now())
       )
     )
   );
@@ -2065,7 +2065,8 @@ alter table public.physical_reminder_events enable row level security;
 revoke all on public.physical_reminder_events from anon, authenticated;
 
 drop function if exists public.request_physical_book(bigint, integer, text, text, text);
-create function public.request_physical_book(
+drop function if exists public.request_physical_book(bigint, bigint, integer, text, text, text);
+create or replace function public.request_physical_book(
   p_book_id bigint,
   p_copy_id bigint,
   p_duration_days integer,
@@ -2546,7 +2547,7 @@ using (
       where (b.storage_path = name or b.pdf_url = name or b.pdf_url like '%' || name)
         and bag.student_id = auth.uid()
         and bag.status = 'active'
-        and bag.expires_at > now()
+      and (bag.expires_at is null or bag.expires_at > now())
     )
   )
 );

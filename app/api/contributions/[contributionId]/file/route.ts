@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
+import { apiError } from '@/utils/api'
 
 export const runtime = 'nodejs'
 
@@ -11,13 +12,21 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   }
 
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError && authError.name !== 'AuthSessionMissingError') {
+    return apiError('Unable to verify your session.', 500, authError)
+  }
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
-  const [{ data: profile }, { data: contribution }] = await Promise.all([
+  const [
+    { data: profile, error: profileError },
+    { data: contribution, error: contributionError },
+  ] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
     supabase.from('book_contributions').select('id,user_id,pdf_url,storage_provider,storage_file_id,storage_path,file_name,mime_type').eq('id', contributionId).maybeSingle(),
   ])
+  if (profileError) return apiError('Unable to verify your library role.', 500, profileError)
+  if (contributionError) return apiError('Unable to retrieve this contribution.', 500, contributionError)
   if (!contribution) return NextResponse.json({ error: 'Contribution not found.' }, { status: 404 })
   if (profile?.role !== 'admin' && contribution.user_id !== user.id) {
     return NextResponse.json({ error: 'You are not allowed to open this contribution.' }, { status: 403 })
@@ -34,8 +43,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
           'X-Content-Type-Options': 'nosniff',
         },
       })
-    } catch {
-      return NextResponse.json({ error: 'Unable to retrieve the Google Drive file.' }, { status: 404 })
+    } catch (error) {
+      return apiError('Unable to retrieve the Google Drive file.', 502, error)
     }
   }
 
@@ -49,7 +58,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   }
 
   const { data: file, error } = await supabase.storage.from('ebooks').download(path)
-  if (error || !file) return NextResponse.json({ error: 'Unable to retrieve the stored file.' }, { status: 404 })
+  if (error) return apiError('Unable to retrieve the stored file.', 502, error)
+  if (!file) return NextResponse.json({ error: 'Contribution file is unavailable.' }, { status: 404 })
   return new Response(await file.arrayBuffer(), {
     headers: {
       'Content-Type': contribution.mime_type || 'application/pdf',
