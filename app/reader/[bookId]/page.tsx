@@ -60,7 +60,7 @@ export default async function Page({ params }: Props) {
   const book = (data as any) ?? null
 
   if (book?.catalog_type === 'physical') {
-    return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Physical book</h1><p className="mt-2">This title is available as a physical library book. Check its availability in the physical collection.</p><a href="/physical-library" className="mt-4 inline-block font-semibold text-pine-700 underline dark:text-pine-200">Browse physical books</a></div></div>
+    return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Physical book</h1><p className="mt-2">This title is available as a physical library book. Search the catalog to check availability.</p><a href="/dashboard/student#explore" className="mt-4 inline-block font-semibold text-pine-700 underline dark:text-pine-200">Open catalog</a></div></div>
   }
 
   if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) {

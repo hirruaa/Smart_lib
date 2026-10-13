@@ -18,7 +18,6 @@ test('sitemap serves well-formed XML with the configured local canonical origin'
   expect(result.hasParseError).toBe(false)
   expect(result.urls).toEqual(expect.arrayContaining([
     'http://localhost:3100/',
-    'http://localhost:3100/physical-library',
     'http://localhost:3100/privacy',
     'http://localhost:3100/terms',
     'http://localhost:3100/cookies',

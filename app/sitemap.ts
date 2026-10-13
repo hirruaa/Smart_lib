@@ -13,7 +13,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     throw new Error('NEXT_PUBLIC_SITE_URL must use HTTPS outside local development.')
   }
 
-  return ['/', '/physical-library', '/privacy', '/terms', '/cookies'].map((path) => ({
+  return ['/', '/privacy', '/terms', '/cookies'].map((path) => ({
     url: new URL(path, baseUrl).toString(),
   }))
 }

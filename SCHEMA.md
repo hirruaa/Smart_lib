@@ -54,7 +54,7 @@ Physical circulation is handled separately from digital loans. Physical copies, 
 | `public.physical_book_waitlist` | Private student subscriptions for titles with no currently available copy. Waitlisted students are notified when staff records a returned copy. |
 
 Workflow:
-- Visitors can browse `/physical-library` without signing in or scan a copy sticker QR code. The public catalog RPC returns title metadata and aggregate availability; the QR lookup RPC returns only that copy’s public code, status, and due date. Neither RPC returns borrower identities, requests, payment records, or the QR token. The public catalog does not grant anonymous table access.
+- Signed-in students and faculty browse physical titles through the unified `/dashboard/student` catalog or scan a copy sticker QR code. The QR link opens the catalog and the physical-borrow modal after authentication. Member policies expose only the signed-in user’s requests; borrower identities, payment records, and QR tokens are not public.
 - Signed-in students and faculty browse the same collection and can request copies or join waitlists. They see their own requests, payments, and receipts only.
 - Administrators can create a physical title in `/dashboard/admin/physical`, including title, author, category, ISBN, description, an optional uploaded front-cover image, and initial copies. The catalog record and copy QR entries are created together; more copies can be added later.
 - The physical catalog displays each registered title’s cover/details and live available-copy count, so visitors and signed-in members can check availability before visiting the library. A physical title can be reached from the public home/catalog link or the student dashboard’s “Physical books” link.

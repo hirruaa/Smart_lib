@@ -70,7 +70,7 @@ export default function PhysicalCirculationAdminPage() {
     let active = true
     const createCodes = async () => {
       const entries = await Promise.all(copies.map(async (copy) => {
-        const url = `${window.location.origin}/physical-library?copy=${encodeURIComponent(copy.qr_token)}`
+        const url = `${window.location.origin}/dashboard/student?copy=${encodeURIComponent(copy.qr_token)}#explore`
         return [copy.qr_token, await QRCode.toDataURL(url, { width: 180, margin: 1 })] as const
       }))
       if (active) setQrImages(Object.fromEntries(entries))

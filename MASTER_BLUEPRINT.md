@@ -154,7 +154,7 @@ These are **proposed acceptance targets**, not measured current performance:
 | Area | Routes / screen | Current behavior |
 |---|---|---|
 | Public | `/`, `/login`, `/register`, `/verify-email`, `/reset-password`, `/privacy`, `/terms` | Landing/auth/legal screens; no public physical-catalog route today |
-| Student and faculty | `/dashboard/student`, `/library`, `/physical-library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus library, reader, in-reader notes/highlights/progress, assistant, profile, and points surfaces |
+| Student and faculty | `/dashboard/student`, `/library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus unified digital and physical catalog, library, reader, in-reader notes/highlights/progress, assistant, profile, and points surfaces |
 | Administrator | `/dashboard/admin`, `/dashboard/admin/physical`, `/dashboard/admin/ebook-payments` | Admin management, physical circulation, and reconciliation of legacy e-book payment submissions |
 | Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*` (reader annotations only), `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
 
@@ -317,7 +317,7 @@ assistant_sessions 1—N assistant_messages
 - [package.json](./package.json)
 - [supabase/COMPLETE_SCHEMA.sql](./supabase/COMPLETE_SCHEMA.sql)
 - [app/dashboard/page.tsx](./app/dashboard/page.tsx)
-- [app/physical-library/page.tsx](./app/physical-library/page.tsx)
+- [components/PhysicalBorrowModal.tsx](./components/PhysicalBorrowModal.tsx)
 - [app/dashboard/admin/physical/page.tsx](./app/dashboard/admin/physical/page.tsx)
 - [app/dashboard/admin/ebook-payments/page.tsx](./app/dashboard/admin/ebook-payments/page.tsx)
 - [app/api/loans/route.ts](./app/api/loans/route.ts)

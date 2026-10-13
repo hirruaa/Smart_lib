@@ -472,6 +472,11 @@
     into book_points, book_mode, book_catalog_type
     from public.books where id = p_book_id;
     if book_points is null then raise exception 'Resource not found'; end if;
+    -- Older catalog rows used `loan` as the access mode. Preserve those rows
+    -- while routing them through the automatic free/points digital workflow.
+    if book_mode = 'loan' then
+      book_mode := case when book_points > 0 then 'points' else 'free' end;
+    end if;
     if book_catalog_type = 'physical' then
       raise exception 'Physical books use the physical circulation workflow';
     end if;
@@ -2462,6 +2467,39 @@ begin
 end;
 $$;
 
+-- One service-role entry point for recurring library maintenance. This keeps
+-- physical reservation expiry, FIFO waitlist offers, reminders, and overdue
+-- fine calculation on the same schedule.
+create or replace function public.system_run_maintenance()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  processed_count integer;
+  fine_count integer;
+begin
+  if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role' then
+    raise exception 'Service role required';
+  end if;
+
+  select public.system_process_physical_reminders() into processed_count;
+  perform public.calculate_overdue_fines();
+  select count(*)::integer into fine_count
+  from public.fines
+  where status = 'unpaid';
+
+  return jsonb_build_object(
+    'processed', coalesce(processed_count, 0),
+    'fines_updated', coalesce(fine_count, 0)
+  );
+end;
+$$;
+
+revoke all on function public.system_run_maintenance() from public, anon, authenticated;
+grant execute on function public.system_run_maintenance() to service_role;
+
 grant execute on function public.request_physical_book(bigint, bigint, integer, text, text, text) to authenticated;
 grant execute on function public.cancel_physical_book_request(bigint) to authenticated;
 grant execute on function public.leave_physical_book_waitlist(bigint) to authenticated;
@@ -3610,6 +3648,13 @@ on conflict (id) do update set email = excluded.email;
 
 -- Remove the per-student active digital loan cap from an existing Smart Lib database.
 -- Run this once in the Supabase SQL Editor after deploying the updated app.
+
+-- Normalize legacy rows so every new and existing digital title uses the same
+-- access-mode vocabulary as the automatic borrowing workflow.
+alter table public.books alter column access_mode set default 'free';
+update public.books
+set access_mode = case when access_points > 0 then 'points' else 'free' end
+where access_mode = 'loan';
 
 -- Keep the duration constraint aligned with the student dashboard options.
 alter table public.borrow_requests

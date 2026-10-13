@@ -184,6 +184,7 @@ export default function AdminPage() {
   const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
   const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
   const [revisionDialog, setRevisionDialog] = useState<{ id: number; feedback: string } | null>(null)
+  const [quickAction, setQuickAction] = useState<'recognition' | 'grant' | null>(null)
   const [editingMember, setEditingMember] = useState<Profile | null>(null)
   const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
   const [rankDraft, setRankDraft] = useState('')
@@ -688,8 +689,7 @@ export default function AdminPage() {
     setSaving(false)
   }
 
-  const handleRecognition = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
+  const submitRecognition = async () => {
     setSaving(true)
     setError(null)
     setActionMessage(null)
@@ -703,12 +703,17 @@ export default function AdminPage() {
     else {
       setActionMessage('Recognition points awarded successfully.')
       setRecognitionForm({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
+      setQuickAction(null)
     }
     setSaving(false)
   }
 
-  const handleGrantAccess = async (event: FormEvent<HTMLFormElement>) => {
+  const handleRecognition = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    await submitRecognition()
+  }
+
+  const submitGrantAccess = async () => {
     setSaving(true)
     setError(null)
     setActionMessage(null)
@@ -719,8 +724,13 @@ export default function AdminPage() {
       grant_reason: grantForm.reason,
     })
     if (error) setError(error.message)
-    else { setActionMessage('Temporary access granted.'); setGrantForm({ studentId: '', bookId: '', duration: '7', reason: '' }); await loadData() }
+    else { setActionMessage('Temporary access granted.'); setGrantForm({ studentId: '', bookId: '', duration: '7', reason: '' }); setQuickAction(null); await loadData() }
     setSaving(false)
+  }
+
+  const handleGrantAccess = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await submitGrantAccess()
   }
 
   const handleRevokeGrant = async (grantId: number) => {
@@ -966,6 +976,17 @@ export default function AdminPage() {
                 <div className="mt-6 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700"><tr><th className="px-3 py-3">Member</th><th className="px-3 py-3">Book</th><th className="px-3 py-3">End date</th><th className="px-3 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{[...pendingRequests, ...expiredAccess].slice(0, 6).map((request) => <tr key={`overview-${request.id}`}><td className="px-3 py-3 text-slate-700 dark:text-slate-200">{studentMap.get(request.student_id)?.email ?? 'Unknown'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{bookMap.get(request.book_id)?.title ?? 'Unknown book'}</td><td className="px-3 py-3 text-slate-600 dark:text-slate-300">{request.due_date ? new Date(request.due_date).toLocaleDateString() : '—'}</td><td className="px-3 py-3 capitalize text-slate-600 dark:text-slate-300">{isExpiredDigitalAccess(request) ? 'expired' : request.status}</td></tr>)}</tbody></table>{pendingRequests.length + expiredAccess.length === 0 ? <p className="px-3 py-6 text-sm text-slate-500">No pending requests or expired access.</p> : null}</div>
               </div>
               <div className="space-y-6">
+                <div className="rounded-[2rem] border border-sky-200 bg-sky-50/80 p-6 shadow-xl shadow-slate-900/5 dark:border-sky-900/50 dark:bg-sky-950/20">
+                  <div className="flex items-start justify-between gap-3">
+                    <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Quick actions</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Complete common member actions without leaving the dashboard.</p></div>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-700 dark:bg-slate-900 dark:text-sky-300">Admin</span>
+                  </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <button type="button" onClick={() => setQuickAction('recognition')} className="rounded-2xl bg-slate-900 px-4 py-4 text-left text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"><strong className="block text-sm">Give points</strong><span className="mt-1 block text-xs opacity-75">Recognize a student instantly</span></button>
+                    <button type="button" onClick={() => setQuickAction('grant')} className="rounded-2xl border border-sky-200 bg-white px-4 py-4 text-left text-sky-900 transition hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900 dark:text-sky-200 dark:hover:bg-slate-800"><strong className="block text-sm">Grant access</strong><span className="mt-1 block text-xs opacity-75">Unlock a resource temporarily</span></button>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-300"><button type="button" onClick={() => setSection('users')} className="font-semibold underline underline-offset-2">Manage members</button><button type="button" onClick={() => setSection('contributions')} className="font-semibold underline underline-offset-2">Review contributions</button><button type="button" onClick={() => setSection('requests')} className="font-semibold underline underline-offset-2">Review requests</button></div>
+                </div>
                 <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library health</h2><div className="mt-5 space-y-4"><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Digital materials</span><strong className="text-slate-900 dark:text-slate-100">{materials.length} / {books.length || 1}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, books.length ? materials.length / books.length * 100 : 0)}%` }} /></div></div><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Active access</span><strong className="text-slate-900 dark:text-slate-100">{activeDigitalAccess.length}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-sky-500" style={{ width: `${Math.min(100, requests.length ? activeDigitalAccess.length / requests.length * 100 : 0)}%` }} /></div></div></div></div>
                 <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Recent activity</h2><div className="mt-4 space-y-3">{requests.slice(0, 5).map((request) => <div key={`activity-${request.id}`} className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 text-sm last:border-0 dark:border-slate-800"><div><p className="font-medium text-slate-800 dark:text-slate-100">{studentMap.get(request.student_id)?.email ?? 'Student'} requested {bookMap.get(request.book_id)?.title ?? 'a resource'}</p><p className="mt-1 text-xs text-slate-500">{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'Recently'}</p></div><span className="capitalize text-xs text-slate-500">{request.status}</span></div>)}{requests.length === 0 ? <p className="text-sm text-slate-500">No activity yet.</p> : null}</div></div>
               </div>
@@ -1001,7 +1022,6 @@ export default function AdminPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => router.push('/dashboard/admin/physical')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Physical circulation</button>
-                  <button type="button" onClick={() => router.push('/dashboard/admin/ebook-payments')} className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">Legacy e-book payments</button>
                   <input
                     value={bookSearch}
                     onChange={(e) => setBookSearch(e.target.value)}
@@ -1584,7 +1604,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (student.faculty_rank_id ? facultyRankMap.get(student.faculty_rank_id) || '—' : '—') : (student.student_year || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.expired_access}</td>
-                        <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button></td>
+                        <td className="px-4 py-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: student.id })); setQuickAction('recognition') }} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button></div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1595,6 +1615,66 @@ export default function AdminPage() {
           </>
           )}
         </main>
+        <ActionModal
+          open={quickAction === 'recognition'}
+          title="Give student points"
+          description="Award verified recognition points directly from the admin dashboard."
+          confirmLabel="Award points"
+          busy={saving}
+          onClose={() => { if (!saving) setQuickAction(null) }}
+          onConfirm={() => {
+            if (!recognitionForm.studentId || !recognitionForm.reason.trim()) {
+              setError('Choose a student and enter a reason before awarding points.')
+              return
+            }
+            void submitRecognition()
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Student
+              <select required value={recognitionForm.studentId} onChange={(event) => setRecognitionForm({ ...recognitionForm, studentId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{student.full_name ? `${student.full_name} · ${student.email}` : student.email}</option>)}</select>
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Points
+              <input required type="number" min="1" max="100" value={recognitionForm.points} onChange={(event) => setRecognitionForm({ ...recognitionForm, points: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Category
+              <select value={recognitionForm.category} onChange={(event) => setRecognitionForm({ ...recognitionForm, category: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="academic_assistance">Academic assistance</option><option value="community_contribution">Community contribution</option><option value="volunteer_work">Volunteer work</option><option value="academic_achievement">Academic achievement</option><option value="special_recognition">Special recognition</option></select>
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
+              <textarea required maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm({ ...recognitionForm, reason: event.target.value })} rows={3} placeholder="What did the student do?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+            </label>
+          </div>
+        </ActionModal>
+        <ActionModal
+          open={quickAction === 'grant'}
+          title="Grant temporary access"
+          description="Give a member access to a protected digital resource without charging points."
+          confirmLabel="Grant access"
+          busy={saving}
+          onClose={() => { if (!saving) setQuickAction(null) }}
+          onConfirm={() => {
+            if (!grantForm.studentId || !grantForm.bookId || !grantForm.reason.trim()) {
+              setError('Choose a student, resource, and reason before granting access.')
+              return
+            }
+            void submitGrantAccess()
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Student
+              <select required value={grantForm.studentId} onChange={(event) => setGrantForm({ ...grantForm, studentId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{student.full_name ? `${student.full_name} · ${student.email}` : student.email}</option>)}</select>
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Resource
+              <select required value={grantForm.bookId} onChange={(event) => setGrantForm({ ...grantForm, bookId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a book</option>{books.filter((book) => book.pdf_url).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select>
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Duration (days)
+              <input required type="number" min="1" max="365" value={grantForm.duration} onChange={(event) => setGrantForm({ ...grantForm, duration: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+            </label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
+              <textarea required maxLength={500} value={grantForm.reason} onChange={(event) => setGrantForm({ ...grantForm, reason: event.target.value })} rows={3} placeholder="Why is this access being granted?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+            </label>
+          </div>
+        </ActionModal>
         {editingMember && memberEditForm ? (
           <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setEditingMember(null); setMemberEditForm(null) } }}>
             <section className="my-6 w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="member-edit-title">

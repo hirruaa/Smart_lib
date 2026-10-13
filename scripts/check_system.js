@@ -45,10 +45,10 @@ const requiredFiles = [
   'app/assistant/page.tsx',
   'app/api/assistant/sessions/route.ts',
   'components/BookAssistant.tsx',
-  'app/physical-library/page.tsx',
   'app/dashboard/admin/physical/page.tsx',
   'app/dashboard/faculty/page.tsx',
   'components/MemberDashboard.tsx',
+  'components/PhysicalBorrowModal.tsx',
   'supabase/migrations/20261013_faculty_signup_departments.sql',
 ]
 

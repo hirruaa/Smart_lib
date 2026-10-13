@@ -6,6 +6,7 @@ import { getSupabase } from '@/utils/supabase/client'
 import dynamicImport from 'next/dynamic'
 import ProfileModal from '@/components/ProfileModal'
 import WalletModal from '@/components/WalletModal'
+import PhysicalBorrowModal from '@/components/PhysicalBorrowModal'
 import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
 import { StudentDashboardSkeleton } from '@/components/skeletons'
@@ -26,6 +27,7 @@ type Book = {
   access_duration_days: number
   page_count?: number | null
   pdf_url?: string | null
+  catalog_type: 'digital' | 'physical' | 'hybrid'
 }
 
 type BorrowRequest = {
@@ -52,6 +54,22 @@ type UserProfile = {
 
 type Fine = { id: number; amount: number; status: string; created_at: string | null }
 type SystemNotification = { id: number; title: string; message: string; read_at: string | null; created_at: string }
+type PhysicalLoan = {
+  id: number
+  book_id: number
+  copy_id: number | null
+  duration_days: number
+  fee_amount: number
+  payment_method: 'cash' | 'gcash'
+  payment_status: 'unpaid' | 'pending_verification' | 'paid'
+  status: 'pending' | 'checked_out' | 'returned' | 'rejected' | 'cancelled' | 'lost' | 'expired'
+  requested_at: string
+  checked_out_at: string | null
+  due_date: string | null
+  returned_at: string | null
+  receipt_number: string | null
+  title?: string
+}
 const accessDurationOptions = [1, 3, 7, 14, 30]
 
 function getDigitalAccessCost(pointsPerWeek: number, durationDays: number) {
@@ -88,16 +106,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
+  const [physicalLoans, setPhysicalLoans] = useState<PhysicalLoan[]>([])
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
+  const [physicalBook, setPhysicalBook] = useState<Book | null>(null)
+  const [physicalCopyId, setPhysicalCopyId] = useState<number | null>(null)
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
   const [walletOpen, setWalletOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [requestsOpen, setRequestsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [physicalHistoryOpen, setPhysicalHistoryOpen] = useState(false)
   const [continueReadingOpen, setContinueReadingOpen] = useState(false)
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
@@ -227,17 +249,21 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0, department: profileData?.department ?? null })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, wishlistResult] = await Promise.all([
+      const [booksResult, requestsResult, physicalLoansResult, wishlistResult] = await Promise.all([
         supabase
           .from('books')
           .select('id, title, author, category, description, isbn, access_points, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
-          .neq('catalog_type', 'physical')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
           .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days, renewal_count')
           .eq('student_id', currentUser.id)
           .order('request_date', { ascending: false }),
+        supabase
+          .from('physical_book_requests')
+          .select('id, book_id, copy_id, duration_days, fee_amount, payment_method, payment_status, status, requested_at, checked_out_at, due_date, returned_at, receipt_number')
+          .eq('student_id', currentUser.id)
+          .order('requested_at', { ascending: false }),
         supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
       ])
 
@@ -249,11 +275,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         description: book.description ?? '',
         isbn: book.isbn ?? null,
         access_points: book.access_points ?? 0,
-        access_mode: book.access_mode ?? (book.access_points > 0 ? 'points' : 'free'),
+        // Older books were stored with access_mode = "loan". Keep the UI in
+        // sync with the automatic database workflow for those rows.
+        access_mode: book.access_mode === 'loan'
+          ? (book.access_points > 0 ? 'points' : 'free')
+          : (book.access_mode ?? (book.access_points > 0 ? 'points' : 'free')),
         premium_price: Number(book.premium_price ?? 0),
         access_duration_days: book.access_duration_days ?? 30,
         page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
+        catalog_type: book.catalog_type ?? 'digital',
       }))
 
       setBooks(fetchedBooks)
@@ -267,13 +298,34 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           pdf_url: matchingBook?.pdf_url ?? null,
         }
       }))
+      setPhysicalLoans((physicalLoansResult.data ?? []).map((loan: PhysicalLoan) => ({
+        ...loan,
+        title: bookLookup.get(loan.book_id)?.title ?? `Book #${loan.book_id}`,
+      })))
       setDataReady(true)
     }
 
     loadData()
   }, [router])
 
+  useEffect(() => {
+    const copyToken = new URLSearchParams(window.location.search).get('copy')
+    if (!copyToken || !userId || !books.length) return
+    let active = true
+    void getSupabase().rpc('get_public_physical_copy', { p_qr_token: copyToken }).then(({ data, error }) => {
+      if (!active || error) return
+      const copy = Array.isArray(data) ? data[0] : data
+      const book = books.find((item) => item.id === copy?.book_id)
+      if (book) {
+        setPhysicalCopyId(Number(copy.copy_id))
+        setPhysicalBook(book)
+      }
+    })
+    return () => { active = false }
+  }, [books, userId])
+
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
+  const [selectedFormat, setSelectedFormat] = useState<'all' | 'digital' | 'physical'>('all')
 
   const categories = useMemo(() => {
     const set = new Set<string>()
@@ -308,7 +360,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             selectedCategory === 'All' ||
             book.category.toLowerCase() === selectedCategory.toLowerCase()
 
-          return matchesQuery && matchesCategory
+          const matchesFormat = selectedFormat === 'all' ||
+            (selectedFormat === 'physical' ? book.catalog_type !== 'digital' : book.catalog_type !== 'physical')
+
+          return matchesQuery && matchesCategory && matchesFormat
         })
 
       return results.sort((a, b) => {
@@ -318,7 +373,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         return 0
       })
     },
-    [books, query, debouncedSearch, selectedCategory, catalogSort]
+    [books, query, debouncedSearch, selectedCategory, selectedFormat, catalogSort]
   )
 
   const activeLoans = useMemo(
@@ -602,7 +657,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <nav className="student-nav" aria-label={`${memberType === 'faculty' ? 'Faculty' : 'Student'} workspace`}>
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-            <a href="/physical-library" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Physical books</span></a>
+            <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Catalog</span></a>
             <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contributions</span></a>
           </nav>
           <div className="student-sidebar-footer">
@@ -670,7 +725,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         <BookAssistant />
 
         {/* Student Personal Study Analytics Strip */}
-        <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="student-stat-card rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
             <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
             <div className="mt-2 flex items-baseline gap-2">
@@ -680,6 +735,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" onClick={() => setWalletOpen(true)} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
             </div>
+          </div>
+
+          <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
+            <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{physicalLoans.filter((loan) => loan.status === 'checked_out').length}</span><span className="text-xs text-slate-500 dark:text-slate-400">active loans</span></div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{physicalLoans.length} request{physicalLoans.length === 1 ? '' : 's'} and receipt record{physicalLoans.length === 1 ? '' : 's'}</p>
+            {physicalLoans[0]?.receipt_number ? <p className="mt-2 truncate font-mono text-xs text-pine-700 dark:text-pine-200">Latest: {physicalLoans[0].receipt_number}</p> : null}
+            <button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action mt-3 rounded-xl border px-3 py-2 text-xs font-semibold">View lending history</button>
           </div>
 
           <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
@@ -720,7 +783,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Discover resources and request temporary digital access.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search digital and physical library materials in one catalog.</p>
                   <div className="catalog-heading-actions mt-4">
                   <button type="button" onClick={() => router.push('/contributions')} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Open contribution center</span></button>
                   <button type="button" className="catalog-filter-toggle catalog-filter-toggle-heading" onClick={() => setCatalogControlsOpen((current) => !current)} aria-expanded={catalogControlsOpen} aria-controls="catalog-controls"><FilterIcon /><span>{catalogControlsOpen ? 'Hide filters' : 'Show filters'}</span></button>
@@ -797,6 +860,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   </button>
                 ))}
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Format:</span>
+                {([['all', 'All materials'], ['digital', 'Digital'], ['physical', 'Physical']] as const).map(([value, label]) => (
+                  <button key={value} type="button" onClick={() => setSelectedFormat(value)} className={`rounded-full px-3 py-1 text-xs font-semibold transition ${selectedFormat === value ? 'bg-pine-700 text-white shadow-sm dark:bg-paper-100 dark:text-forest-900' : 'border border-paper-300 bg-paper-50 text-slate-600 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800/50 dark:text-slate-300'}`}>{label}</button>
+                ))}
+              </div>
 
               <div className="mt-4 flex items-center justify-end">
                 <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -810,7 +879,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                     <div key={book.id} className={`resource-card rounded-[1.5rem] p-5 ${expandedBookId === book.id ? 'resource-card-expanded' : ''}`} role="button" tabIndex={0} aria-expanded={expandedBookId === book.id} onClick={(event) => { if ((event.target as HTMLElement).closest('button')) return; setExpandedBookId((current) => current === book.id ? null : book.id) }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpandedBookId((current) => current === book.id ? null : book.id) } }}>
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p>
+                          <div className="flex flex-wrap items-center gap-2"><p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p><span className="rounded-full border border-paper-300 bg-paper-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:border-forest-700 dark:bg-forest-800 dark:text-slate-300">{book.catalog_type === 'physical' ? 'Physical' : book.catalog_type === 'hybrid' ? 'Digital + physical' : 'Digital'}</span></div>
                           <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
                           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
                         </div>
@@ -824,7 +893,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 dark:text-slate-400">Format</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">Digital</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.catalog_type === 'physical' ? 'Physical copy' : book.catalog_type === 'hybrid' ? 'Digital + physical' : 'Digital'}</p>
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 dark:text-slate-400">Access</p>
@@ -833,8 +902,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                       </div>
 
                       <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                        <span>Online resource · no stock limit</span>
-                        {book.pdf_url ? (
+                        <span>{book.catalog_type === 'physical' ? 'Library copy · availability shown in physical collection' : 'Online resource · no stock limit'}</span>
+                        {book.pdf_url && book.catalog_type !== 'physical' ? (
                           <span className="rounded-md bg-pine-100 px-2 py-0.5 font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">
                             PDF Ready
                           </span>
@@ -844,6 +913,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                       <button
                         type="button"
                         onClick={() => {
+                          if (book.catalog_type === 'physical') {
+                            setPhysicalBook(book)
+                            return
+                          }
                           setDurationDays(String(accessDurationOptions.includes(book.access_duration_days) ? book.access_duration_days : 30))
                           setSelectedBook(book)
                           setRequestStatus(null)
@@ -851,9 +924,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         className="pine-action mt-5 inline-flex w-full items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={requestingBookId !== null}
                       >
-                        Request access
+                        {book.catalog_type === 'physical' ? 'Browse copies & request' : 'Request digital access'}
                       </button>
                       <div className="mt-3 flex gap-2">
+                        {book.catalog_type === 'hybrid' ? <button type="button" onClick={() => setPhysicalBook(book)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Physical copies</button> : null}
                         <button type="button" onClick={() => void handleWishlist(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">
                           {wishlistIds.has(book.id) ? 'Saved' : 'Save to wishlist'}
                         </button>
@@ -1011,6 +1085,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         )}
         </main>
       </div>
+      <PhysicalBorrowModal
+        open={physicalBook !== null}
+        book={physicalBook}
+        userId={userId}
+        copyId={physicalCopyId}
+        onClose={() => { setPhysicalBook(null); setPhysicalCopyId(null) }}
+        onComplete={() => { setPhysicalBook(null); setPhysicalCopyId(null); setDataReady(false); void loadData() }}
+      />
       {selectedBook ? (
         <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedBook(null) }}>
           <section className="access-modal" role="dialog" aria-modal="true" aria-labelledby="access-modal-title">
@@ -1141,6 +1223,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       {historyOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryOpen(false) }}>
           <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library activity</p><h2 id="history-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Reading history</h2></div><button type="button" className="notification-modal-close" onClick={() => setHistoryOpen(false)} aria-label="Close reading history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Returned, expired, revoked, and rejected digital access.</p><div className="modal-record-list">{readingHistory.length > 0 ? readingHistory.map((event) => <div key={event.id} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{event.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{event.action} · {event.date}</p></div></div>) : <div className="modal-empty-state">No reading history to show yet.</div>}</div></section>
+        </div>
+      ) : null}
+      {physicalHistoryOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalHistoryOpen(false) }}>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical loans and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track your request, payment, checkout, due date, and receipt.</p><div className="modal-record-list">{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div></div>)}{physicalLoans.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
         </div>
       ) : null}
       {notificationsOpen ? (
