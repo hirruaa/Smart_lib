@@ -480,7 +480,9 @@
     if book_catalog_type = 'physical' then
       raise exception 'Physical books use the physical circulation workflow';
     end if;
-    if book_mode = 'restricted' then raise exception 'Administrator access required'; end if;
+    if book_mode in ('loan', 'restricted') then
+      book_mode := case when book_points > 0 then 'points' else 'free' end;
+    end if;
     if book_mode = 'premium' then
       raise exception 'Paid e-book checkout is paused. Choose free or points-based access instead';
     end if;
@@ -3654,7 +3656,7 @@ on conflict (id) do update set email = excluded.email;
 alter table public.books alter column access_mode set default 'free';
 update public.books
 set access_mode = case when access_points > 0 then 'points' else 'free' end
-where access_mode = 'loan';
+where access_mode in ('loan', 'restricted');
 
 -- Keep the duration constraint aligned with the student dashboard options.
 alter table public.borrow_requests

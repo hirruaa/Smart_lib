@@ -157,7 +157,7 @@ export default function AdminPage() {
     isbn: '',
     pdf_url: '',
     access_points: '0',
-    access_mode: 'free' as 'free' | 'points' | 'restricted',
+    access_mode: 'free' as 'free' | 'points',
     access_duration_days: '30',
     description: '',
   })
@@ -800,7 +800,7 @@ export default function AdminPage() {
     }
 
     if (newBook.access_mode !== 'free' && /^https?:\/\//i.test(finalPdfUrl)) {
-      setError('Paid or restricted resources must use a PDF uploaded to protected library storage.')
+      setError('Paid resources must use a PDF uploaded to protected library storage.')
       setSaving(false)
       return
     }
@@ -1059,7 +1059,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                          {book.access_mode === 'premium' ? 'Paid access paused' : book.access_mode === 'points' ? `${book.access_points} points / 7 days` : book.access_mode === 'restricted' ? 'Restricted' : 'Free access'}
+                          {book.access_mode === 'premium' ? 'Paid access paused' : book.access_mode === 'points' ? `${book.access_points} points / 7 days` : 'Free access'}
                         </td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
                           {book.pdf_url || book.storage_file_id || book.storage_path ? (
@@ -1136,9 +1136,8 @@ export default function AdminPage() {
                     >
                       <option value="free">Free access</option>
                       <option value="points">Points-based access</option>
-                      <option value="restricted">Restricted access</option>
                     </select>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">E-books unlock automatically when free or when the member has enough points. Paid checkout is paused until an online payment provider can confirm transactions automatically.</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">All standard e-books unlock immediately. Use points-based access when a title should require points. Paid checkout is paused until an online payment provider can confirm transactions automatically.</span>
                   </label>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration (days)</span>
@@ -1450,7 +1449,7 @@ export default function AdminPage() {
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Data backups</h2>
               <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                Create a compressed snapshot in the configured Google Drive backup folder. Automatic backups run daily at 02:00 UTC. Backups are never automatically deleted.
+                Create a compressed snapshot in the configured Google Drive backup folder whenever needed. Backups are never automatically deleted.
               </p>
               <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
                 Snapshots include application database rows, account identity/profile metadata, and Supabase Storage files. Passwords and active sessions are not exportable. Restrict access to the Drive backup folder and verify restores in an isolated Supabase project.

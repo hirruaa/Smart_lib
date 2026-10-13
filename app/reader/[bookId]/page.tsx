@@ -70,7 +70,7 @@ export default async function Page({ params }: Props) {
   let resolvedPdfUrl = book.pdf_url || ''
   if (book.storage_provider === 'google_drive' || book.storage_provider === 'supabase' || !resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) resolvedPdfUrl = `/api/reader/${rawBookId}`
 
-  if ((book.access_mode === 'points' || book.access_mode === 'restricted') && (book.pdf_url.startsWith('http://') || book.pdf_url.startsWith('https://'))) {
+  if (book.access_mode === 'points' && (book.pdf_url?.startsWith('http://') || book.pdf_url?.startsWith('https://'))) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Protected file migration required</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">This paid or restricted resource must be stored in the library&apos;s protected PDF storage before it can be opened.</p></div></div>
   }
 

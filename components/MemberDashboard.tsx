@@ -277,7 +277,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         access_points: book.access_points ?? 0,
         // Older books were stored with access_mode = "loan". Keep the UI in
         // sync with the automatic database workflow for those rows.
-        access_mode: book.access_mode === 'loan'
+        access_mode: book.access_mode === 'loan' || book.access_mode === 'restricted'
           ? (book.access_points > 0 ? 'points' : 'free')
           : (book.access_mode ?? (book.access_points > 0 ? 'points' : 'free')),
         premium_price: Number(book.premium_price ?? 0),
@@ -897,7 +897,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 dark:text-slate-400">Access</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid access temporarily unavailable' : book.access_mode === 'restricted' ? 'Admin approval required' : 'Temporary'}</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid access temporarily unavailable' : book.access_mode === 'points' ? 'Automatic points access' : 'Automatic access'}</p>
                         </div>
                       </div>
 
@@ -1100,7 +1100,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div>
                 <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Unlock access</p>
                 <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Automatic paid checkout is not available yet. Free and points-based e-books unlock immediately.' : 'Choose how long you need this digital resource.'}</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Automatic paid checkout is not available yet. Free and points-based e-books unlock immediately.' : 'Choose how long you need this digital resource. Access unlocks immediately.'}</p>
               </div>
               <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
             </div>
@@ -1123,7 +1123,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'restricted' ? 'Restricted access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points`}
+                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points`}
                 </span>
               </div>
               {selectedBook.access_mode === 'premium' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Choose another free or points-based e-book for automatic access. Paid checkout will return when secure payment confirmation is available.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>}
@@ -1132,8 +1132,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'restricted' || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_points, Number(durationDays)) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'restricted' ? 'Administrator access required' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points` : 'Unlock free access'}
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_points, Number(durationDays)) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
