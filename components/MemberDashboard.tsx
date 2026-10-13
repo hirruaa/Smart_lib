@@ -11,6 +11,7 @@ import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
 import { StudentDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
+import { getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode } from '@/utils/libraryContracts'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
@@ -22,12 +23,20 @@ type Book = {
   description: string | null
   isbn: string | null
   access_points: number
-  access_mode: 'free' | 'points' | 'restricted' | 'premium'
+  access_mode: CanonicalAccessMode
   premium_price: number
   access_duration_days: number
   page_count?: number | null
   pdf_url?: string | null
   catalog_type: 'digital' | 'physical' | 'hybrid'
+}
+
+type PhysicalBookSelection = {
+  id: number
+  title: string
+  author: string
+  category: string
+  catalog_type: 'physical' | 'hybrid'
 }
 
 type BorrowRequest = {
@@ -72,10 +81,6 @@ type PhysicalLoan = {
 }
 const accessDurationOptions = [1, 3, 7, 14, 30]
 
-function getDigitalAccessCost(pointsPerWeek: number, durationDays: number) {
-  return Math.ceil(pointsPerWeek * durationDays / 7)
-}
-
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
 }
@@ -111,7 +116,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
-  const [physicalBook, setPhysicalBook] = useState<Book | null>(null)
+  const [physicalBook, setPhysicalBook] = useState<PhysicalBookSelection | null>(null)
   const [physicalCopyId, setPhysicalCopyId] = useState<number | null>(null)
   const [durationDays, setDurationDays] = useState('30')
   const [profileOpen, setProfileOpen] = useState(false)
@@ -144,6 +149,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [contributionForm, setContributionForm] = useState({ title: '', author: '', description: '', pdfUrl: '' })
   const [lastReadPages, setLastReadPages] = useState<Record<number, number>>({})
   const [readingProgress, setReadingProgress] = useState<Record<number, { current_page: number; total_pages: number | null }>>({})
+  const [dataReloadToken, setDataReloadToken] = useState(0)
 
   useEffect(() => {
     setClock(Date.now())
@@ -267,6 +273,18 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
       ])
 
+      const isMissingTableError = (result: { error?: { code?: string; message?: string } | null }) =>
+        Boolean(result.error && (result.error.code === '42P01' || /relation .* does not exist/i.test(result.error.message ?? '')))
+      const requiredError = [booksResult, requestsResult].find((result) => result.error)?.error
+      if (requiredError) {
+        setLoadError(`Unable to load your library data. Apply the required Supabase schema, then try again. (${requiredError.message})`)
+        return
+      }
+      if (physicalLoansResult.error && !isMissingTableError(physicalLoansResult)) {
+        setLoadError(`Unable to load physical lending data. (${physicalLoansResult.error.message})`)
+        return
+      }
+
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
         ...book,
         title: book.title ?? '',
@@ -275,11 +293,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         description: book.description ?? '',
         isbn: book.isbn ?? null,
         access_points: book.access_points ?? 0,
-        // Older books were stored with access_mode = "loan". Keep the UI in
-        // sync with the automatic database workflow for those rows.
-        access_mode: book.access_mode === 'loan' || book.access_mode === 'restricted'
-          ? (book.access_points > 0 ? 'points' : 'free')
-          : (book.access_mode ?? (book.access_points > 0 ? 'points' : 'free')),
+        access_mode: normalizeAccessMode(book.access_mode, book.access_points),
         premium_price: Number(book.premium_price ?? 0),
         access_duration_days: book.access_duration_days ?? 30,
         page_count: book.page_count ?? null,
@@ -306,7 +320,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     }
 
     loadData()
-  }, [router])
+  }, [router, dataReloadToken])
 
   useEffect(() => {
     const copyToken = new URLSearchParams(window.location.search).get('copy')
@@ -318,7 +332,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const book = books.find((item) => item.id === copy?.book_id)
       if (book) {
         setPhysicalCopyId(Number(copy.copy_id))
-        setPhysicalBook(book)
+        setPhysicalBook({
+          id: book.id,
+          title: book.title,
+          author: book.author,
+          category: book.category,
+          catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
+        })
       }
     })
     return () => { active = false }
@@ -647,10 +667,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   }
 
   return (
-    <div className="student-shell min-h-screen px-4 py-5 sm:px-6 lg:px-8">
+    <div className="dashboard-shell student-shell min-h-screen px-4 py-5 sm:px-6 lg:px-8">
       {sidebarOpen ? <button type="button" className="student-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} /> : null}
-      <div className={`student-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-        <aside id="member-navigation" className={`student-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+      <div className={`dashboard-layout student-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'dashboard-sidebar-collapsed sidebar-collapsed' : ''}`}>
+        <aside id="member-navigation" className={`dashboard-sidebar student-sidebar ${sidebarOpen ? 'dashboard-sidebar-open sidebar-open' : ''}`}>
           <BrandLogo className="student-brand" iconSize="sm" />
           <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <MenuIcon />}</button>
           <p className="student-sidebar-label">Workspace</p>
@@ -666,12 +686,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <button type="button" onClick={handleLogout}><LogoutIcon /><span>Sign out</span></button>
           </div>
         </aside>
-        <main id="overview" className="student-workspace space-y-8">
+        <main id="overview" className="dashboard-workspace student-workspace space-y-8">
         {!dataReady ? (
           <StudentDashboardSkeleton />
         ) : (
           <>
-          <header className="student-hero rounded-[2rem] p-6 lg:p-8">
+          <header className="dashboard-hero student-hero rounded-[2rem] p-6 lg:p-8">
           <button type="button" className="student-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="member-navigation" aria-expanded={sidebarOpen} aria-label="Open navigation"><MenuIcon /></button>
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -914,7 +934,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         type="button"
                         onClick={() => {
                           if (book.catalog_type === 'physical') {
-                            setPhysicalBook(book)
+                            setPhysicalBook({
+                              id: book.id,
+                              title: book.title,
+                              author: book.author,
+                              category: book.category,
+                              catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
+                            })
                             return
                           }
                           setDurationDays(String(accessDurationOptions.includes(book.access_duration_days) ? book.access_duration_days : 30))
@@ -927,7 +953,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         {book.catalog_type === 'physical' ? 'Browse copies & request' : 'Request digital access'}
                       </button>
                       <div className="mt-3 flex gap-2">
-                        {book.catalog_type === 'hybrid' ? <button type="button" onClick={() => setPhysicalBook(book)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Physical copies</button> : null}
+                        {book.catalog_type === 'hybrid' ? <button type="button" onClick={() => setPhysicalBook({
+                          id: book.id,
+                          title: book.title,
+                          author: book.author,
+                          category: book.category,
+                          catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
+                        })} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Physical copies</button> : null}
                         <button type="button" onClick={() => void handleWishlist(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">
                           {wishlistIds.has(book.id) ? 'Saved' : 'Save to wishlist'}
                         </button>
@@ -1091,7 +1123,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         userId={userId}
         copyId={physicalCopyId}
         onClose={() => { setPhysicalBook(null); setPhysicalCopyId(null) }}
-        onComplete={() => { setPhysicalBook(null); setPhysicalCopyId(null); setDataReady(false); void loadData() }}
+        onComplete={() => { setPhysicalBook(null); setPhysicalCopyId(null); setDataReady(false); setDataReloadToken((value) => value + 1) }}
       />
       {selectedBook ? (
         <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedBook(null) }}>

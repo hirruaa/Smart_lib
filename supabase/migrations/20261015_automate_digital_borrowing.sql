@@ -6,7 +6,7 @@ begin;
 alter table public.books alter column access_mode set default 'free';
 update public.books
 set access_mode = case when access_points > 0 then 'points' else 'free' end
-where access_mode = 'loan';
+where access_mode in ('loan', 'restricted');
 
 create or replace function public.request_digital_loan(p_book_id bigint, p_duration_days integer)
 returns public.borrow_requests
@@ -32,13 +32,8 @@ begin
   from public.books where id = p_book_id;
   if book_points is null then raise exception 'Resource not found'; end if;
 
-  -- `loan` is the legacy default used by older book rows. Treat it as the
-  -- current automatic free/points mode instead of rejecting the book.
-  if book_mode = 'loan' then
-    book_mode := case when book_points > 0 then 'points' else 'free' end;
-  end if;
-
   if book_catalog_type = 'physical' then raise exception 'Physical books use the physical circulation workflow'; end if;
+  -- Legacy and restricted rows use the automatic free/points model.
   if book_mode in ('loan', 'restricted') then
     book_mode := case when book_points > 0 then 'points' else 'free' end;
   end if;

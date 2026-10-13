@@ -472,14 +472,10 @@
     into book_points, book_mode, book_catalog_type
     from public.books where id = p_book_id;
     if book_points is null then raise exception 'Resource not found'; end if;
-    -- Older catalog rows used `loan` as the access mode. Preserve those rows
-    -- while routing them through the automatic free/points digital workflow.
-    if book_mode = 'loan' then
-      book_mode := case when book_points > 0 then 'points' else 'free' end;
-    end if;
     if book_catalog_type = 'physical' then
       raise exception 'Physical books use the physical circulation workflow';
     end if;
+    -- Legacy and restricted rows use the automatic free/points model.
     if book_mode in ('loan', 'restricted') then
       book_mode := case when book_points > 0 then 'points' else 'free' end;
     end if;

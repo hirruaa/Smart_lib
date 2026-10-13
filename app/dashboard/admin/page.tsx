@@ -13,6 +13,7 @@ import ActionModal from '@/components/ActionModal'
 import PasswordInput from '@/components/PasswordInput'
 import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
+import { normalizeAccessMode, type CanonicalAccessMode } from '@/utils/libraryContracts'
 
 const navGroups = [
   { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Requests', section: 'requests' }, { label: 'Users', section: 'users' }, { label: 'Backups', section: 'backups' }] },
@@ -32,7 +33,7 @@ type Book = {
   storage_file_id?: string | null
   storage_path?: string | null
   access_points: number
-  access_mode: 'free' | 'points' | 'restricted' | 'premium'
+  access_mode: CanonicalAccessMode
   premium_price: number
   access_duration_days: number
   created_at: string | null
@@ -288,7 +289,10 @@ export default function AdminPage() {
       }
     }
 
-    setBooks((booksRes.data ?? []) as Book[])
+    setBooks((booksRes.data ?? []).map((book) => ({
+      ...book,
+      access_mode: normalizeAccessMode(book.access_mode, book.access_points),
+    })) as Book[])
     setRequests((requestsRes.data ?? []) as RequestItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
     setFacultyRanks((ranksRes.data ?? []) as FacultyRank[])
@@ -875,10 +879,10 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
+    <div className="dashboard-shell admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
-      <div className={`admin-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'admin-sidebar-collapsed' : ''}`}>
-        <aside id="admin-navigation" className={`admin-sidebar ${sidebarOpen ? 'admin-sidebar-open' : ''}`}>
+      <div className={`dashboard-layout admin-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'dashboard-sidebar-collapsed admin-sidebar-collapsed' : ''}`}>
+        <aside id="admin-navigation" className={`dashboard-sidebar admin-sidebar ${sidebarOpen ? 'dashboard-sidebar-open admin-sidebar-open' : ''}`}>
           <div className="mb-8 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
             <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
@@ -911,12 +915,12 @@ export default function AdminPage() {
           </div>
         </aside>
 
-        <main className="admin-workspace space-y-6">
+        <main className="dashboard-workspace admin-workspace space-y-6">
           {loading ? (
             <AdminDashboardSkeleton />
           ) : (
             <>
-          <header className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+          <header className="dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
             <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>

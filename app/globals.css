@@ -2348,3 +2348,85 @@ html.dark[data-theme] .review-modal button { color: var(--theme-text); }
     transform: translateX(100%);
   }
 }
+/* Shared dashboard shell: role pages keep their content, but use one frame. */
+.dashboard-shell {
+  min-height: 100vh;
+  background: var(--theme-bg, #f5f1e8);
+  color: var(--theme-text, #242a28);
+}
+
+.dashboard-hero,
+.dashboard-panel {
+  border: 1px solid var(--theme-border, #e2ded4);
+  background: var(--theme-panel, rgba(255, 255, 255, .8));
+  box-shadow: 0 18px 42px var(--theme-shadow, rgba(36, 42, 40, .08));
+  backdrop-filter: blur(18px);
+}
+
+.dashboard-panel {
+  border-radius: 1.75rem;
+}
+
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.dashboard-sidebar {
+  position: sticky;
+  top: 20px;
+  z-index: 30;
+  min-height: calc(100vh - 40px);
+}
+
+.dashboard-workspace {
+  min-width: 0;
+}
+
+.dashboard-sidebar-collapsed {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
+.dashboard-sidebar-toggle,
+.dashboard-mobile-toggle,
+.student-sidebar-toggle,
+.student-mobile-toggle,
+.admin-sidebar-toggle,
+.admin-mobile-toggle {
+  touch-action: manipulation;
+}
+
+@media (max-width: 900px) {
+  .dashboard-layout {
+    display: block;
+  }
+
+  .dashboard-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(320px, 88vw);
+    min-height: 100vh;
+    transform: translateX(-105%);
+    transition: transform .25s ease;
+  }
+
+  .dashboard-sidebar.dashboard-sidebar-open,
+  .dashboard-sidebar.sidebar-open,
+  .dashboard-sidebar.admin-sidebar-open {
+    transform: translateX(0);
+  }
+
+  .dashboard-workspace {
+    width: 100%;
+  }
+
+  .student-sidebar-backdrop,
+  .admin-sidebar-backdrop {
+    position: fixed;
+    z-index: 29;
+    inset: 0;
+    background: rgba(24, 43, 39, .42);
+  }
+}
