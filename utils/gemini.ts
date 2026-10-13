@@ -104,7 +104,11 @@ async function callGemini(contents: Array<{ role: 'user' | 'model'; parts: Gemin
 export async function askGemini(prompt: string, attachment?: GeminiPart) {
   const text = await callGemini(
     [{ role: 'user', parts: [{ text: prompt }, ...(attachment ? [attachment] : [])] }],
-    { responseMimeType: 'application/json', temperature: 0.1 },
+    {
+      responseMimeType: 'application/json',
+      maxOutputTokens: 1200,
+      thinkingConfig: { thinkingLevel: 'low' },
+    },
   )
   try {
     return JSON.parse(text) as Record<string, unknown>
@@ -128,5 +132,9 @@ export async function generateGeminiChatReply(messages: GeminiChatMessage[], sys
   if (!contents.length || contents[contents.length - 1].role !== 'user') {
     throw new GeminiRequestError('The conversation has no current user message.', undefined, 'invalid-history')
   }
-  return callGemini(contents, { temperature: 0.3, maxOutputTokens: 700 }, systemInstruction)
+  return callGemini(
+    contents,
+    { maxOutputTokens: 700, thinkingConfig: { thinkingLevel: 'low' } },
+    systemInstruction,
+  )
 }

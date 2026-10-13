@@ -9,7 +9,7 @@ import { PhysicalLibrarySkeleton } from '@/components/skeletons'
 import { extractGcashReference } from '@/utils/gcashReceipt'
 
 type Book = { id: number; title: string; author: string; category: string; description: string | null; isbn: string | null; cover_image_url: string | null; catalog_type: string }
-type Copy = { id: number; book_id: number; copy_code: string; qr_token: string; status: string; due_date: string | null }
+type Copy = { id: number; book_id: number; copy_code: string; qr_token?: string; status: string; due_date: string | null }
 type PublicCatalogItem = Book & {
   registered_copies: number
   available_copies: number
@@ -76,7 +76,9 @@ export default function PhysicalLibraryPage() {
       const [profileResult, bookResult, copyResult, optionResult, requestResult, waitlistResult] = await Promise.all([
         supabase.from('profiles').select('full_name,email').eq('id', user.id).maybeSingle(),
         supabase.from('books').select('id,title,author,category,description,isbn,cover_image_url,catalog_type').in('catalog_type', ['physical', 'hybrid']).order('title'),
-        supabase.from('physical_book_copies').select('id,book_id,copy_code,qr_token,status,due_date'),
+        // QR tokens are only needed for the dedicated lookup above. Do not send
+        // every physical copy's label token to ordinary authenticated users.
+        supabase.from('physical_book_copies').select('id,book_id,copy_code,status,due_date'),
         supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').eq('is_active', true).order('duration_days'),
         supabase.from('physical_book_requests').select('id,book_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,status,requested_at,checked_out_at,due_date,receipt_number').eq('student_id', user.id).order('requested_at', { ascending: false }),
         supabase.from('physical_book_waitlist').select('book_id,offered_copy_id,offer_expires_at').eq('student_id', user.id),
