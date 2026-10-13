@@ -3,10 +3,15 @@ import { createClient } from '@/utils/supabase/server'
 import { EBOOKS_BUCKET, MAX_FILE_SIZE } from '@/utils/storage'
 import { canDeleteGoogleDriveFile, deleteGoogleDriveFile, isGoogleDriveConfigured, uploadGoogleDrivePdf } from '@/utils/googleDrive'
 import { apiError, boundedText } from '@/utils/api'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export const runtime = 'nodejs'
 
 export async function POST(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  if (bodyTooLarge(request, 55 * 1024 * 1024)) return NextResponse.json({ error: 'Upload request is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(request, { name: 'ebook-upload', limit: 5, windowMs: 60 * 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
@@ -53,6 +58,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  const requestLimit = rateLimit(request, { name: 'upload-cleanup', limit: 20, windowMs: 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const fileId = new URL(request.url).searchParams.get('fileId')

@@ -33,7 +33,7 @@ Make useful academic resources easier to discover and access while preserving pr
 - Make digital materials and physical-book availability discoverable.
 - Grant eligible free or points-based e-book access promptly and protect the corresponding files.
 - Support copy-level physical inventory, QR identification, fair waitlists, receipts, returns, and exception handling.
-- Let members submit academic materials and see review/points outcomes.
+- Let members submit academic materials and see review/points outcomes; approved contributors receive permanent access to their published material, while points-based unlocks by other members split 50% to the contributor and 50% to the library.
 - Bring study tools, points, notifications, and an academic assistant into the member experience.
 - Give staff a coherent place to manage members, resources, requests, and circulation.
 - Establish measurable security, accessibility, reliability, and release-readiness criteria.
@@ -53,7 +53,7 @@ Make useful academic resources easier to discover and access while preserving pr
 |---|---|---|
 | Student | Find resources, read, borrow, study, and understand points/access status | Member dashboard, digital access, physical requests/waitlists, reader and study tools, profile, contributions, points, notifications, assistant |
 | Faculty | Locate course-relevant materials and borrow/access library resources | Member workspace and eligible student-like access; faculty rank and taught-course details |
-| Administrator / librarian (`admin`) | Maintain the collection and member records; decide staff-controlled workflows | Admin dashboard, catalog/material management, account and academic-catalog management, request/contribution review, physical circulation, fee/payment verification, access grants, points/recognition, analytics and audit surfaces |
+| Administrator / librarian (`admin`) | Maintain the collection and member records; decide staff-controlled workflows | Admin dashboard, catalog/material management, account and academic-catalog management, request/contribution review, physical circulation, fee/payment verification, access grants, points/recognition quick actions, analytics and audit surfaces |
 | Public visitor | Check the physical collection before visiting | Read-only public physical-catalog information and aggregate availability; no account data or borrower identities |
 
 Application roles are `student`, `faculty`, and `admin`; librarian is represented by `admin`, not a separate role. New self-registered accounts default to student. Role changes are privileged administrative actions and must not be available through ordinary member profile editing.
@@ -75,13 +75,13 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 | P1 | Digital catalog, access requests, reader, reading progress, notes, highlights, and drawings | Present; verify end-to-end with protected files and test accounts |
 | P1 | Physical catalog, copy records, printable QR labels, requests, payment evidence, FIFO waitlist, receipts, return/lost-item handling | Present in source/schema; public privacy, job scheduling, and full circulation test required |
 | P1 | Contribution upload, revision, AI screening, administrator decision, and post-approval points | Present in source; AI remains advisory and points are tied to human approval |
-| P1 | Member points wallet, transaction history, recognition/rewards/achievements surfaces | Present in source/schema; confirm policy, transaction integrity, and optional-table behavior |
-| P1 | Admin member management, academic rank/course lists, library operations, audit/access-grant surfaces | Present in source; validate staff-only authorization and data integrity |
+| P1 | Member points wallet, transaction history, recognition and achievement surfaces | Present in source/schema; confirm policy, transaction integrity, and optional-table behavior |
+| P1 | Admin member management, academic rank/course lists, library operations, dashboard access-grant quick action, and audit surfaces | Present in source; validate staff-only authorization and data integrity |
 | P2 | Verified paid e-book purchase with immediate automatic access | Not available; checkout is paused until a payment provider and trusted webhook are implemented |
 | P2 | OCR-assisted physical-book table-of-contents entry during registration | Proposed enhancement; not represented as a currently delivered workflow |
 | P2 | Admin-configurable contribution point bonuses and broader reward campaigns | Existing approval/points foundations; configurable award policy needs product definition and implementation |
 | P2 | Outbound email notification worker and delivery status | Email queue exists, but the application does not itself prove delivery; worker/provider required |
-| P2 | Public reviews/aggregate ratings, enhanced catalog filters, and richer discovery | Partial/future; do not promise public ratings unless enabled and verified |
+| P2 | Enhanced catalog filters and richer discovery | Partial/future; do not promise features unless enabled and verified |
 | P3 | Automated ISBN lookup, self-service circulation kiosk, advanced analytics, and richer AI recommendations | Optional, dependent on school policy, budget, privacy review, and operational capacity |
 
 ## 5. Core user journeys
@@ -134,7 +134,7 @@ Paid e-book checkout is paused. A user-uploaded receipt, OCR extraction, or type
 
 ### 5.6 Administrator operations
 
-Administrators sign in and manage member profiles/roles, faculty rank and course catalogs, digital records/materials, physical titles/copies/QR labels, borrow requests, contributions, payment evidence, access grants, points/recognition, and operational reports. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
+Administrators sign in and manage member profiles/roles, faculty rank and course catalogs, digital records/materials, physical titles/copies/QR labels, borrow requests, contributions, payment evidence, access grants and points through dashboard quick actions, and operational reports. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
 
 ### 5.7 Notifications and reminders
 
@@ -179,7 +179,6 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-031 | P1 | Contribution points shall be awarded only after a human-approved decision according to the recorded policy. | Implemented in source/schema |
 | FR-032 | P1 | Members shall view their point balance and transaction history; mutations shall be auditable and resistant to duplicate awards/deductions. | Implemented in source/schema; verify integrity |
 | FR-033 | P2 | Administrators shall configure contribution/reward point policies and any bonus award; published policies shall be clear to members. | Partially supported; configuration policy not complete |
-| FR-034 | P1 | Members shall manage their own wishlist and review submissions and see applicable recognition/achievement information. | Implemented in source/schema; verify member ownership |
 | FR-035 | P1 | Members shall view and update in-app notifications; unauthenticated requests shall receive an authentication response rather than an internal-server error. | API exists; unauthenticated path failed QA |
 | FR-036 | P0 | Scheduled reminders and expiring physical offers shall be processed at the configured interval with authenticated, observable job execution. | Endpoint/schema present; scheduler not verified |
 | FR-037 | P1 | The assistant shall answer supported catalog, policy, or member-loan questions using only data the caller is authorized to access. | Implemented foundation; response fidelity and scope require testing |
@@ -205,7 +204,7 @@ The system's core entities and responsibilities are:
 | Study note, highlight, drawing, reading progress | Member-owned study artifacts associated with a digital resource |
 | Notification, email queue, reminder event | In-app event and queued/scheduled communication state |
 | Assistant session/message | Member-owned conversation and stored assistant exchange |
-| Review, wishlist, fine, audit log | Member feedback/saved resources, policy-based amounts, and administrative action history |
+| Fine, audit log | Policy-based amounts and administrative action history |
 
 Data retention periods, account deletion rules, consent language, and school-specific records obligations must be decided and documented before real member data is used. Private PDFs, payment proofs, study records, assistant content, and account details must not be exposed through public catalog responses.
 
@@ -337,7 +336,7 @@ Full evidence is recorded in [`runtime-validation-report.md`](./runtime-validati
 
 ### Phase 3 — Discovery and operational improvement (P2/P3)
 
-- Expand public discovery, reviews/ratings, optional ISBN metadata lookup, analytics, and staff self-service tools based on usage and school policy.
+- Expand public discovery, optional ISBN metadata lookup, analytics, and staff self-service tools based on usage and school policy.
 - Reassess AI features against privacy, accuracy, cost, and user feedback evidence.
 
 ## 15. Assumptions and decisions

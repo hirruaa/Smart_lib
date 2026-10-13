@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { createGoogleDriveBackup } from '@/utils/googleDriveBackup'
+import { rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  const requestLimit = rateLimit(request, { name: 'admin-backup', limit: 2, windowMs: 60 * 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const sessionClient = await createClient()
   const { data: { user }, error: userError } = await sessionClient.auth.getUser()
   if (userError || !user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })

@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export async function POST(request: Request) {
   try {
+    if (!sameOrigin(request)) return originViolation()
+    if (bodyTooLarge(request, 8_192)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
+    const requestLimit = rateLimit(request, { name: 'digital-loan', limit: 10, windowMs: 60_000 })
+    if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
     const body = await request.json()
     const bookId = Number(body.bookId)
     const durationDays = Number(body.durationDays)

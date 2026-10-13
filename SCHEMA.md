@@ -129,31 +129,12 @@ Behavior:
 - Restricted materials remain administrator-only.
 - The selected lending duration sets the due date; a confirmation appears in the member notification list.
 
+### `public.digital_book_loan_history`
+One audit row per digital borrowing request. It preserves the request timestamp, borrowed/approved timestamp, due date, return timestamp, renewal count, points paid, and final status for administrator review.
+
+Unlike the active-access view, this history is retained after access expires or a loan is returned.
+
 ## 3. Student features
-
-### `public.reviews`
-One review per student per book.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | `bigint` | Primary key |
-| `book_id` | `bigint` | Book reviewed |
-| `student_id` | `uuid` | Reviewer |
-| `rating` | `int` | 1 to 5 |
-| `comment` | `text` | Review text |
-| `created_at` | `timestamptz` | Posted at |
-| `UNIQUE(book_id, student_id)` | constraint | Prevents duplicate review |
-
-### `public.wishlists`
-Wishlist entries for students.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | `bigint` | Primary key |
-| `book_id` | `bigint` | Book wishlisted |
-| `student_id` | `uuid` | Student owner |
-| `created_at` | `timestamptz` | When saved |
-| `UNIQUE(book_id, student_id)` | constraint | Prevents duplicates |
 
 ## 4. Fines and notifications
 
@@ -234,8 +215,6 @@ Behavior:
 ```mermaid
 erDiagram
   PROFILES ||--o{ BORROW_REQUESTS : owns
-  PROFILES ||--o{ REVIEWS : writes
-  PROFILES ||--o{ WISHLISTS : manages
   PROFILES ||--o{ STUDY_NOTES : creates
   PROFILES ||--o{ HIGHLIGHTS : creates
   PROFILES ||--o{ FINES : receives
@@ -244,8 +223,6 @@ erDiagram
   ACADEMIC_COURSES ||--o{ FACULTY_COURSES : taught
 
   BOOKS ||--o{ BORROW_REQUESTS : has
-  BOOKS ||--o{ REVIEWS : reviewed
-  BOOKS ||--o{ WISHLISTS : wishlisted
   BOOKS ||--o{ STUDY_NOTES : read
   BOOKS ||--o{ HIGHLIGHTS : annotated
 
@@ -274,7 +251,7 @@ erDiagram
 
 5. Add a proper role guard in middleware or server routes to prevent client-only loopholes.
 
-6. Add a proper admin/staff UI for `fines`, `reviews`, and the study room notes pane.
+6. Add a proper admin/staff UI for `fines` and the study room notes pane.
 
 7. Optionally split the logic into:
    - auth/profile service

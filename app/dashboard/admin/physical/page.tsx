@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
 import { getSupabase } from '@/utils/supabase/client'
 import { AdminPhysicalSkeleton } from '@/components/skeletons/AdminDashboardSkeleton'
+import ResultModal from '@/components/ResultModal'
+import ActionModal from '@/components/ActionModal'
+import { DIGITAL_ACCESS_DURATION_OPTIONS } from '@/utils/libraryContracts'
 
 type Book = { id: number; title: string; catalog_type: string; cover_image_url: string | null }
 type Copy = { id: number; book_id: number; copy_code: string; qr_token: string; status: string; location: string | null }
@@ -12,8 +15,15 @@ type Option = { id: number; book_id: number; duration_days: number; fee_amount: 
 type Loan = {
   id: number; student_id: string; book_id: number; copy_id: number | null; duration_days: number
   fee_amount: number; payment_method: string; payment_status: string; transaction_reference: string | null
-  payment_proof_path: string | null; status: string; requested_at: string; due_date: string | null
-  receipt_number: string | null; reservation_expires_at: string | null
+  payment_proof_path: string | null; status: string; requested_at: string; checked_out_at: string | null
+  due_date: string | null; returned_at: string | null; receipt_number: string | null
+  reservation_expires_at: string | null
+}
+type LoanHistory = {
+  id: number; student_id: string; book_id: number; copy_id: number; duration_days: number
+  fee_amount: number; payment_method: string; payment_status: string; status: string
+  checked_out_at: string; due_date: string; returned_at: string | null
+  return_condition: string | null; receipt_number: string | null
 }
 type Profile = { id: string; email: string; full_name: string | null }
 
@@ -26,6 +36,7 @@ export default function PhysicalCirculationAdminPage() {
   const [copies, setCopies] = useState<Copy[]>([])
   const [options, setOptions] = useState<Option[]>([])
   const [loans, setLoans] = useState<Loan[]>([])
+  const [loanHistory, setLoanHistory] = useState<LoanHistory[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [qrImages, setQrImages] = useState<Record<string, string>>({})
   const [copyForm, setCopyForm] = useState({ bookId: '', quantity: '1', prefix: '', location: '' })
@@ -33,13 +44,15 @@ export default function PhysicalCirculationAdminPage() {
     title: '', author: '', category: '', isbn: '', description: '', quantity: '1', prefix: '', location: '',
   })
   const [coverFile, setCoverFile] = useState<File | null>(null)
-  const [optionForm, setOptionForm] = useState({ bookId: '', durationDays: '14', feeAmount: '20' })
+  const [optionForm, setOptionForm] = useState({ bookId: '', fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
   const [returnConditions, setReturnConditions] = useState<Record<number, 'available' | 'damaged' | 'lost'>>({})
   const [lostResolution, setLostResolution] = useState<Record<number, 'available' | 'damaged' | 'withdrawn'>>({})
+  const [historyBookId, setHistoryBookId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [pendingAction, setPendingAction] = useState<{ type: 'checkout' | 'close' | 'reject' | 'resolve'; id: number } | null>(null)
 
   const load = async () => {
     const supabase = getSupabase()
@@ -47,19 +60,21 @@ export default function PhysicalCirculationAdminPage() {
     if (!user) { router.replace('/login'); return }
     const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
     if (profileError || profile?.role !== 'admin') { router.replace('/unauthorized'); return }
-    const [bookResult, copyResult, optionResult, loanResult, memberResult] = await Promise.all([
+    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult] = await Promise.all([
       supabase.from('books').select('id,title,catalog_type,cover_image_url').order('title'),
       supabase.from('physical_book_copies').select('id,book_id,copy_code,qr_token,status,location').order('copy_code'),
       supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').order('book_id').order('duration_days'),
-      supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,payment_proof_path,status,requested_at,due_date,receipt_number,reservation_expires_at').order('requested_at', { ascending: false }),
+      supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,payment_proof_path,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at').order('requested_at', { ascending: false }),
+      supabase.from('physical_book_loan_history').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,status,checked_out_at,due_date,returned_at,return_condition,receipt_number').order('checked_out_at', { ascending: false }),
       supabase.from('profiles').select('id,email,full_name').in('role', ['student', 'faculty']),
     ])
-    const failed = [bookResult, copyResult, optionResult, loanResult, memberResult].find((result) => result.error)
+    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult].find((result) => result.error)
     if (failed?.error) setError(`Unable to load physical circulation: ${failed.error.message}`)
     setBooks((bookResult.data ?? []) as Book[])
     setCopies((copyResult.data ?? []) as Copy[])
     setOptions((optionResult.data ?? []) as Option[])
     setLoans((loanResult.data ?? []) as Loan[])
+    setLoanHistory((historyResult.data ?? []) as LoanHistory[])
     setProfiles((memberResult.data ?? []) as Profile[])
     setLoading(false)
   }
@@ -151,16 +166,23 @@ export default function PhysicalCirculationAdminPage() {
   const submitOptionForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy(true); setError(''); setMessage('')
-    const { error: saveError } = await getSupabase().rpc('admin_set_physical_loan_option', {
-      p_book_id: Number(optionForm.bookId), p_duration_days: Number(optionForm.durationDays),
-      p_fee_amount: Number(optionForm.feeAmount), p_is_active: true,
-    })
+    const invalidFee = DIGITAL_ACCESS_DURATION_OPTIONS.some((days) => !Number.isFinite(Number(optionForm.fees[String(days)])) || Number(optionForm.fees[String(days)]) < 0)
+    if (invalidFee) {
+      setError('Each physical-book fee must be a valid non-negative amount.')
+      setBusy(false)
+      return
+    }
+    const results = await Promise.all(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => getSupabase().rpc('admin_set_physical_loan_option', {
+      p_book_id: Number(optionForm.bookId), p_duration_days: days,
+      p_fee_amount: Number(optionForm.fees[String(days)]), p_is_active: true,
+    })))
+    const saveError = results.find((result) => result.error)?.error
     if (saveError) setError(saveError.message)
-    else { await load(); setMessage('Physical loan period and fee saved.') }
+    else { await load(); setMessage('Physical-book fees for all access periods were saved.') }
     setBusy(false)
   }
 
-  const checkout = async (loanId: number) => {
+  const executeCheckout = async (loanId: number) => {
     setBusy(true); setError(''); setMessage('')
     const { error: actionError } = await getSupabase().rpc('admin_confirm_physical_checkout', { p_request_id: loanId })
     if (actionError) setError(actionError.message)
@@ -168,7 +190,7 @@ export default function PhysicalCirculationAdminPage() {
     setBusy(false)
   }
 
-  const closeLoan = async (loanId: number) => {
+  const executeCloseLoan = async (loanId: number) => {
     setBusy(true); setError(''); setMessage('')
     const { error: actionError } = await getSupabase().rpc('admin_close_physical_loan', {
       p_request_id: loanId, p_copy_condition: returnConditions[loanId] ?? 'available',
@@ -178,7 +200,7 @@ export default function PhysicalCirculationAdminPage() {
     setBusy(false)
   }
 
-  const rejectRequest = async (loanId: number) => {
+  const executeRejectRequest = async (loanId: number) => {
     setBusy(true); setError(''); setMessage('')
     const { error: actionError } = await getSupabase().rpc('admin_decide_physical_request', {
       p_request_id: loanId, p_decision: 'rejected',
@@ -188,7 +210,7 @@ export default function PhysicalCirculationAdminPage() {
     setBusy(false)
   }
 
-  const resolveLostLoan = async (loanId: number) => {
+  const executeResolveLostLoan = async (loanId: number) => {
     setBusy(true); setError(''); setMessage('')
     const { error: actionError } = await getSupabase().rpc('admin_resolve_lost_physical_loan', {
       p_request_id: loanId, p_copy_condition: lostResolution[loanId] ?? 'available',
@@ -197,6 +219,11 @@ export default function PhysicalCirculationAdminPage() {
     else { await load(); setMessage('Lost-book record resolved and the library-only hold lifted.') }
     setBusy(false)
   }
+
+  const checkout = (loanId: number) => setPendingAction({ type: 'checkout', id: loanId })
+  const closeLoan = (loanId: number) => setPendingAction({ type: 'close', id: loanId })
+  const rejectRequest = (loanId: number) => setPendingAction({ type: 'reject', id: loanId })
+  const resolveLostLoan = (loanId: number) => setPendingAction({ type: 'resolve', id: loanId })
 
   const openProof = async (path: string) => {
     const { data, error: proofError } = await getSupabase().storage.from('physical-payment-proofs').createSignedUrl(path, 60)
@@ -208,6 +235,7 @@ export default function PhysicalCirculationAdminPage() {
   const waitingLoans = loans.filter((loan) => ['pending', 'waitlisted'].includes(loan.status))
   const activeLoans = loans.filter((loan) => loan.status === 'checked_out')
   const lostLoans = loans.filter((loan) => loan.status === 'lost')
+  const historyLoans = loanHistory.filter((loan) => !historyBookId || String(loan.book_id) === historyBookId)
   const bookName = (bookId: number) => books.find((book) => book.id === bookId)?.title ?? `Book #${bookId}`
   const copyCode = (copyId: number | null) => copies.find((copy) => copy.id === copyId)?.copy_code ?? 'Copy unavailable'
   const memberName = (memberId: string) => {
@@ -222,8 +250,12 @@ export default function PhysicalCirculationAdminPage() {
         <h1 className="mt-4 text-3xl font-semibold">Physical circulation</h1>
         <p className="mt-2 text-sm text-slate-500">Manage copy-level inventory, QR stickers, book-specific loan prices, payment verification, checkout, and returns.</p>
       </header>
-      {error ? <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">{error}</p> : null}
-      {message ? <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-800">{message}</p> : null}
+      <ResultModal
+        open={Boolean(error || message)}
+        status={error ? 'error' : 'success'}
+        message={error || message}
+        onClose={() => { setError(''); setMessage('') }}
+      />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <form onSubmit={(event) => void submitPhysicalBook(event)} className={`${panel} space-y-3 lg:col-span-2`}>
@@ -251,9 +283,18 @@ export default function PhysicalCirculationAdminPage() {
         </form>
         <form onSubmit={(event) => void submitOptionForm(event)} className={`${panel} space-y-3`}>
           <h2 className="text-lg font-semibold">Set book-specific loan fee</h2>
-          <select required value={optionForm.bookId} onChange={(event) => setOptionForm({ ...optionForm, bookId: event.target.value })} className={input}><option value="">Choose a book</option>{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select>
-          <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Loan days<input required type="number" min="1" max="365" value={optionForm.durationDays} onChange={(event) => setOptionForm({ ...optionForm, durationDays: event.target.value })} className={`${input} mt-1`} /></label><label className="text-sm">Fee (₱)<input required type="number" min="0" step="0.01" value={optionForm.feeAmount} onChange={(event) => setOptionForm({ ...optionForm, feeAmount: event.target.value })} className={`${input} mt-1`} /></label></div>
-          <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Save loan option</button>
+          <select required value={optionForm.bookId} onChange={(event) => {
+            const bookId = event.target.value
+            const existing = options.filter((option) => option.book_id === Number(bookId))
+            setOptionForm({
+              bookId,
+              fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])),
+            })
+          }} className={input}><option value="">Choose a book</option>{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-sm">{days} {days === 1 ? 'day' : 'days'} fee (₱)<input required type="number" min="0" step="0.01" value={optionForm.fees[String(days)] ?? '0'} onChange={(event) => setOptionForm({ ...optionForm, fees: { ...optionForm.fees, [days]: event.target.value } })} className={`${input} mt-1`} /></label>)}
+          </div>
+          <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Save physical-book fees</button>
         </form>
       </div>
 
@@ -292,6 +333,40 @@ export default function PhysicalCirculationAdminPage() {
           {activeLoans.length === 0 ? <p className="text-sm text-slate-500">No books are currently checked out.</p> : null}
         </div>
       </section>
+
+      <section className={panel}>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">Circulation history</h2>
+            <p className="mt-1 text-sm text-slate-500">A permanent checkout and return history for each physical title.</p>
+          </div>
+          <label className="text-sm font-medium">Book
+            <select value={historyBookId} onChange={(event) => setHistoryBookId(event.target.value)} className={`${input} mt-1 min-w-64`}>
+              <option value="">All physical books</option>
+              {books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700">
+              <tr><th className="px-3 py-3">Book / copy</th><th className="px-3 py-3">Borrower</th><th className="px-3 py-3">Borrowed</th><th className="px-3 py-3">Due</th><th className="px-3 py-3">Returned</th><th className="px-3 py-3">Duration</th><th className="px-3 py-3">Status</th></tr>
+            </thead>
+            <tbody>
+              {historyLoans.map((loan) => <tr key={loan.id} className="border-b border-slate-100 dark:border-slate-800">
+                <td className="px-3 py-3"><strong>{bookName(loan.book_id)}</strong><p className="text-xs text-slate-500">{copyCode(loan.copy_id)} · Receipt {loan.receipt_number ?? '—'}</p></td>
+                <td className="px-3 py-3">{memberName(loan.student_id)}</td>
+                <td className="px-3 py-3">{loan.checked_out_at ? new Date(loan.checked_out_at).toLocaleString() : '—'}</td>
+                <td className="px-3 py-3">{loan.due_date ? new Date(loan.due_date).toLocaleString() : '—'}</td>
+                <td className="px-3 py-3">{loan.returned_at ? new Date(loan.returned_at).toLocaleString() : '—'}</td>
+                <td className="px-3 py-3">{loan.duration_days} days</td>
+                <td className="px-3 py-3 capitalize">{loan.status.replace('_', ' ')}{loan.return_condition ? <span className="block text-xs text-slate-500">Condition: {loan.return_condition}</span> : null}</td>
+              </tr>)}
+            </tbody>
+          </table>
+          {historyLoans.length === 0 ? <p className="py-6 text-sm text-slate-500">No circulation history for this selection.</p> : null}
+        </div>
+      </section>
       <section className={panel}>
         <h2 className="text-xl font-semibold">Lost items and holds</h2>
         <p className="mt-1 text-sm text-slate-500">Resolve a lost-book record when the book is found or the library formally closes the case. This clears the borrower&apos;s physical-loan hold.</p>
@@ -304,5 +379,22 @@ export default function PhysicalCirculationAdminPage() {
         </div>
       </section>
     </div>
+      <ActionModal
+        open={pendingAction !== null}
+        title={pendingAction?.type === 'checkout' ? 'Confirm physical checkout?' : pendingAction?.type === 'close' ? 'Record physical-book return?' : pendingAction?.type === 'reject' ? 'Reject physical-book request?' : 'Resolve lost-book hold?'}
+        description={pendingAction?.type === 'close' ? `The selected condition (${returnConditions[pendingAction.id] ?? 'available'}) will be recorded.` : undefined}
+        confirmLabel={pendingAction?.type === 'checkout' ? 'Confirm checkout' : pendingAction?.type === 'close' ? 'Record return' : pendingAction?.type === 'reject' ? 'Reject request' : 'Resolve hold'}
+        tone={pendingAction?.type === 'checkout' || pendingAction?.type === 'close' ? 'default' : 'danger'}
+        busy={busy}
+        onClose={() => setPendingAction(null)}
+        onConfirm={() => {
+          const action = pendingAction
+          setPendingAction(null)
+          if (action?.type === 'checkout') void executeCheckout(action.id)
+          else if (action?.type === 'close') void executeCloseLoan(action.id)
+          else if (action?.type === 'reject') void executeRejectRequest(action.id)
+          else if (action?.type === 'resolve') void executeResolveLostLoan(action.id)
+        }}
+      />
   </main>
 }

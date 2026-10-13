@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { generateGeminiChatReply, GeminiRequestError } from '@/utils/gemini'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 type AssistantIntent = 'search' | 'research' | 'loans' | 'policy'
 type RecentMessage = { role: 'user' | 'assistant'; content: string }
@@ -53,6 +54,10 @@ function parseHistory(value: unknown): RecentMessage[] | null {
 
 export async function POST(req: Request) {
   try {
+    if (!sameOrigin(req)) return originViolation()
+    if (bodyTooLarge(req, 32_768)) return NextResponse.json({ error: 'Chat request is too large.' }, { status: 413 })
+    const requestLimit = rateLimit(req, { name: 'assistant', limit: 20, windowMs: 60_000 })
+    if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
     const requestText = await req.text()
     if (requestText.length > 24000) {
       return NextResponse.json({ error: 'Chat request is too large.' }, { status: 413 })
@@ -84,7 +89,17 @@ export async function POST(req: Request) {
 
     const limit = 8
     const catalogQuery = getCatalogQuery(query)
-    const rpc = await supabase.rpc('search_books', { p_query: catalogQuery, p_limit: limit })
+    const catalogPromise = supabase.rpc('search_books', { p_query: catalogQuery, p_limit: limit })
+    const loanPromise = intent === 'loans'
+      ? supabase
+        .from('borrow_requests')
+        .select('status, due_date, books(title, author)')
+        .eq('student_id', user.id)
+        .order('request_date', { ascending: false })
+        .limit(20)
+      : Promise.resolve({ data: [], error: null })
+
+    const [rpc, loanResult] = await Promise.all([catalogPromise, loanPromise])
     if (rpc.error) throw new Error(`Unable to search the library catalog: ${rpc.error.message}`)
     let results = (rpc.data ?? []) as CatalogSearchRow[]
 
@@ -104,13 +119,6 @@ export async function POST(req: Request) {
 
     let loans: Array<Record<string, unknown>> = []
     if (intent === 'loans') {
-      const loanResult = await supabase
-        .from('borrow_requests')
-        .select('status, due_date, books(title, author)')
-        .eq('student_id', user.id)
-        .order('request_date', { ascending: false })
-        .limit(20)
-
       if (loanResult.error) throw new Error(`Unable to load your borrowing activity: ${loanResult.error.message}`)
       loans = (loanResult.data ?? []).map((loan) => ({
         status: loan.status,
@@ -162,7 +170,7 @@ export async function POST(req: Request) {
             : error.status === 503
               ? { status: 503, message: 'Gemini is temporarily unavailable after several retries. Please wait a little and try again.' }
             : error.status === 429
-              ? { status: 503, message: 'Gemini is temporarily at its usage limit. Please wait a moment and try again.' }
+              ? { status: 429, message: 'Gemini is temporarily at its usage limit. Please wait a moment and try again.' }
               : error.status === 400
                 ? { status: 502, message: 'Gemini rejected the request. Please start a new chat and try again.' }
                 : error.reason === 'timeout'

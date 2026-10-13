@@ -11,6 +11,12 @@ type AuthMode = 'login' | 'signup' | 'forgot'
 type MemberType = 'student' | 'faculty'
 type AcademicDepartment = { id: number; name: string }
 
+function getAuthOrigin() {
+  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '')
+  if (configuredOrigin) return configuredOrigin
+  return typeof window !== 'undefined' ? window.location.origin : ''
+}
+
 interface AuthFormProps {
   defaultMode: 'login' | 'signup'
 }
@@ -20,9 +26,10 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
   const [mode, setMode] = useState<AuthMode>(defaultMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [fullName, setFullName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [middleName, setMiddleName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [memberType, setMemberType] = useState<MemberType>('student')
-  const [school, setSchool] = useState('')
   const [department, setDepartment] = useState('')
   const [departments, setDepartments] = useState<AcademicDepartment[]>([])
   const [departmentError, setDepartmentError] = useState<string | null>(null)
@@ -32,6 +39,8 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [awaitingOtp, setAwaitingOtp] = useState(false)
+  const [otp, setOtp] = useState('')
 
   useEffect(() => {
     if (mode !== 'signup') return
@@ -83,16 +92,18 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
           setErrorMsg(departmentError ?? 'Faculty registration is not available until the administrator adds departments.')
           return
         }
-        const origin = typeof window !== 'undefined' ? window.location.origin : ''
+        const origin = getAuthOrigin()
         const result = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
               member_type: memberType,
-              full_name: fullName.trim() || undefined,
-              school: school.trim() || undefined,
-              department: department || undefined,
+              first_name: firstName.trim() || undefined,
+              middle_name: middleName.trim() || undefined,
+              last_name: lastName.trim() || undefined,
+              full_name: [firstName, middleName, lastName].map((value) => value.trim()).filter(Boolean).join(' ') || undefined,
+              department: memberType === 'faculty' ? department || undefined : undefined,
               course: memberType === 'student' ? course.trim() || undefined : undefined,
               student_year: memberType === 'student' ? studentYear.trim() || undefined : undefined,
             },
@@ -103,10 +114,15 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         if (result.error) {
           setErrorMsg(result.error.message)
         } else {
-          setSuccessMsg('Account registered successfully! If email confirmation is enabled, check your inbox to verify your account, or sign in now.')
+          if (result.data.user && !result.data.session) {
+            setAwaitingOtp(true)
+            setSuccessMsg('We sent a 6-digit confirmation code to your email. Enter it below to activate your account.')
+          } else {
+            setSuccessMsg('Account registered successfully! You can sign in now.')
+          }
         }
       } else if (mode === 'forgot') {
-        const origin = typeof window !== 'undefined' ? window.location.origin : ''
+        const origin = getAuthOrigin()
         const result = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${origin}/reset-password`,
         })
@@ -135,6 +151,40 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'An unexpected error occurred during authentication.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleVerifyOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setErrorMsg('')
+    setSuccessMsg('')
+    setIsSubmitting(true)
+    try {
+      const result = await getSupabase().auth.verifyOtp({ email, token: otp.trim(), type: 'signup' })
+      if (result.error) {
+        setErrorMsg(result.error.message)
+      } else {
+        router.replace('/dashboard')
+      }
+    } catch (error: any) {
+      setErrorMsg(error?.message || 'Unable to verify the confirmation code.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const resendOtp = async () => {
+    setErrorMsg('')
+    setSuccessMsg('')
+    setIsSubmitting(true)
+    try {
+      const result = await getSupabase().auth.resend({ type: 'signup', email })
+      if (result.error) setErrorMsg(result.error.message)
+      else setSuccessMsg('A new confirmation code was sent.')
+    } catch (error: any) {
+      setErrorMsg(error?.message || 'Unable to resend the confirmation code.')
     } finally {
       setIsSubmitting(false)
     }
@@ -204,18 +254,23 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         </div>
 
         {errorMsg ? (
-          <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+          <div role="alert" aria-live="assertive" className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
             {errorMsg}
           </div>
         ) : null}
 
         {successMsg ? (
-          <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <div role="status" aria-live="polite" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
             {successMsg}
           </div>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        {awaitingOtp ? <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Check your inbox for the confirmation code sent to <strong>{email}</strong>.</p>
+          <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Confirmation code</span><input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.45em] text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="000000" /></label>
+          <button type="submit" disabled={isSubmitting || otp.length !== 6} className="w-full rounded-xl bg-forest-900 py-3 text-sm font-semibold text-paper-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-paper-100 dark:text-forest-900">{isSubmitting ? 'Verifying...' : 'Verify email'}</button>
+          <button type="button" disabled={isSubmitting} onClick={() => void resendOtp()} className="w-full text-sm font-semibold text-pine-700 hover:underline disabled:opacity-50 dark:text-pine-200">Resend code</button>
+        </form> : <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {mode === 'signup' && (
             <>
               <fieldset>
@@ -228,7 +283,15 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
                         name="memberType"
                         value={type}
                         checked={memberType === type}
-                        onChange={() => { setMemberType(type); setDepartment('') }}
+                        onChange={() => {
+                          setMemberType(type)
+                          setDepartment('')
+                          if (type === 'faculty') {
+                            // Do not retain student-only values when changing roles.
+                            setCourse('')
+                            setStudentYear('')
+                          }
+                        }}
                         disabled={type === 'faculty' && (departmentsLoading || Boolean(departmentError) || departments.length === 0)}
                         className="accent-pine-700"
                       />
@@ -240,22 +303,13 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
                 {departmentError ? <p role="status" className="mt-2 text-xs text-amber-700 dark:text-amber-300">{departmentError}</p> : null}
                 {!departmentsLoading && !departmentError && departments.length === 0 ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Faculty sign-up opens after the administrator adds department choices.</p> : null}
               </fieldset>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Full Name</span>
-                <input type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Ada Lovelace" />
-              </label>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">First name *</span><input required maxLength={80} value={firstName} onChange={(event) => setFirstName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="First name" /></label>
+                <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Middle name</span><input maxLength={80} value={middleName} onChange={(event) => setMiddleName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Middle name" /></label>
+                <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Last name *</span><input required maxLength={80} value={lastName} onChange={(event) => setLastName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-pine-500 focus:ring-2 focus:ring-pine-500/20 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Last name" /></label>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">School</span>
-                  <input maxLength={120} value={school} onChange={(event) => setSchool(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="School or college" />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Department{memberType === 'faculty' ? ' *' : ''}</span>
-                  <select required={memberType === 'faculty'} value={department} onChange={(event) => setDepartment(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100">
-                    <option value="">Select a department{memberType === 'student' ? ' (optional)' : ''}</option>
-                    {departments.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
-                  </select>
-                </label>
+                {memberType === 'faculty' ? <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Department *</span><select required value={department} onChange={(event) => setDepartment(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100"><option value="">Select a department</option>{departments.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label> : null}
                 {memberType === 'student' ? <>
                   <label className="block">
                     <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Course / program</span>
@@ -265,7 +319,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
                     <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Year level</span>
                     <input maxLength={40} value={studentYear} onChange={(event) => setStudentYear(event.target.value)} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="e.g. 2nd year" />
                   </label>
-                </> : <p className="self-center text-xs leading-5 text-slate-500 dark:text-slate-400">Faculty accounts can browse, borrow, read, and earn points just like student accounts. Your title and teaching assignments can be added by an administrator.</p>}
+                </> : null}
               </div>
             </>
           )}
@@ -328,7 +382,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
               ? 'Sign in'
               : `Create ${memberType} account`}
           </button>
-        </form>
+        </form>}
 
         <div className="mt-6 flex flex-col items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300 sm:flex-row">
           {isForgot ? (

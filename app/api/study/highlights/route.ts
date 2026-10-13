@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText, positiveInteger } from '@/utils/api'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -24,6 +25,10 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  if (!sameOrigin(req)) return originViolation()
+  if (bodyTooLarge(req, 96 * 1024)) return NextResponse.json({ error: 'Highlight request is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(req, { name: 'study-highlight-write', limit: 120, windowMs: 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()
   const user = userData.user

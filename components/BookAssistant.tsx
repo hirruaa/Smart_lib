@@ -136,10 +136,14 @@ export default function BookAssistant() {
       }
       setMessages((current) => [...current, assistantMessage])
       if (activeSessionId) {
-        await Promise.all([
+        // Saving chat history should not keep the assistant in its loading state.
+        // The answer is already available, so persist it in the background.
+        void Promise.all([
           fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'user', content: userMessage.text }) }),
           fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'assistant', content: assistantMessage.text, results: assistantMessage.results, loans: assistantMessage.loans }) }),
-        ])
+        ]).catch(() => {
+          // The local conversation remains usable if history persistence fails.
+        })
       }
     } catch (err: any) {
       setError(err.message || String(err))
@@ -175,18 +179,34 @@ export default function BookAssistant() {
     if (deletingSessionId) return
     setDeletingSessionId(selectedSession.id)
     setError(null)
+    const previousSessions = sessions
+    const previousSessionId = sessionId
+    const previousMessages = messages
+    const remaining = sessions.filter((session) => session.id !== selectedSession.id)
+
+    // Remove it locally before the round trip completes so the list reflects
+    // the user's action immediately. Restore the previous state if deletion fails.
+    setSessions(remaining)
+    setConfirmDeleteSessionId(null)
+    if (selectedSession.id === sessionId) {
+      const nextSession = remaining[0]
+      setSessionId(nextSession?.id ?? null)
+      setMessages([initialMessage])
+    }
+
     try {
       const response = await fetch(`/api/assistant/sessions?session_id=${encodeURIComponent(selectedSession.id)}`, { method: 'DELETE' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data?.error || 'Unable to delete this conversation.')
 
-      const remaining = sessions.filter((session) => session.id !== selectedSession.id)
-      setSessions(remaining)
-      setConfirmDeleteSessionId(null)
       if (selectedSession.id === sessionId) {
         const nextSession = remaining[0]
         if (nextSession) {
-          await selectSession(nextSession)
+          try {
+            await selectSession(nextSession)
+          } catch {
+            setError('The conversation was deleted, but the next chat could not be loaded.')
+          }
         } else {
           setSessionId(null)
           setMessages([initialMessage])
@@ -194,6 +214,9 @@ export default function BookAssistant() {
         }
       }
     } catch (err: any) {
+      setSessions(previousSessions)
+      setSessionId(previousSessionId)
+      setMessages(previousMessages)
       setError(err.message || 'Unable to delete this conversation.')
     } finally {
       setDeletingSessionId(null)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export async function GET(request: Request) {
   const supabase = await createClient()
@@ -13,6 +14,10 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  if (bodyTooLarge(request, 8_192)) return NextResponse.json({ error: 'Progress request is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(request, { name: 'reading-progress-write', limit: 120, windowMs: 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })

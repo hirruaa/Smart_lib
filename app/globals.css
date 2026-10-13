@@ -59,6 +59,21 @@ html.dark body {
   background-image: none !important;
 }
 
+/* Global readability and keyboard visibility baseline. */
+body { line-height: 1.5; }
+button, a, input, select, textarea, [role='button'] { -webkit-tap-highlight-color: transparent; }
+:where(button, a, input, select, textarea, [role='button']):focus-visible {
+  outline: 3px solid rgba(38, 63, 58, .42);
+  outline-offset: 3px;
+}
+html.dark :where(button, a, input, select, textarea, [role='button']):focus-visible {
+  outline-color: rgba(221, 229, 222, .75);
+}
+.surface-page p, .auth-page p { color: #5f6661; }
+html.dark .surface-page p, html.dark .auth-page p { color: #d0cec2; }
+.surface-page ::placeholder, .auth-page ::placeholder { color: #7c827d; opacity: 1; }
+html.dark .surface-page ::placeholder, html.dark .auth-page ::placeholder { color: #b9c2ba; }
+
 button,
 input,
 select,
@@ -179,6 +194,7 @@ html.dark .secondary-action { border-color: #52645a; color: #b5c9b8; }
 .admin-sidebar-collapsed .admin-sidebar { align-items: center; padding: 24px 12px; }
 .admin-sidebar-collapsed .admin-sidebar > div:first-child p,
 .admin-sidebar-collapsed .admin-sidebar > div:first-child h2,
+.admin-sidebar-collapsed .admin-sidebar .admin-nav-group-label,
 .admin-sidebar-collapsed .admin-sidebar nav span,
 .admin-sidebar-collapsed .admin-sidebar-footer span { display: none; }
 .admin-nav-button { display: flex; align-items: center; gap: 12px; }
@@ -246,11 +262,12 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
 .student-sidebar-footer { display: grid; gap: 6px; margin-top: auto; border-top: 1px solid #e2ded4; padding-top: 16px; }
 .student-sidebar-footer button { width: 100%; cursor: pointer; }
 .student-sidebar-footer button:hover { background: #f0ece3; color: #263f3a; }
+.student-sidebar-header { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 6px; }
 .student-theme-control { display: flex; align-items: center; gap: 13px; padding: 2px 12px 8px; color: #52635c; font-size: 13px; font-weight: 650; }
 .student-theme-control button { width: 30px; height: 30px; padding: 0; border-radius: 9px; box-shadow: none; }
 .student-sidebar-toggle, .student-mobile-toggle { display: grid; place-items: center; border: 1px solid #d0d9d2; border-radius: 10px; background: #fcfbf7; color: #263f3a; cursor: pointer; }
 .student-sidebar-toggle:hover, .student-sidebar-toggle:focus-visible, .student-mobile-toggle:hover, .student-mobile-toggle:focus-visible { border-color: #78938a; background: #dde5de; outline: 3px solid rgba(181, 201, 184, .45); outline-offset: 2px; }
-.student-sidebar-toggle { position: absolute; z-index: 40; top: 12px; right: 12px; width: 28px; height: 28px; box-shadow: 0 4px 14px rgba(38, 63, 58, .12); }
+.student-sidebar-toggle { position: static; z-index: 40; flex: 0 0 auto; width: 28px; height: 28px; box-shadow: 0 4px 14px rgba(38, 63, 58, .12); }
 .student-sidebar-toggle svg { width: 15px; height: 15px; }
 .student-mobile-toggle { display: none; position: absolute; top: 18px; left: 18px; width: 40px; height: 40px; border-color: rgba(245, 241, 232, .25); background: rgba(245, 241, 232, .09); color: #f5f1e8; }
 .student-mobile-toggle svg { width: 18px; height: 18px; }
@@ -270,6 +287,9 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
   .continue-reading-panel { padding: 18px; }
   .continue-reading-panel h2 { font-size: 18px; }
   .reader-note-colors { max-width: 100%; overflow-x: auto; }
+  .base-modal-backdrop { padding: 12px; }
+  .base-modal { max-height: calc(100dvh - 24px); border-radius: 18px; padding: 18px; }
+  .base-modal-header h2 { font-size: 18px; }
 }
 
 button, a, input, select, textarea, [role='button'] {
@@ -579,10 +599,6 @@ html.dark .student-shell .student-hero h1.text-slate-100 { color: #f5f1e8 !impor
 .student-shell .status-pending { border-color: #dfc69d; background: #f0e4cc !important; color: #795b32 !important; }
 .student-shell .status-approved { border-color: #b9cec0; background: #dde5de !important; color: #40534a !important; }
 .student-shell .status-rejected { border-color: #d9b6ae; background: #f2dfda !important; color: #8d4e4a !important; }
-.review-modal-backdrop { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; background: rgba(24, 43, 39, .45); padding: 20px; }
-.review-modal { width: min(100%, 440px); border: 1px solid #e2ded4; border-radius: 20px; background: #fcfbf7; padding: 24px; box-shadow: 0 24px 70px rgba(24, 43, 39, .24); }
-.review-modal-close { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #e2ded4; border-radius: 9px; background: transparent; color: #52635c; font-size: 20px; line-height: 1; }
-
 html.dark .student-shell { background: #263f3a !important; color: #f5f1e8 !important; }
 html.dark .student-sidebar { border-color: #52645a; background: #1f302c; }
 html.dark .student-brand { color: #f5f1e8; }
@@ -594,8 +610,6 @@ html.dark .student-sidebar-footer { border-color: #52645a; }
 html.dark .student-sidebar-footer button:hover { background: #405b50; color: #ffffff; }
 html.dark .student-theme-control button { border-color: #63736a; background: #39453d; color: #f5f1e8; }
 html.dark .student-sidebar-toggle { border-color: #63736a; background: #39453d; color: #f5f1e8; }
-html.dark .review-modal { border-color: #52645a; background: #263f3a; }
-html.dark .review-modal-close { border-color: #63736a; color: #f5f1e8; }
 html.dark .notification-modal { border-color: #52645a; background: #263f3a; }
 html.dark .notification-modal-close { border-color: #63736a; color: #f5f1e8; }
 html.dark .reader-tool-button-muted { border-color: #52645a; color: #b5c9b8; }
@@ -691,7 +705,7 @@ html.dark .assistant-session-confirm button { border-color: #52645a; background:
   .student-layout { display: block; }
   .student-sidebar { position: fixed; z-index: 30; top: 0; bottom: 0; left: 0; width: min(320px, 88vw); min-height: 100vh; overflow-y: auto; overscroll-behavior: contain; transform: translateX(-105%); border-right: 1px solid #e2ded4; border-radius: 0 24px 24px 0; background: #fcfbf7; padding: max(22px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom)); box-shadow: 18px 0 40px rgba(38, 63, 58, .12); transition: transform .25s ease; }
   .student-sidebar.sidebar-open { transform: translateX(0); }
-  .student-sidebar .student-sidebar-toggle { position: absolute; z-index: 1; top: max(20px, env(safe-area-inset-top)); right: 18px; left: auto; width: 40px; height: 40px; }
+  .student-sidebar .student-sidebar-toggle { width: 40px; height: 40px; }
   .student-layout.sidebar-collapsed .student-sidebar { align-items: stretch; padding: max(22px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom)); }
   .student-layout.sidebar-collapsed .student-brand > span:last-child,
   .student-layout.sidebar-collapsed .student-nav span,
@@ -1968,6 +1982,7 @@ html[data-theme] .landing-page .landing-check { background: var(--theme-accent-s
 .theme-picker-option:hover, .theme-picker-option.is-selected, .theme-picker-mode:hover { background: var(--theme-accent-pale); }.theme-picker-check { margin-left: auto; color: var(--theme-accent-strong); font-weight: 800; }.theme-picker-mode { margin-top: 6px; border-top: 1px solid var(--theme-border); border-radius: 0; padding-top: 11px; color: var(--theme-muted); }
 @media (max-width: 520px) { .theme-picker-label { display: none; }.theme-picker-trigger { padding: 9px; }.theme-picker-menu { right: -45px; } }
 
+
 /* Shared brand colors follow the selected palette everywhere. */
 .brand-logo-mark { background: var(--theme-ink, #263f3a); color: #fff; box-shadow: 0 4px 12px var(--theme-shadow, rgba(38,63,58,.16)); }
 .brand-logo-name { color: var(--theme-text, #242a28); }
@@ -2195,7 +2210,6 @@ html[data-theme] .admin-shell button[class*="bg-sky-500"]:hover { transform: tra
 html[data-theme] .base-modal,
 html[data-theme] .notification-modal,
 html[data-theme] .access-modal,
-html[data-theme] .review-modal,
 html[data-theme] .study-panel-modal { box-shadow: 8px 9px 0 var(--theme-shadow-accent) !important; }
 html[data-theme] .student-shell .catalog-panel,
 html[data-theme] .student-shell .loans-panel,
@@ -2259,14 +2273,12 @@ html[data-theme] .admin-shell button[class~="bg-sky-500"]:hover { background: va
 html[data-theme] .base-modal,
 html[data-theme] .notification-modal,
 html[data-theme] .access-modal,
-html[data-theme] .review-modal,
 html[data-theme] .study-panel-modal,
 html[data-theme] .reader-note-editor,
 html[data-theme] .reader-note-bubble { border-color: var(--theme-border) !important; background: var(--theme-panel) !important; color: var(--theme-text) !important; box-shadow: 0 18px 48px var(--theme-shadow) !important; }
 html[data-theme] .base-modal [class~="text-slate-900"],
 html[data-theme] .notification-modal [class~="text-slate-900"],
 html[data-theme] .access-modal [class~="text-slate-900"],
-html[data-theme] .review-modal [class~="text-slate-900"],
 html[data-theme] .study-panel-modal [class~="text-slate-900"] { color: var(--theme-text) !important; }
 html[data-theme] .base-modal [class~="text-slate-600"],
 html[data-theme] .base-modal [class~="text-slate-500"],
@@ -2274,20 +2286,17 @@ html[data-theme] .notification-modal [class~="text-slate-600"],
 html[data-theme] .notification-modal [class~="text-slate-500"],
 html[data-theme] .access-modal [class~="text-slate-600"],
 html[data-theme] .access-modal [class~="text-slate-500"],
-html[data-theme] .review-modal [class~="text-slate-600"],
-html[data-theme] .review-modal [class~="text-slate-500"] { color: var(--theme-muted) !important; }
 html[data-theme] .base-modal-close,
 html[data-theme] .notification-modal-close,
-html[data-theme] .review-modal-close { border-color: var(--theme-border); background: transparent; color: var(--theme-text); }
+html[data-theme] .notification-modal-close { border-color: var(--theme-border); background: transparent; color: var(--theme-text); }
 html[data-theme] .base-modal-close:hover,
-html[data-theme] .notification-modal-close:hover,
-html[data-theme] .review-modal-close:hover { border-color: var(--theme-accent); background: var(--theme-accent-pale); }
+html[data-theme] .notification-modal-close:hover { border-color: var(--theme-accent); background: var(--theme-accent-pale); }
 html[data-theme] .base-modal input,
 html[data-theme] .base-modal textarea,
 html[data-theme] .base-modal select,
 html[data-theme] .access-modal input,
 html[data-theme] .access-modal textarea,
-html[data-theme] .review-modal textarea { border-color: var(--theme-border) !important; background: var(--theme-panel-soft) !important; color: var(--theme-text) !important; }
+html[data-theme] .access-modal textarea { border-color: var(--theme-border) !important; background: var(--theme-panel-soft) !important; color: var(--theme-text) !important; }
 
 /* Keep every action control readable inside themed auth, admin, and modal surfaces. */
 html[data-theme] .surface-page .surface-card button,
@@ -2295,29 +2304,25 @@ html[data-theme] .auth-page .auth-card button,
 html[data-theme] .admin-shell button,
 html[data-theme] .base-modal button,
 html[data-theme] .notification-modal button,
-html[data-theme] .access-modal button,
-html[data-theme] .review-modal button { color: var(--theme-text); }
+html[data-theme] .access-modal button { color: var(--theme-text); }
 html[data-theme] .surface-page .surface-card button[class*="bg-forest"],
 html[data-theme] .auth-page .auth-card button[type="submit"],
 html[data-theme] .admin-shell button[class*="bg-slate-900"],
 html[data-theme] .admin-shell button[class*="bg-sky-500"],
 html[data-theme] .base-modal button[class*="bg-forest"],
-html[data-theme] .access-modal .pine-action,
-html[data-theme] .review-modal .pine-action { background: var(--theme-ink) !important; color: #fff !important; }
+html[data-theme] .access-modal .pine-action { background: var(--theme-ink) !important; color: #fff !important; }
 html[data-theme] .surface-page .surface-card button[class*="bg-forest"]:hover,
 html[data-theme] .auth-page .auth-card button[type="submit"]:hover,
 html[data-theme] .admin-shell button[class*="bg-slate-900"]:hover,
 html[data-theme] .admin-shell button[class*="bg-sky-500"]:hover,
 html[data-theme] .base-modal button[class*="bg-forest"]:hover,
-html[data-theme] .access-modal .pine-action:hover,
-html[data-theme] .review-modal .pine-action:hover { background: var(--theme-accent-strong) !important; color: #fff !important; }
+html[data-theme] .access-modal .pine-action:hover { background: var(--theme-accent-strong) !important; color: #fff !important; }
 html[data-theme] .surface-page .surface-card button:not([class*="bg-"]),
 html[data-theme] .auth-page .auth-card button:not([class*="bg-"]),
 html[data-theme] .admin-shell button:not([class*="bg-"]),
 html[data-theme] .base-modal button:not([class*="bg-"]),
 html[data-theme] .notification-modal button:not([class*="bg-"]),
-html[data-theme] .access-modal button:not([class*="bg-"]),
-html[data-theme] .review-modal button:not([class*="bg-"]) { border-color: var(--theme-border); color: var(--theme-accent-strong); }
+html[data-theme] .access-modal button:not([class*="bg-"]) { border-color: var(--theme-border); color: var(--theme-accent-strong); }
 html[data-theme] .surface-page .surface-card input,
 html[data-theme] .surface-page .surface-card textarea,
 html[data-theme] .surface-page .surface-card select,
@@ -2340,8 +2345,7 @@ html.dark[data-theme] .auth-card button,
 html.dark[data-theme] .admin-shell button,
 html.dark[data-theme] .base-modal button,
 html.dark[data-theme] .notification-modal button,
-html.dark[data-theme] .access-modal button,
-html.dark[data-theme] .review-modal button { color: var(--theme-text); }
+html.dark[data-theme] .access-modal button { color: var(--theme-text); }
 
 @keyframes shimmer {
   100% {
@@ -2428,5 +2432,105 @@ html.dark[data-theme] .review-modal button { color: var(--theme-text); }
     z-index: 29;
     inset: 0;
     background: rgba(24, 43, 39, .42);
+  }
+}
+
+/* Shared responsive safeguards for every route. */
+html { text-size-adjust: 100%; }
+body { overflow-x: clip; }
+img, video { max-width: 100%; height: auto; }
+canvas { max-width: 100%; }
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 640px) {
+  .base-modal-backdrop,
+  .notification-modal-backdrop,
+  .access-modal-backdrop,
+  .profile-modal-backdrop {
+    align-items: end;
+    padding: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom));
+  }
+  .base-modal,
+  .notification-modal,
+  .access-modal,
+  .profile-modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    border-radius: 18px;
+    padding: 18px;
+  }
+  .profile-modal-grid { grid-template-columns: 1fr; }
+  .profile-modal-actions { flex-wrap: wrap; }
+  .profile-modal-actions > * { flex: 1 1 140px; }
+  .modal-record { align-items: flex-start; flex-wrap: wrap; }
+  .modal-record > div { min-width: 0; flex: 1 1 190px; }
+  .modal-record > span { flex: 0 0 auto; }
+}
+
+@media (max-width: 420px) {
+  .student-shell,
+  .admin-shell { padding-inline: 10px !important; }
+  .student-shell .surface-card,
+  .admin-shell .surface-card { border-radius: 16px !important; }
+  .student-shell h1,
+  .admin-shell h1 { overflow-wrap: anywhere; }
+}
+
+/* Final reader viewport safeguards. These rules intentionally come last so
+   they win over the reader's legacy layout overrides above. */
+.reader-shell,
+.reader-shell > .mx-auto,
+.reader-stage,
+.reader-workspace { min-width: 0; }
+.reader-workspace { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.reader-lazy-page-placeholder { content-visibility: auto; contain-intrinsic-size: 900px 1200px; }
+
+@media (max-width: 700px) {
+  .reader-page > .mx-auto { padding-inline: 8px !important; }
+  .reader-shell .reader-toolbar { padding: 8px !important; }
+  .reader-toolbar > div:first-child { gap: 8px !important; }
+  .reader-toolbar > div:first-child > div:first-child { max-width: 100%; }
+  .reader-toolbar > div:first-child > div:first-child h2 { max-width: min(58vw, 260px); }
+  .reader-shell .reader-sidebar { gap: 6px; max-height: 132px; padding: 8px !important; }
+  .reader-shell .reader-sidebar-button,
+  .reader-sidebar-pages button { min-height: 40px; }
+  .reader-shell .reader-workspace { border-radius: 14px !important; padding: 6px !important; }
+  .reader-shell .reader-quick-drawing-tools { top: auto !important; right: 8px !important; bottom: 8px !important; left: 8px !important; max-width: none !important; transform: none !important; }
+  .reader-shell .study-panel-modal { max-height: calc(100dvh - 24px) !important; }
+}
+
+@media (max-width: 420px) {
+  .reader-toolbar > div:first-child > div:first-child a { padding-inline: 8px !important; font-size: 0 !important; }
+  .reader-toolbar > div:first-child > div:first-child a::after { content: "←"; font-size: 16px; }
+  .reader-toolbar > div:first-child > div:first-child h2 { max-width: 48vw; font-size: 12px !important; }
+  .reader-shell .reader-sidebar { max-height: 148px; }
+  .reader-shell .reader-sidebar-button { min-width: 68px; }
+}
+
+/* Keep study tools reachable while the long document scrolls. On phones the
+   rail becomes a sticky horizontal tool strip; on larger screens it remains a
+   compact sticky vertical rail. */
+@media (min-width: 701px) {
+  .reader-shell .reader-sidebar {
+    position: sticky !important;
+    top: max(8px, env(safe-area-inset-top)) !important;
+    z-index: 30;
+    align-self: start;
+    max-height: calc(100dvh - 16px);
+  }
+}
+
+@media (max-width: 700px) {
+  .reader-shell .reader-sidebar {
+    position: sticky !important;
+    top: max(8px, env(safe-area-inset-top)) !important;
+    z-index: 30;
+    align-self: stretch;
+    background: var(--reader-surface) !important;
+    box-shadow: 0 6px 16px rgba(31, 45, 42, .08);
   }
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 function validPage(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0
@@ -44,6 +45,10 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    if (!sameOrigin(request)) return originViolation()
+    if (bodyTooLarge(request, 512 * 1024)) return NextResponse.json({ error: 'Drawing request is too large.' }, { status: 413 })
+    const requestLimit = rateLimit(request, { name: 'study-drawing-write', limit: 120, windowMs: 60_000 })
+    if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
     const body = await request.json()
     const bookId = Number(body.bookId)
     const page = Number(body.page)

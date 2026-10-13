@@ -9,9 +9,10 @@ import WalletModal from '@/components/WalletModal'
 import PhysicalBorrowModal from '@/components/PhysicalBorrowModal'
 import ThemeToggle from '@/components/ThemeToggle'
 import BrandLogo from '@/components/BrandLogo'
+import ActionModal from '@/components/ActionModal'
 import { StudentDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
-import { getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode } from '@/utils/libraryContracts'
+import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
@@ -23,12 +24,14 @@ type Book = {
   description: string | null
   isbn: string | null
   access_points: number
+  access_costs: DigitalAccessCosts | null
   access_mode: CanonicalAccessMode
   premium_price: number
   access_duration_days: number
   page_count?: number | null
   pdf_url?: string | null
   catalog_type: 'digital' | 'physical' | 'hybrid'
+  isOwner?: boolean
 }
 
 type PhysicalBookSelection = {
@@ -79,8 +82,6 @@ type PhysicalLoan = {
   receipt_number: string | null
   title?: string
 }
-const accessDurationOptions = [1, 3, 7, 14, 30]
-
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
 }
@@ -130,9 +131,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loanActionId, setLoanActionId] = useState<number | null>(null)
+  const [confirmAction, setConfirmAction] = useState<{ type: 'renew' | 'return'; id: number } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [wishlistIds, setWishlistIds] = useState<Set<number>>(new Set())
   const [fines, setFines] = useState<Fine[]>([])
   const [finesLoaded, setFinesLoaded] = useState(false)
   const [readingProgressLoaded, setReadingProgressLoaded] = useState(false)
@@ -140,13 +141,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([])
   const [notificationError, setNotificationError] = useState<string | null>(null)
   const [notificationReloadToken, setNotificationReloadToken] = useState(0)
-  const [reviewBookId, setReviewBookId] = useState<number | null>(null)
-  const [reviewRating, setReviewRating] = useState('5')
-  const [reviewComment, setReviewComment] = useState('')
   const [contributionOpen, setContributionOpen] = useState(false)
   const [contributionSubmitting, setContributionSubmitting] = useState(false)
   const [contributionStatus, setContributionStatus] = useState<string | null>(null)
   const [contributionForm, setContributionForm] = useState({ title: '', author: '', description: '', pdfUrl: '' })
+  const [contributionFile, setContributionFile] = useState<File | null>(null)
   const [lastReadPages, setLastReadPages] = useState<Record<number, number>>({})
   const [readingProgress, setReadingProgress] = useState<Record<number, { current_page: number; total_pages: number | null }>>({})
   const [dataReloadToken, setDataReloadToken] = useState(0)
@@ -170,6 +169,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [notificationsOpen, continueReadingOpen])
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const previousOverflow = document.body.style.overflow
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false)
+    }
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [sidebarOpen])
 
   useEffect(() => {
     if (!userId) return
@@ -200,6 +213,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setFinesLoaded(true)
     })
   }, [userId, notificationsOpen, finesLoaded])
+
+  useEffect(() => {
+    if (!notificationsOpen) return
+    const unreadNotifications = systemNotifications.slice(0, 5).filter((notification) => !notification.read_at)
+    if (unreadNotifications.length === 0) return
+    void Promise.all(unreadNotifications.map((notification) => markNotificationRead(notification.id)))
+  }, [notificationsOpen, systemNotifications])
 
   useEffect(() => {
     if (!userId || readingProgressLoaded) return
@@ -255,10 +275,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0, department: profileData?.department ?? null })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, physicalLoansResult, wishlistResult] = await Promise.all([
+      const [booksResult, requestsResult, physicalLoansResult, contributionResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, access_points, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
+          .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -270,7 +290,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           .select('id, book_id, copy_id, duration_days, fee_amount, payment_method, payment_status, status, requested_at, checked_out_at, due_date, returned_at, receipt_number')
           .eq('student_id', currentUser.id)
           .order('requested_at', { ascending: false }),
-        supabase.from('wishlists').select('book_id').eq('student_id', currentUser.id),
+        supabase.from('book_contributions').select('approved_book_id').eq('user_id', currentUser.id).eq('status', 'approved'),
       ])
 
       const isMissingTableError = (result: { error?: { code?: string; message?: string } | null }) =>
@@ -285,6 +305,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         return
       }
 
+      const ownedContributionBookIds = new Set((contributionResult.data ?? [])
+        .map((item: { approved_book_id: number | null }) => item.approved_book_id)
+        .filter((bookId): bookId is number => Number.isInteger(bookId)))
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
         ...book,
         title: book.title ?? '',
@@ -293,17 +316,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         description: book.description ?? '',
         isbn: book.isbn ?? null,
         access_points: book.access_points ?? 0,
-        access_mode: normalizeAccessMode(book.access_mode, book.access_points),
+        access_costs: (book.access_costs ?? null) as DigitalAccessCosts | null,
+        access_mode: ownedContributionBookIds.has(book.id)
+          ? 'free'
+          : normalizeAccessMode(book.access_mode, book.access_points),
         premium_price: Number(book.premium_price ?? 0),
         access_duration_days: book.access_duration_days ?? 30,
         page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
         catalog_type: book.catalog_type ?? 'digital',
+        isOwner: ownedContributionBookIds.has(book.id),
       }))
 
       setBooks(fetchedBooks)
       const bookLookup = new Map<number, Book>(fetchedBooks.map((b) => [b.id, b]))
-      setWishlistIds(new Set((wishlistResult.data ?? []).map((item: { book_id: number }) => item.book_id)))
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
         const matchingBook = bookLookup.get(request.book_id)
         return {
@@ -568,6 +594,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     if (!selectedBook) return
     const book = selectedBook
     if (!userId) return
+    if (book.isOwner) {
+      router.push(`/reader/${book.id}`)
+      setSelectedBook(null)
+      return
+    }
     if (book.access_mode === 'premium') {
       setRequestStatus('Paid e-book checkout is temporarily unavailable. Choose a free or points-based e-book instead.')
       return
@@ -588,7 +619,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setRequestStatus(data.status === 'approved'
         ? `Access unlocked for ${book.title} for ${durationDays} days. You can start reading now.`
         : `Access requested for ${book.title} for ${durationDays} days.`)
-      const pointsCost = book.access_mode === 'points' ? Number(data.pointsCost ?? getDigitalAccessCost(book.access_points, Number(durationDays))) : 0
+      const pointsCost = book.access_mode === 'points' ? Number(data.pointsCost ?? getDigitalAccessCost(book.access_costs, Number(durationDays), book.access_points)) : 0
       setProfile((current) => current ? { ...current, points_balance: current.points_balance - pointsCost } : current)
       const supabase = getSupabase()
       const { data: requestsResult } = await supabase
@@ -606,7 +637,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     setSelectedBook(null)
   }
 
-  const handleLoanAction = async (loanId: number) => {
+  const executeRenewLoan = async (loanId: number) => {
+    const loan = borrowRequests.find((request) => request.id === loanId)
+    if (!loan || loan.status !== 'approved' || loan.returned_date) {
+      setRequestStatus('This e-book is no longer available for renewal.')
+      return
+    }
     setLoanActionId(loanId)
     setRequestStatus(null)
     const supabase = getSupabase()
@@ -620,32 +656,79 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     setLoanActionId(null)
   }
 
-  const handleWishlist = async (bookId: number) => {
-    if (!userId) return
-    const supabase = getSupabase()
-    if (wishlistIds.has(bookId)) {
-      const { error } = await supabase.from('wishlists').delete().eq('book_id', bookId).eq('student_id', userId)
-      if (!error) setWishlistIds((current) => { const next = new Set(current); next.delete(bookId); return next })
-    } else {
-      const { error } = await supabase.from('wishlists').insert({ book_id: bookId, student_id: userId })
-      if (!error) setWishlistIds((current) => new Set(current).add(bookId))
+  const executeReturnLoan = async (loanId: number) => {
+    const loan = borrowRequests.find((request) => request.id === loanId)
+    if (!loan || loan.status !== 'approved' || loan.returned_date) {
+      setRequestStatus('This e-book has already been returned or is no longer active.')
+      return
+    }
+    setLoanActionId(loanId)
+    setRequestStatus(null)
+    try {
+      const response = await fetch('/api/loans/return', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: loanId }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Unable to return this e-book.')
+      setBorrowRequests((current) => current.map((request) => request.id === loanId ? { ...request, ...result.loan } : request))
+      setRequestStatus('E-book returned successfully.')
+    } catch (error) {
+      setRequestStatus(error instanceof Error ? error.message : 'Unable to return this e-book.')
+    } finally {
+      setLoanActionId(null)
     }
   }
 
-  const handleReview = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!userId || reviewBookId === null) return
-    const { error } = await getSupabase().from('reviews').upsert({ book_id: reviewBookId, student_id: userId, rating: Number(reviewRating), comment: reviewComment.trim() || null }, { onConflict: 'book_id,student_id' })
-    setRequestStatus(error ? error.message : 'Your review was saved.')
-    if (!error) {
-      setReviewBookId(null)
-      setReviewComment('')
-    }
-  }
+  const handleLoanAction = (loanId: number) => setConfirmAction({ type: 'renew', id: loanId })
+  const handleReturnLoan = (loanId: number) => setConfirmAction({ type: 'return', id: loanId })
 
-  function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    router.push('/contributions')
+    if (!userId || !contributionFile) {
+      setContributionStatus('Please choose a PDF file before submitting.')
+      return
+    }
+    if (contributionFile.type !== 'application/pdf' || contributionFile.size > 50 * 1024 * 1024) {
+      setContributionStatus('Only PDF files up to 50 MB are accepted.')
+      return
+    }
+    setContributionSubmitting(true)
+    setContributionStatus(null)
+    try {
+      const uploadData = new FormData()
+      uploadData.append('file', contributionFile)
+      uploadData.append('category', 'Contributions')
+      uploadData.append('provider', 'supabase')
+      uploadData.append('allow_fallback', 'false')
+      const uploadResponse = await fetch('/api/storage/upload', { method: 'POST', body: uploadData })
+      const uploaded = await uploadResponse.json()
+      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Unable to upload PDF.')
+
+      const { error } = await getSupabase().rpc('submit_book_contribution_v2', {
+        p_title: contributionForm.title.trim(),
+        p_author: contributionForm.author.trim(),
+        p_description: contributionForm.description.trim() || null,
+        p_pdf_url: uploaded.pdf_url || uploaded.storage_path,
+        p_storage_provider: uploaded.storage_provider || 'supabase',
+        p_storage_file_id: uploaded.storage_file_id || null,
+        p_storage_path: uploaded.storage_path || null,
+        p_file_name: uploaded.file_name || contributionFile.name,
+        p_file_size: uploaded.file_size ?? contributionFile.size,
+        p_mime_type: uploaded.mime_type || 'application/pdf',
+      })
+      if (error) throw new Error(error.message)
+      setContributionForm({ title: '', author: '', description: '', pdfUrl: '' })
+      setContributionFile(null)
+      setContributionOpen(false)
+      setContributionStatus('Contribution submitted successfully and is awaiting review.')
+      setDataReloadToken((value) => value + 1)
+    } catch (error) {
+      setContributionStatus(error instanceof Error ? error.message : 'Unable to submit contribution.')
+    } finally {
+      setContributionSubmitting(false)
+    }
   }
 
   if (loadError) {
@@ -671,14 +754,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       {sidebarOpen ? <button type="button" className="student-sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} /> : null}
       <div className={`dashboard-layout student-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'dashboard-sidebar-collapsed sidebar-collapsed' : ''}`}>
         <aside id="member-navigation" className={`dashboard-sidebar student-sidebar ${sidebarOpen ? 'dashboard-sidebar-open sidebar-open' : ''}`}>
-          <BrandLogo className="student-brand" iconSize="sm" />
-          <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <MenuIcon />}</button>
+          <div className="student-sidebar-header">
+            <BrandLogo className="student-brand" iconSize="sm" />
+            <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <MenuIcon />}</button>
+          </div>
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label={`${memberType === 'faculty' ? 'Faculty' : 'Student'} workspace`}>
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
             <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Catalog</span></a>
-            <a href="/contributions" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Contributions</span></a>
+            <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true); setSidebarOpen(false) }}><BookIcon /><span>Contribute material</span></button>
           </nav>
           <div className="student-sidebar-footer">
             <div className="student-theme-control"><ThemeToggle /></div>
@@ -780,21 +865,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             </p>
           </div>
 
-          <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Saved to Wishlist
-            </span>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
-                {wishlistIds.size}
-              </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">books</span>
-            </div>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Resources saved for later
-            </p>
-          </div>
-
         </div>
 
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -805,7 +875,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search digital and physical library materials in one catalog.</p>
                   <div className="catalog-heading-actions mt-4">
-                  <button type="button" onClick={() => router.push('/contributions')} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Open contribution center</span></button>
+                  <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true) }} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Contribute material</span></button>
                   <button type="button" className="catalog-filter-toggle catalog-filter-toggle-heading" onClick={() => setCatalogControlsOpen((current) => !current)} aria-expanded={catalogControlsOpen} aria-controls="catalog-controls"><FilterIcon /><span>{catalogControlsOpen ? 'Hide filters' : 'Show filters'}</span></button>
                   </div>
                 </div>
@@ -943,7 +1013,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                             })
                             return
                           }
-                          setDurationDays(String(accessDurationOptions.includes(book.access_duration_days) ? book.access_duration_days : 30))
+                          setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
                           setSelectedBook(book)
                           setRequestStatus(null)
                         }}
@@ -960,10 +1030,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           category: book.category,
                           catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
                         })} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Physical copies</button> : null}
-                        <button type="button" onClick={() => void handleWishlist(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">
-                          {wishlistIds.has(book.id) ? 'Saved' : 'Save to wishlist'}
-                        </button>
-                        <button type="button" onClick={() => setReviewBookId(book.id)} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Review</button>
                       </div>
                       </> : <p className="resource-card-hint">Select to view details and actions</p>}
                     </div>
@@ -1044,6 +1110,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                               className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleReturnLoan(loan.id)}
+                              disabled={loanActionId !== null}
+                              className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Return
                             </button>
                           </div>
                         </div>
@@ -1138,7 +1212,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             </div>
 
             {selectedBook.access_mode !== 'premium' ? <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {accessDurationOptions.map((days) => (
+              {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => (
                 <button
                   key={days}
                   type="button"
@@ -1155,17 +1229,17 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points`}
+                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points`}
                 </span>
               </div>
               {selectedBook.access_mode === 'premium' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Choose another free or points-based e-book for automatic access. Paid checkout will return when secure payment confirmation is available.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>}
-              {selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_points, Number(durationDays)) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {getDigitalAccessCost(selectedBook.access_points, Number(durationDays)) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
+              {selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
             </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_points, Number(durationDays)) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_points, Number(durationDays))} points` : 'Unlock free access'}
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
@@ -1186,19 +1260,35 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <input required value={contributionForm.title} onChange={(event) => setContributionForm({ ...contributionForm, title: event.target.value })} placeholder="Book title" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <input required value={contributionForm.author} onChange={(event) => setContributionForm({ ...contributionForm, author: event.target.value })} placeholder="Author" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Why is this useful for the library?" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <input type="url" value={contributionForm.pdfUrl} onChange={(event) => setContributionForm({ ...contributionForm, pdfUrl: event.target.value })} placeholder="Optional public PDF URL" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. An administrator may send text extracted from an uploaded PDF to Google Gemini for an advisory usefulness review. Do not submit copyrighted material unless the library has permission to store and share it.</p>
+              <label className="block"><span className="text-sm font-medium">PDF file</span><input required type="file" accept="application/pdf,.pdf" onChange={(event) => setContributionFile(event.target.files?.[0] ?? null)} className="workspace-input mt-2 block w-full rounded-2xl border border-dashed px-4 py-3 text-sm" /><span className="mt-1 block text-xs text-slate-500">PDF only, maximum 50 MB.</span></label>
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. Do not submit copyrighted material unless the library has permission to store and share it.</p>
               {contributionStatus ? <p className="rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm text-slate-700 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100">{contributionStatus}</p> : null}
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                 <button type="button" onClick={() => setContributionOpen(false)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
                 <button type="submit" disabled={contributionSubmitting} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{contributionSubmitting ? 'Submitting...' : 'Submit for review'}</button>
               </div>
+              <button type="button" onClick={() => router.push('/contributions')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">View contribution history and revisions</button>
             </form>
           </section>
         </div>
       ) : null}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       <WalletModal open={walletOpen} balance={profile?.points_balance ?? 0} onClose={() => setWalletOpen(false)} onOpenDetails={() => router.push('/points')} />
+      <ActionModal
+        open={confirmAction !== null}
+        title={confirmAction?.type === 'renew' ? 'Renew e-book access?' : 'Return e-book?'}
+        description={confirmAction?.type === 'return' ? 'You will lose access before the current expiry date.' : undefined}
+        confirmLabel={confirmAction?.type === 'renew' ? 'Renew access' : 'Return e-book'}
+        tone={confirmAction?.type === 'return' ? 'danger' : 'default'}
+        busy={loanActionId !== null}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          const action = confirmAction
+          setConfirmAction(null)
+          if (action?.type === 'renew') void executeRenewLoan(action.id)
+          else if (action?.type === 'return') void executeReturnLoan(action.id)
+        }}
+      />
       {continueReadingOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setContinueReadingOpen(false) }}>
           <section className="notification-modal continue-reading-modal" role="dialog" aria-modal="true" aria-labelledby="continue-reading-modal-title">
@@ -1241,7 +1331,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 const dueDate = loan.due_date ? new Date(loan.due_date) : null
                 const diffDays = dueDate ? Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24)) : null
                 const isUrgent = diffDays !== null && diffDays <= 3
-                return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unlocked {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Expires {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}<button type="button" onClick={() => void handleLoanAction(loan.id)} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}</button></div></article>
+                return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unlocked {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Expires {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}<button type="button" onClick={() => void handleLoanAction(loan.id)} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}</button><button type="button" onClick={() => void handleReturnLoan(loan.id)} disabled={loanActionId !== null} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">Return</button></div></article>
               }) : <div className="modal-empty-state">You do not have any active digital access yet. Explore the catalog to unlock a resource.</div>}
             </div>
           </section>
@@ -1278,7 +1368,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               {systemNotifications.slice(0, 5).map((notification) => <li key={`system-${notification.id}`} className="rounded-[1.5rem] border border-pine-200 bg-pine-50 px-4 py-4 text-sm text-pine-900 dark:border-forest-700 dark:bg-forest-800/60 dark:text-paper-100"><div className="flex items-start justify-between gap-3"><div><strong>{notification.title}</strong><p className="mt-1">{notification.message}</p></div>{!notification.read_at ? <button type="button" className="text-xs font-semibold underline" onClick={() => void markNotificationRead(notification.id)}>Mark read</button> : null}</div></li>)}
               {borrowRequests.filter((request) =>
                 request.status === 'pending' ||
-                (request.status === 'approved' && !request.returned_date && Boolean(request.due_date && new Date(request.due_date).getTime() > clock))
+                (request.status === 'approved' && !request.returned_date && Boolean(request.due_date && new Date(request.due_date).getTime() > clock && Math.ceil((new Date(request.due_date).getTime() - clock) / (1000 * 60 * 60 * 24)) <= 3))
               ).slice(0, 3).map((request) => {
                 const dueDate = request.due_date ? new Date(request.due_date) : null
                 const daysLeft = dueDate ? Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24)) : null
@@ -1286,33 +1376,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               })}
               {borrowRequests.every((request) =>
                 request.status !== 'pending' &&
-                !(request.status === 'approved' && !request.returned_date && request.due_date && new Date(request.due_date).getTime() > clock)
+                !(request.status === 'approved' && !request.returned_date && request.due_date && new Date(request.due_date).getTime() > clock && Math.ceil((new Date(request.due_date).getTime() - clock) / (1000 * 60 * 60 * 24)) <= 3)
               ) ? <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Your borrowing notifications will appear here.</li> : null}
             </ul>
             {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>${fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong></div> : null}
           </section>
-        </div>
-      ) : null}
-      {reviewBookId !== null ? (
-        <div className="review-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewBookId(null) }}>
-          <form className="review-modal" onSubmit={handleReview}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Book review</p>
-                <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share your perspective</h2>
-              </div>
-              <button type="button" className="review-modal-close" onClick={() => setReviewBookId(null)} aria-label="Close review">×</button>
-            </div>
-            <label className="mt-6 block text-sm font-semibold text-slate-700 dark:text-slate-200">Rating
-              <select value={reviewRating} onChange={(event) => setReviewRating(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-3 py-2 text-sm">
-                {[5, 4, 3, 2, 1].map((rating) => <option key={rating} value={rating}>{rating} / 5</option>)}
-              </select>
-            </label>
-            <label className="mt-4 block text-sm font-semibold text-slate-700 dark:text-slate-200">Comment
-              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} rows={4} className="workspace-input mt-2 w-full resize-y rounded-xl border px-3 py-2 text-sm" placeholder="What did you find useful?" />
-            </label>
-            <button type="submit" className="pine-action mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold">Save review</button>
-          </form>
         </div>
       ) : null}
     </div>

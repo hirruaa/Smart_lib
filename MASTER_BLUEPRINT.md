@@ -246,7 +246,7 @@ Treat every transition as a state machine with permitted transition rules, audit
 | Catalog | `books` | Shared bibliographic record; `catalog_type` distinguishes digital, physical, hybrid; optional `cover_image_url`; legacy digital copy-count fields are not authoritative |
 | Digital access | `borrow_requests`, `book_access_grants`, `point_transactions`, legacy `ebook_purchase_requests` | Free/points access is automatically granted in the digital-loan transaction; old GCash purchase rows are retained for reconciliation and new submissions are disabled |
 | Physical circulation | `physical_book_copies`, `physical_loan_options`, `physical_book_requests`, `physical_book_waitlist`, `physical_reminder_events` | Each copy belongs to a title; requests bind member/title/copy/fee/payment; waitlist is member/title; reminder event is unique by loan/type/date |
-| Learning | `reading_progress`, `study_notes`, `highlights`, `study_drawings`, `reviews`, `wishlists` | Member-owned reading progress, annotations, feedback, and saved titles |
+| Learning | `reading_progress`, `study_notes`, `highlights`, `study_drawings` | Member-owned reading progress and annotations |
 | Engagement/admin | `notifications`, `email_queue`, `audit_logs`, `recognition_awards`, `rewards`, `achievements`, `user_achievements` | User messaging, async outbox, staff audit, points/reward/achievement features |
 | Assistant | `assistant_sessions`, `assistant_messages` | User-owned conversation sessions/messages; `/api/recommend` currently provides rule-based intent plus catalog/account data, not a general Gemini chatbot |
 | Contributions | `book_contributions` | Member submission reviewed by admin; optional AI screening result; approved contribution may link an approved book |
@@ -259,7 +259,7 @@ profiles 1—N borrow_requests / physical_book_requests / ebook_purchase_request
 profiles 1—N study_notes / highlights / reading_progress / notifications
 profiles N—N academic_courses (faculty_courses)
 books 1—N physical_book_copies / physical_book_requests / physical_book_waitlist
-books 1—N borrow_requests / book_access_grants / ebook_purchase_requests / reviews
+books 1—N borrow_requests / book_access_grants / ebook_purchase_requests
 physical_book_requests 0—1 physical_book_copies (active assignment)
 borrow_requests 0—N fines (legacy digital fine model; policy and UI require review)
 assistant_sessions 1—N assistant_messages

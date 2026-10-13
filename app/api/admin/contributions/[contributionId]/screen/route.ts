@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
 import { askGemini } from '@/utils/gemini'
+import { rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export const runtime = 'nodejs'
 export const maxDuration = 90
 
-export async function POST(_request: Request, { params }: { params: Promise<{ contributionId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ contributionId: string }> }) {
+  if (!sameOrigin(request)) return originViolation()
+  const requestLimit = rateLimit(request, { name: 'contribution-ai-screen', limit: 10, windowMs: 60 * 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const contributionId = Number((await params).contributionId)
   if (!Number.isInteger(contributionId) || contributionId < 1) {
     return NextResponse.json({ error: 'Invalid contribution.' }, { status: 400 })

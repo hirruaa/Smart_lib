@@ -6,9 +6,10 @@ import { getSupabase } from '@/utils/supabase/client'
 import { PointsSkeleton } from '@/components/skeletons'
 
 type Transaction = { id: number; amount: number; transaction_type: string; description: string; created_at: string }
-type Contribution = { id: number; title: string; status: string; points_awarded: number; created_at: string }
+type Contribution = { id: number; title: string; status: string; points_awarded: number; approved_book_id: number | null; created_at: string }
 type Recognition = { id: number; category: string; points: number; reason: string; created_at: string }
 type Grant = { id: number; book_id: number; access_type: string; points_paid: number; granted_at: string; expires_at: string | null; status: string; books?: { title: string }[] | null }
+type BorrowAccess = { id: number; book_id: number; points_cost: number; request_date: string | null; due_date: string | null; status: string; books?: { title: string }[] | null }
 type Achievement = { id: string; name: string; description: string; awarded_at: string }
 
 export default function PointsPage() {
@@ -31,21 +32,47 @@ export default function PointsPage() {
       const isMissingTableError = (error: { code?: string; message?: string } | null) =>
         Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-      const [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult] = await Promise.all([
+      const [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult, borrowAccessResult] = await Promise.all([
         supabase.from('profiles').select('points_balance').eq('id', user.id).single(),
         supabase.from('point_transactions').select('id,amount,transaction_type,description,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(100),
-        supabase.from('book_contributions').select('id,title,status,points_awarded,created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('book_contributions').select('id,title,status,points_awarded,approved_book_id,created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
         supabase.from('recognition_awards').select('id,category,points,reason,created_at').eq('student_id', user.id).order('created_at', { ascending: false }),
         supabase.from('book_access_grants').select('id,book_id,access_type,points_paid,granted_at,expires_at,status,books(title)').eq('student_id', user.id).order('granted_at', { ascending: false }),
         supabase.from('user_achievements').select('awarded_at,achievements(name,description)').eq('user_id', user.id).order('awarded_at', { ascending: false }),
+        supabase.from('borrow_requests').select('id,book_id,points_cost,request_date,due_date,status,books(title)').eq('student_id', user.id).gt('points_cost', 0).order('request_date', { ascending: false }).limit(100),
       ])
       const coreError = [profileResult, transactionResult, contributionResult].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (coreError) setError('Unable to load your points activity right now.')
       setBalance(profileResult.data?.points_balance ?? 0)
       setTransactions((transactionResult.data ?? []) as Transaction[])
-      setContributions((contributionResult.data ?? []) as Contribution[])
+      const contributionItems = (contributionResult.data ?? []) as Contribution[]
+      setContributions(contributionItems)
       setRecognition((!recognitionResult.error || !isMissingTableError(recognitionResult.error) ? (recognitionResult.data ?? []) : []) as Recognition[])
-      setGrants((!grantResult.error || !isMissingTableError(grantResult.error) ? (grantResult.data ?? []) : []) as Grant[])
+      const grants = (!grantResult.error || !isMissingTableError(grantResult.error) ? (grantResult.data ?? []) : []) as Grant[]
+      const pointUnlocks = (!borrowAccessResult.error || !isMissingTableError(borrowAccessResult.error) ? (borrowAccessResult.data ?? []) : []) as BorrowAccess[]
+      setGrants([
+        ...grants,
+        ...contributionItems.filter((item) => item.status === 'approved' && item.approved_book_id).map((item) => ({
+          id: item.id,
+          book_id: item.approved_book_id as number,
+          access_type: 'contributor_owner',
+          points_paid: 0,
+          granted_at: item.created_at,
+          expires_at: null,
+          status: 'active',
+          books: [{ title: item.title }],
+        })),
+        ...pointUnlocks.map((loan) => ({
+          id: loan.id,
+          book_id: loan.book_id,
+          access_type: 'points_unlock',
+          points_paid: loan.points_cost,
+          granted_at: loan.request_date ?? new Date().toISOString(),
+          expires_at: loan.due_date,
+          status: loan.status,
+          books: loan.books,
+        })),
+      ])
       setAchievements((!achievementResult.error || !isMissingTableError(achievementResult.error) ? (((achievementResult.data ?? []) as Array<{ awarded_at: string; achievements: { name: string; description: string }[] | null }>).map((item) => ({ id: item.awarded_at, awarded_at: item.awarded_at, name: item.achievements?.[0]?.name ?? 'Achievement', description: item.achievements?.[0]?.description ?? '' }))) : []) as Achievement[])
       setLoading(false)
     }

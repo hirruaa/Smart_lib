@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export async function GET(request: Request) {
   const supabase = await createClient()
@@ -28,6 +29,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  if (bodyTooLarge(request, 128 * 1024)) return NextResponse.json({ error: 'Assistant request body is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(request, { name: 'assistant-session-write', limit: 60, windowMs: 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -49,6 +54,12 @@ export async function POST(request: Request) {
     if (sessionError) return NextResponse.json({ error: 'Unable to verify assistant session.' }, { status: 500 })
     if (!ownedSession) return NextResponse.json({ error: 'Assistant session not found.' }, { status: 404 })
 
+    const serializedResults = JSON.stringify(body.results ?? [])
+    const serializedLoans = JSON.stringify(body.loans ?? [])
+    if (serializedResults.length > 100_000 || serializedLoans.length > 100_000) {
+      return NextResponse.json({ error: 'Assistant result data is too large.' }, { status: 413 })
+    }
+
     const { error } = await supabase.from('assistant_messages').insert({
       session_id: sessionId,
       user_id: user.id,
@@ -69,6 +80,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  const requestLimit = rateLimit(request, { name: 'assistant-session-delete', limit: 30, windowMs: 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

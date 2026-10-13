@@ -2,8 +2,13 @@ import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
+import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 export async function POST(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  if (bodyTooLarge(request, 16_384)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(request, { name: 'admin-create-member', limit: 20, windowMs: 60 * 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const sessionClient = await createClient()
   const { data: { user } } = await sessionClient.auth.getUser()
 

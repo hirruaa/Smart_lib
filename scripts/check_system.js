@@ -15,8 +15,6 @@ const requiredSchemaObjects = [
   'admin_decide_borrow_request',
   'renew_digital_loan',
   'return_digital_loan',
-  'reviews',
-  'wishlists',
   'fines',
   'academic_departments',
   'provision_profile',
