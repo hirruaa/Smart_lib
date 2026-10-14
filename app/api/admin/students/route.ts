@@ -96,3 +96,58 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ success: true, email })
 }
+
+export async function DELETE(request: Request) {
+  if (!sameOrigin(request)) return originViolation()
+  if (bodyTooLarge(request, 4_096)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
+  const requestLimit = rateLimit(request, { name: 'admin-delete-member', limit: 10, windowMs: 60 * 60_000 })
+  if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
+
+  const sessionClient = await createClient()
+  const { data: { user } } = await sessionClient.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+
+  const { data: profile, error: profileError } = await sessionClient
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  if (profileError) return apiError('Unable to verify administrator access.', 500, profileError)
+  if (profile?.role !== 'admin') return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
+
+  const body = await request.json().catch(() => null)
+  const targetUserId = body && typeof body === 'object' && typeof body.userId === 'string' ? body.userId.trim() : ''
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetUserId)) {
+    return NextResponse.json({ error: 'A valid member account is required.' }, { status: 400 })
+  }
+  if (targetUserId === user.id) return NextResponse.json({ error: 'You cannot delete your own administrator account.' }, { status: 400 })
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) {
+    return NextResponse.json({ error: 'Server-side Supabase admin credentials are not configured.' }, { status: 503 })
+  }
+
+  const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+  const { data: targetProfile, error: targetProfileError } = await adminClient
+    .from('profiles')
+    .select('role, email')
+    .eq('id', targetUserId)
+    .maybeSingle()
+
+  if (targetProfileError) return apiError('Unable to find the member account.', 500, targetProfileError)
+  if (!targetProfile) return NextResponse.json({ error: 'Member account not found.' }, { status: 404 })
+  if (targetProfile.role === 'admin' || targetProfile.role === 'librarian') {
+    return NextResponse.json({ error: 'Staff accounts cannot be deleted from member management.' }, { status: 403 })
+  }
+
+  const { error: deleteError } = await adminClient.auth.admin.deleteUser(targetUserId)
+  if (deleteError) {
+    return apiError('Unable to delete this account. Existing borrowing or audit records may require the account to be retained.', 409, deleteError)
+  }
+
+  return NextResponse.json({ success: true, email: targetProfile.email ?? null })
+}

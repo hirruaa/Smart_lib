@@ -158,7 +158,7 @@ type Contribution = {
 }
 
 type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
-type AdminConfirm = { type: 'deleteBook' | 'revokeLoan'; id: number; label?: string } | null
+type AdminConfirm = { type: 'deleteBook' | 'revokeLoan'; id: number; label?: string } | { type: 'deleteMember'; id: string; label?: string } | null
 
 function memberDisplayName(member?: Pick<Profile, 'full_name' | 'email'> | null, fallback = 'Member') {
   return member?.full_name?.trim() || fallback
@@ -705,6 +705,31 @@ export default function AdminPage() {
     }
     setSaving(false)
     setConfirmAction(null)
+  }
+
+  const executeDeleteMember = async (memberId: string, label: string) => {
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    try {
+      const response = await fetch('/api/admin/students', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: memberId }),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) {
+        setError(result?.error || 'Unable to delete the member account.')
+      } else {
+        await loadData()
+        setActionMessage(`${label} account deleted.`)
+      }
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete the member account.')
+    } finally {
+      setSaving(false)
+      setConfirmAction(null)
+    }
   }
 
   const openMemberEditor = (member: Profile) => {
@@ -1704,7 +1729,7 @@ export default function AdminPage() {
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (facultyCourseMap.get(student.id)?.join(', ') || '—') : (student.course || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (student.faculty_rank_id ? facultyRankMap.get(student.faculty_rank_id) || '—' : '—') : (student.student_year || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
-                        <td className="px-4 py-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: student.id })); setQuickAction('recognition') }} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button></div></td>
+                        <td className="px-4 py-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: student.id })); setQuickAction('recognition') }} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button>{profile?.role === 'admin' && (student.role === 'student' || student.role === 'faculty') ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteMember', id: student.id, label: memberDisplayName(student, student.email) })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete account</button> : null}</div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1866,6 +1891,16 @@ export default function AdminPage() {
           busy={saving}
           onClose={() => setConfirmAction(null)}
           onConfirm={() => { if (confirmAction?.type === 'revokeLoan') void executeRevoke(confirmAction.id) }}
+        />
+        <ActionModal
+          open={confirmAction?.type === 'deleteMember'}
+          title="Delete member account?"
+          description={confirmAction?.type === 'deleteMember' ? `${confirmAction.label ?? 'This member'} will lose access and their account data will be permanently deleted. This cannot be undone.` : undefined}
+          confirmLabel="Delete account"
+          tone="danger"
+          busy={saving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => { if (confirmAction?.type === 'deleteMember') void executeDeleteMember(confirmAction.id, confirmAction.label ?? 'Member') }}
         />
         <ActionModal
           open={reviewDialog !== null}
