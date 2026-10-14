@@ -106,6 +106,7 @@ type Profile = {
   email: string
   role: string
   created_at: string | null
+  points_balance?: number | null
   full_name?: string | null
   school?: string | null
   department?: string | null
@@ -251,6 +252,7 @@ export default function AdminPage() {
   const [memberToolModal, setMemberToolModal] = useState<'catalogs' | 'createMember' | null>(null)
   const [editingMember, setEditingMember] = useState<Profile | null>(null)
   const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
+  const [selectedMember, setSelectedMember] = useState<(Profile & { active_loans: number }) | null>(null)
   const [rankDraft, setRankDraft] = useState('')
   const [courseDraft, setCourseDraft] = useState('')
   const [departmentDraft, setDepartmentDraft] = useState('')
@@ -433,7 +435,7 @@ export default function AdminPage() {
         .limit(200),
       supabase
         .from('profiles')
-        .select('id, email, role, created_at, full_name, school, department, course, student_year, faculty_rank_id')
+        .select('id, email, role, created_at, points_balance, full_name, school, department, course, student_year, faculty_rank_id')
         .in('role', ['student', 'faculty', 'librarian'])
         .order('created_at', { ascending: false }),
       supabase
@@ -721,6 +723,7 @@ export default function AdminPage() {
       if (!response.ok) {
         setError(result?.error || 'Unable to delete the member account.')
       } else {
+        setSelectedMember(null)
         await loadData()
         setActionMessage(`${label} account deleted.`)
       }
@@ -1712,23 +1715,29 @@ export default function AdminPage() {
                   <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Member</th>
+                      <th className="px-4 py-3 font-semibold">Email</th>
                       <th className="px-4 py-3 font-semibold">Role</th>
                       <th className="px-4 py-3 font-semibold">School / department</th>
                       <th className="px-4 py-3 font-semibold">Program / teaching</th>
                       <th className="px-4 py-3 font-semibold">Title / year</th>
+                      <th className="px-4 py-3 font-semibold">Points</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
+                      <th className="px-4 py-3 font-semibold">Joined</th>
                       <th className="px-4 py-3 font-semibold">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                     {visibleStudentDetails.map((student) => (
-                      <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
+                      <tr key={student.id} tabIndex={0} onClick={() => setSelectedMember(student)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedMember(student) } }} className="cursor-pointer hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80">
                         <td className="px-4 py-4 text-slate-800 dark:text-slate-100"><span className="block font-medium">{memberDisplayName(student, '—')}</span><span className="text-xs capitalize text-slate-500">{student.role}</span></td>
+                        <td className="max-w-[220px] break-all px-4 py-4 text-slate-600 dark:text-slate-300">{student.email || '—'}</td>
                         <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{student.role}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{[student.school, student.department].filter(Boolean).join(' · ') || '—'}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (facultyCourseMap.get(student.id)?.join(', ') || '—') : (student.course || '—')}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (student.faculty_rank_id ? facultyRankMap.get(student.faculty_rank_id) || '—' : '—') : (student.student_year || '—')}</td>
+                        <td className="px-4 py-4 font-semibold text-slate-700 dark:text-slate-200">{Number(student.points_balance ?? 0).toLocaleString()}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
+                        <td className="whitespace-nowrap px-4 py-4 text-slate-600 dark:text-slate-300">{student.created_at ? new Date(student.created_at).toLocaleDateString() : '—'}</td>
                         <td className="px-4 py-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: student.id })); setQuickAction('recognition') }} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button>{profile?.role === 'admin' && (student.role === 'student' || student.role === 'faculty') ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteMember', id: student.id, label: memberDisplayName(student, student.email) })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete account</button> : null}</div></td>
                       </tr>
                     ))}
@@ -1742,6 +1751,30 @@ export default function AdminPage() {
           </>
           )}
         </main>
+        {selectedMember ? <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedMember(null) }}>
+          <section className="my-6 w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="member-details-title">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Member profile</p>
+                <h2 id="member-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{memberDisplayName(selectedMember, 'Member')}</h2>
+                <p className="mt-1 break-all text-sm text-slate-500 dark:text-slate-400">{selectedMember.email}</p>
+              </div>
+              <button type="button" onClick={() => setSelectedMember(null)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm dark:border-slate-700">Close</button>
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500 dark:text-slate-400">Role</p><p className="mt-1 font-semibold capitalize">{selectedMember.role}</p></div>
+              <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500 dark:text-slate-400">Points balance</p><p className="mt-1 font-semibold">{Number(selectedMember.points_balance ?? 0).toLocaleString()}</p></div>
+              <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500 dark:text-slate-400">Active loans</p><p className="mt-1 font-semibold">{selectedMember.active_loans}</p></div>
+              <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500 dark:text-slate-400">Joined</p><p className="mt-1 font-semibold">{selectedMember.created_at ? new Date(selectedMember.created_at).toLocaleDateString() : '-'}</p></div>
+            </div>
+            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Profile and academics</h3><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><div><dt className="text-slate-500">School</dt><dd className="font-medium">{selectedMember.school || '-'}</dd></div><div><dt className="text-slate-500">Department</dt><dd className="font-medium">{selectedMember.department || '-'}</dd></div><div><dt className="text-slate-500">Course / program</dt><dd className="font-medium">{selectedMember.course || '-'}</dd></div><div><dt className="text-slate-500">Year level</dt><dd className="font-medium">{selectedMember.student_year || '-'}</dd></div><div className="sm:col-span-2"><dt className="text-slate-500">Faculty title / courses</dt><dd className="font-medium">{selectedMember.role === 'faculty' ? [selectedMember.faculty_rank_id ? facultyRankMap.get(selectedMember.faculty_rank_id) : '', ...(facultyCourseMap.get(selectedMember.id) ?? [])].filter(Boolean).join(' · ') || '-' : 'Not applicable'}</dd></div></dl></section>
+              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account activity</h3><div className="mt-3 space-y-2 text-sm"><p>{digitalLoanHistory.filter((loan) => loan.student_id === selectedMember.id).length} digital loan record(s)</p><p>{physicalRequestPreview.filter((request) => request.student_id === selectedMember.id).length} recent physical request(s)</p><p>{contributions.filter((contribution) => contribution.user_id === selectedMember.id).length} contribution(s)</p></div></section>
+            </div>
+            <section className="mt-6"><h3 className="font-semibold text-slate-900 dark:text-slate-100">Recent digital loans</h3><div className="mt-3 space-y-2">{digitalLoanHistory.filter((loan) => loan.student_id === selectedMember.id).slice(0, 5).map((loan) => <div key={loan.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><span>{bookMap.get(loan.book_id)?.title ?? 'Unknown resource'}</span><span className="text-xs capitalize text-slate-500">{loan.status.replace('_', ' ')} · {loan.points_cost} points</span></div>)}{digitalLoanHistory.every((loan) => loan.student_id !== selectedMember.id) ? <p className="text-sm text-slate-500">No digital loan history.</p> : null}</div></section>
+            <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setSelectedMember(null); openMemberEditor(selectedMember) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit profile</button>{profile?.role === 'admin' && (selectedMember.role === 'student' || selectedMember.role === 'faculty') ? <button type="button" onClick={() => { setSelectedMember(null); setConfirmAction({ type: 'deleteMember', id: selectedMember.id, label: memberDisplayName(selectedMember, selectedMember.email) }) }} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white">Delete account</button> : null}</div>
+          </section>
+        </div> : null}
         <ActionModal
           open={quickAction === 'recognition'}
           title="Give student points"

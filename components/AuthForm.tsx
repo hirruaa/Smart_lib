@@ -39,7 +39,8 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false)
+  const [awaitingOtp, setAwaitingOtp] = useState(false)
+  const [otp, setOtp] = useState('')
 
   useEffect(() => {
     if (mode !== 'signup') return
@@ -114,8 +115,8 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
           setErrorMsg(result.error.message)
         } else {
           if (result.data.user && !result.data.session) {
-            setAwaitingConfirmation(true)
-            setSuccessMsg('We sent a confirmation link to your email. Open it to activate your account.')
+            setAwaitingOtp(true)
+            setSuccessMsg('We sent a 6-digit confirmation code to your email. Enter it below to activate your account.')
           } else {
             setSuccessMsg('Account registered successfully! You can sign in now.')
           }
@@ -123,7 +124,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
       } else if (mode === 'forgot') {
         const origin = getAuthOrigin()
         const result = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${origin}/reset-password`,
+          redirectTo: `${origin}/auth/callback?next=/reset-password`,
         })
 
         if (result.error) {
@@ -155,16 +156,32 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
     }
   }
 
-  const resendConfirmation = async () => {
+  const handleVerifyOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setErrorMsg('')
+    setSuccessMsg('')
+    setIsSubmitting(true)
+    try {
+      const result = await getSupabase().auth.verifyOtp({ email, token: otp.trim(), type: 'signup' })
+      if (result.error) setErrorMsg(result.error.message)
+      else router.replace('/dashboard')
+    } catch (error: any) {
+      setErrorMsg(error?.message || 'Unable to verify the confirmation code.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const resendOtp = async () => {
     setErrorMsg('')
     setSuccessMsg('')
     setIsSubmitting(true)
     try {
       const result = await getSupabase().auth.resend({ type: 'signup', email })
       if (result.error) setErrorMsg(result.error.message)
-      else setSuccessMsg('A new confirmation link was sent. Please check your inbox.')
+      else setSuccessMsg('A new 6-digit confirmation code was sent. Please check your inbox.')
     } catch (error: any) {
-      setErrorMsg(error?.message || 'Unable to resend the confirmation email.')
+      setErrorMsg(error?.message || 'Unable to resend the confirmation code.')
     } finally {
       setIsSubmitting(false)
     }
@@ -245,11 +262,12 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
           </div>
         ) : null}
 
-        {awaitingConfirmation ? <div className="mt-6 space-y-4">
-          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Check your inbox for the confirmation link sent to <strong>{email}</strong>. Open the link to activate your account.</p>
-          <button type="button" disabled={isSubmitting} onClick={() => void resendConfirmation()} className="w-full rounded-xl bg-forest-900 py-3 text-sm font-semibold text-paper-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-paper-100 dark:text-forest-900">{isSubmitting ? 'Sending...' : 'Resend confirmation email'}</button>
-          <Link href="/login" className="block text-center text-sm font-semibold text-pine-700 hover:underline dark:text-pine-200">Return to sign in</Link>
-        </div> : <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        {awaitingOtp ? <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Check your inbox for the 6-digit confirmation code sent to <strong>{email}</strong>.</p>
+          <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Confirmation code</span><input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.45em] text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="000000" /></label>
+          <button type="submit" disabled={isSubmitting || otp.length !== 6} className="w-full rounded-xl bg-forest-900 py-3 text-sm font-semibold text-paper-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-paper-100 dark:text-forest-900">{isSubmitting ? 'Verifying...' : 'Verify email'}</button>
+          <button type="button" disabled={isSubmitting} onClick={() => void resendOtp()} className="w-full text-sm font-semibold text-pine-700 hover:underline disabled:opacity-50 dark:text-pine-200">Resend code</button>
+        </form> : <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {mode === 'signup' && (
             <>
               <fieldset>
