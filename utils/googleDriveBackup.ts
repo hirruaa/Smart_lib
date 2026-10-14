@@ -230,7 +230,7 @@ async function* backupLines(supabase: SupabaseClient, stats: BackupStats) {
 
 export async function createGoogleDriveBackup(supabase: SupabaseClient) {
   if (!isGoogleDriveBackupConfigured()) {
-    throw new Error('Google Drive backups are not configured. Set the server-side Drive credentials and dedicated backup folder.')
+    throw new Error('Backup service is not configured.')
   }
 
   const stats: BackupStats = {

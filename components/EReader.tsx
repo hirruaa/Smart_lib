@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ActionModal from '@/components/ActionModal'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -10,14 +10,6 @@ type Stroke = { points: Point[]; color: string; width: number; opacity: number }
 type Note = { id: number; page: number | null; text: string | null; selection_text: string | null; created_at?: string; meta?: { x?: number; y?: number; color?: string; title?: string } }
 type Highlight = { id: number; page: number; rects: Array<{ x: number; y: number; width: number; height: number }>; color: string; meta?: { selection_text?: string } }
 type PdfModules = { Document: any; Page: any }
-type ContinuousPdfPagesProps = {
-  PageComponent: any
-  pageCount: number
-  width: number
-  pageFrameRef: React.RefObject<HTMLDivElement | null>
-  onActivePageChange: (page: number) => void
-  onPageRendered: () => void
-}
 const noteColors = ['#f6d77a', '#c9dfc8', '#c9dceb', '#f3c4b7']
 const highlightColors = ['#f0c94b', '#9ed8aa', '#9ec9e8', '#efaaa0']
 const highlightLabels = ['Definition', 'Key term', 'Example', 'Important', 'Question']
@@ -32,126 +24,16 @@ const penSizes = [2, 4, 6, 8]
 const markerSizes = [10, 16, 24, 32]
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
-function ContinuousPdfPages({
-  PageComponent,
-  pageCount,
-  width,
-  pageFrameRef,
-  onActivePageChange,
-  onPageRendered,
-}: ContinuousPdfPagesProps) {
-  const [nearbyPages, setNearbyPages] = useState<Set<number>>(() => new Set([1, 2, 3]))
-  const [pageAspectRatio, setPageAspectRatio] = useState(0.707)
-  const pageElementsRef = useRef(new Map<number, HTMLDivElement>())
-  const intersectingPagesRef = useRef(new Set<number>())
-
-  useEffect(() => {
-    const frame = pageFrameRef.current
-    if (!frame) return
-    if (!('IntersectionObserver' in window)) {
-      setNearbyPages(new Set(Array.from({ length: pageCount }, (_, index) => index + 1)))
-      return
-    }
-
-    const inRange = intersectingPagesRef.current
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        const page = Number((entry.target as HTMLElement).dataset.readerPage)
-        if (!Number.isInteger(page)) continue
-        if (entry.isIntersecting) inRange.add(page)
-        else inRange.delete(page)
-      }
-      const next = new Set<number>()
-      for (const page of inRange) {
-        for (let adjacent = Math.max(1, page - 1); adjacent <= Math.min(pageCount, page + 1); adjacent++) next.add(adjacent)
-      }
-      setNearbyPages(next)
-    }, { root: frame.parentElement, rootMargin: '1200px 0px' })
-
-    for (const element of pageElementsRef.current.values()) observer.observe(element)
-    return () => observer.disconnect()
-  }, [pageCount, pageFrameRef, width])
-
-  useEffect(() => {
-    const frame = pageFrameRef.current
-    if (!frame) return
-
-    const updateActivePage = () => {
-      const pages = Array.from(frame.querySelectorAll<HTMLElement>('[data-page-number]'))
-      if (!pages.length) return
-
-      const focusY = window.innerHeight * 0.35
-      const activePage = pages.find((page) => {
-        const rect = page.getBoundingClientRect()
-        return rect.top <= focusY && rect.bottom > focusY
-      }) ?? pages.reduce((closest, page) => {
-        const distance = Math.abs(page.getBoundingClientRect().top - focusY)
-        return distance < Math.abs(closest.getBoundingClientRect().top - focusY) ? page : closest
-      })
-      const pageNumber = Number(activePage.dataset.pageNumber)
-      const pageRect = activePage.getBoundingClientRect()
-      const frameRect = frame.getBoundingClientRect()
-      frame.style.setProperty('--reader-active-page-top', `${pageRect.top - frameRect.top}px`)
-      frame.style.setProperty('--reader-active-page-height', `${pageRect.height}px`)
-      if (Number.isInteger(pageNumber) && pageNumber > 0) onActivePageChange(pageNumber)
-    }
-
-    updateActivePage()
-    window.addEventListener('scroll', updateActivePage, { passive: true })
-    window.addEventListener('resize', updateActivePage)
-    return () => {
-      window.removeEventListener('scroll', updateActivePage)
-      window.removeEventListener('resize', updateActivePage)
-    }
-  }, [pageCount, pageFrameRef, onActivePageChange, width])
-
-  return <>{Array.from({ length: pageCount }, (_, index) => {
-    const pageNumber = index + 1
-    return <div
-      key={pageNumber}
-      ref={(element: HTMLDivElement | null) => {
-        if (element) {
-          pageElementsRef.current.set(pageNumber, element)
-        } else {
-          pageElementsRef.current.delete(pageNumber)
-        }
-      }}
-      data-reader-page={pageNumber}
-      className={nearbyPages.has(pageNumber) ? 'reader-lazy-page' : 'reader-lazy-page reader-lazy-page-placeholder'}
-      style={{ minHeight: width / pageAspectRatio, width }}
-    >
-      {nearbyPages.has(pageNumber) ? <PageComponent
-        pageNumber={pageNumber}
-        width={width}
-        data-page-number={pageNumber}
-        onLoadSuccess={(page: { getViewport: (options: { scale: number }) => { width: number; height: number } }) => {
-          if (pageNumber !== 1) return
-          const viewport = page.getViewport({ scale: 1 })
-          if (viewport.height > 0) setPageAspectRatio(viewport.width / viewport.height)
-        }}
-        onRenderSuccess={onPageRendered}
-      /> : null}
-    </div>
-  })}</>
-}
-
 export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdfUrl: string; title: string }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
   const [scale, setScale] = useState(1)
   const [pageWidth, setPageWidth] = useState(900)
-  const [activePanel, setActivePanelState] = useState<'notes' | 'highlights' | null>(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [selectedText, setSelectedText] = useState<string | null>(null)
   const [selectedPage, setSelectedPage] = useState<number | null>(null)
   const [selectedRects, setSelectedRects] = useState<Array<{ x: number; y: number; width: number; height: number }>>([])
   const [selectionMenuOpen, setSelectionMenuOpen] = useState(false)
-  function setActivePanel(panel: 'notes' | 'highlights' | null) {
-    if (panel === 'highlights' && selectionMenuOpen && selectedText) {
-      void createHighlight()
-      return
-    }
-    setActivePanelState(panel)
-  }
   const [drawMode, setDrawMode] = useState<'pen' | 'marker' | 'eraser' | null>(null)
   const [brushSize, setBrushSize] = useState(3)
   const [brushColor, setBrushColor] = useState('#263f3a')
@@ -171,6 +53,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [expandedNoteId, setExpandedNoteId] = useState<number | null>(null)
   const [noteDraft, setNoteDraft] = useState<Note | null>(null)
+  const [noteEditorAnchor, setNoteEditorAnchor] = useState({ x: 0, y: 0 })
   const [noteMode, setNoteMode] = useState(false)
   const [noteColor, setNoteColor] = useState(noteColors[0])
   const [draggingNoteId, setDraggingNoteId] = useState<number | null>(null)
@@ -182,14 +65,12 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const workspaceRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const pendingRestoreScrollRef = useRef(false)
   const brushCursorRef = useRef<HTMLDivElement | null>(null)
   const drawingRef = useRef<Stroke | null>(null)
   const drawingFrameRef = useRef<number | null>(null)
   const strokesRef = useRef<Stroke[]>([])
   const visibleNotes = useMemo(() => notes.filter((note) => Number(note.page) === pageNumber), [notes, pageNumber])
   const visibleHighlights = useMemo(() => highlights.filter((highlight) => Number(highlight.page) === pageNumber), [highlights, pageNumber])
-  const setVisiblePage = useCallback((page: number) => setPageNumber((current) => current === page ? current : page), [])
 
   useEffect(() => {
     let mounted = true
@@ -226,7 +107,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   useEffect(() => {
     const element = workspaceRef.current
     if (!element) return
-    const resize = () => setPageWidth(Math.max(320, Math.min(1080, element.clientWidth - 32)))
+    const resize = () => setPageWidth(Math.max(280, Math.min(1080, element.clientWidth - 32)))
     resize()
     const observer = new ResizeObserver(resize)
     observer.observe(element)
@@ -259,21 +140,18 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     setNumPages(null)
     const savedPage = Number(window.localStorage.getItem(`smart-lib:last-page:${bookId}`))
     if (Number.isInteger(savedPage) && savedPage > 0) {
-      pendingRestoreScrollRef.current = true
       setPageNumber(savedPage)
     }
     void fetch(`/api/reading-progress?book_id=${bookId}`).then((response) => response.ok ? response.json() : null).then((progress) => {
       if (progress?.current_page) {
-        pendingRestoreScrollRef.current = true
         setPageNumber(Number(progress.current_page))
       }
     }).catch(() => undefined)
   }, [bookId])
 
   useEffect(() => {
-    if (!numPages || !pendingRestoreScrollRef.current) return
-    pendingRestoreScrollRef.current = false
-    window.requestAnimationFrame(() => pageFrameRef.current?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)?.scrollIntoView({ block: 'start' }))
+    if (!numPages) return
+    setPageNumber((current) => Math.max(1, Math.min(numPages, current)))
   }, [numPages, pageNumber])
 
   useEffect(() => {
@@ -480,9 +358,10 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       if (event.key === 'ArrowLeft') goToPage(pageNumber - 1)
       if (event.key === 'ArrowRight') goToPage(pageNumber + 1)
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo() }
-      if (event.key === 'Escape') { setDrawMode(null); setNoteMode(false); setSelectionMenuOpen(false) }
+      if (event.key === 'Escape') { setDrawMode(null); setNoteMode(false); setSelectionMenuOpen(false); setToolsOpen(false) }
       if (!event.metaKey && !event.ctrlKey && !event.altKey) {
         if (event.key.toLowerCase() === 'n') activateNoteMode()
+        if (event.key.toLowerCase() === 't') setToolsOpen((open) => !open)
         if (event.key.toLowerCase() === 'p') setDrawMode(drawMode === 'pen' ? null : 'pen')
         if (event.key.toLowerCase() === 'm') setDrawMode(drawMode === 'marker' ? null : 'marker')
         if (event.key.toLowerCase() === 'e') setDrawMode(drawMode === 'eraser' ? null : 'eraser')
@@ -540,7 +419,39 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   }
 
   function activateNoteMode() { setDrawMode(null); setNoteMode((value) => !value) }
-  function beginNewNote(x = 0.5, y = 0.18, page = pageNumber) { setNoteMode(false); setNoteStatus('idle'); setNoteDraft({ id: 0, page, text: '', selection_text: selectedText ?? '', meta: { x, y, color: noteColor, title: '' } }) }
+  function openNoteEditor(note: Note, anchorX = window.innerWidth / 2, anchorY = window.innerHeight / 2) {
+    setNoteEditorAnchor({ x: anchorX, y: anchorY })
+    setNoteStatus('idle')
+    setNoteDraft(note)
+  }
+  function beginNewNote(x = 0.5, y = 0.18, page = pageNumber, anchorX = window.innerWidth / 2, anchorY = window.innerHeight / 2) {
+    setNoteMode(false)
+    openNoteEditor({ id: 0, page, text: '', selection_text: selectedText ?? '', meta: { x, y, color: noteColor, title: '' } }, anchorX, anchorY)
+  }
+  useLayoutEffect(() => {
+    if (!noteDraft) return
+    const editor = document.querySelector<HTMLElement>('.reader-shell .reader-note-editor')
+    if (!editor) return
+    const margin = 12
+    const gap = 14
+    let anchor = noteEditorAnchor
+    if (noteDraft.id) {
+      const page = document.querySelector<HTMLElement>(`[data-page-number="${noteDraft.page}"]`)
+      const x = clamp(Number(noteDraft.meta?.x ?? 0.5), 0, 1)
+      const y = clamp(Number(noteDraft.meta?.y ?? 0.5), 0, 1)
+      if (page) {
+        const pageRect = page.getBoundingClientRect()
+        anchor = { x: pageRect.left + pageRect.width * x, y: pageRect.top + pageRect.height * y }
+      }
+    }
+    const rect = editor.getBoundingClientRect()
+    let left = anchor.x + gap
+    if (left + rect.width > window.innerWidth - margin) left = anchor.x - rect.width - gap
+    let top = anchor.y + gap
+    if (top + rect.height > window.innerHeight - margin) top = anchor.y - rect.height - gap
+    editor.style.left = `${clamp(left, margin, Math.max(margin, window.innerWidth - rect.width - margin))}px`
+    editor.style.top = `${clamp(top, margin, Math.max(margin, window.innerHeight - rect.height - margin))}px`
+  }, [noteDraft, noteEditorAnchor])
   async function persistNote() {
     if (!noteDraft?.text?.trim()) return
     setSavingNote(true); setNoteStatus('saving'); const isNew = !noteDraft.id
@@ -585,7 +496,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const requestDeleteNote = (id: number) => setConfirmDeleteNoteId(id)
   async function createHighlight() {
     if (!selectedText) {
-      setActivePanelState('highlights')
+      setReaderError('Select text on the PDF before applying the highlighter.')
       return
     }
     try {
@@ -607,7 +518,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   }
   function noteMetaAt(clientX: number, clientY: number, note: Note) {
     const rect = pageFrameRef.current?.querySelector<HTMLElement>(`[data-page-number="${note.page ?? pageNumber}"]`)?.getBoundingClientRect(); if (!rect) return note.meta ?? {}
-    return { ...(note.meta ?? {}), x: clamp((clientX - rect.left) / rect.width), y: clamp((clientY - rect.top) / rect.height) }
+    return { ...(note.meta ?? {}), x: clamp((clientX - rect.left) / rect.width, 0.02, 0.98), y: clamp((clientY - rect.top) / rect.height, 0.015, 0.985) }
   }
   function updateNotePosition(note: Note, clientX: number, clientY: number) {
     const meta = noteMetaAt(clientX, clientY, note)
@@ -627,14 +538,13 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     if (noteMode && !target.closest('.reader-note-pin')) {
       const rect = pageElement?.getBoundingClientRect()
       if (!rect) return
-      beginNewNote(clamp((event.clientX - rect.left) / rect.width), clamp((event.clientY - rect.top) / rect.height), clickedPage)
+      beginNewNote(clamp((event.clientX - rect.left) / rect.width, 0.02, 0.98), clamp((event.clientY - rect.top) / rect.height, 0.015, 0.985), clickedPage, event.clientX, event.clientY)
     }
   }
 
   function goToPage(nextPage: number) {
     const target = numPages ? Math.max(1, Math.min(numPages, nextPage)) : Math.max(1, nextPage)
     setPageNumber(target)
-    window.requestAnimationFrame(() => pageFrameRef.current?.querySelector<HTMLElement>(`[data-reader-page="${target}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
 
   useEffect(() => {
@@ -665,12 +575,11 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const Document = pdfModules?.Document; const Page = pdfModules?.Page
 
   return <div className={`reader-shell reader-theme-${readerTheme} min-h-[calc(100vh-3rem)]`}><div className="mx-auto max-w-7xl space-y-5">
-    <div className="reader-toolbar rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/60 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-4"><a href="/dashboard" className="rounded-xl border border-paper-300 bg-paper-100 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-forest-700 dark:bg-forest-900 dark:text-paper-100">â† Dashboard</a><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">E-Study Room</p><h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2></div></div><div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300"><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))} disabled={pageNumber <= 1} className="px-3 py-2 disabled:opacity-40" aria-label="Previous page">â†</button><span className="px-2 font-mono">{pageNumber} / {numPages ?? '...'}</span><button type="button" onClick={() => setPageNumber((page) => numPages ? Math.min(numPages, page + 1) : page + 1)} disabled={numPages ? pageNumber >= numPages : false} className="px-3 py-2 disabled:opacity-40" aria-label="Next page">â†’</button></div><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setScale((value) => Math.max(0.6, value - 0.1))} className="px-2.5 py-2" aria-label="Zoom out">âˆ’</button><button type="button" onClick={() => setScale(1)} className="px-2 py-2 font-mono">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale((value) => Math.min(2, value + 0.1))} className="px-2.5 py-2" aria-label="Zoom in">+</button></div><button type="button" onClick={() => setScale(1)} className="reader-draw-button" title="Fit document to width">Fit</button><button type="button" onClick={activateNoteMode} className={`reader-draw-button ${noteMode ? 'reader-draw-button-active' : ''}`}>ï¼‹ Note</button>{noteMode ? <div className="reader-note-colors" aria-label="Note colors">{noteColors.map((color) => <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label="Choose note color" className={noteColor === color ? 'reader-color-swatch reader-color-swatch-active' : 'reader-color-swatch'} style={{ backgroundColor: color }} />)}</div> : null}<button type="button" onClick={() => setActivePanel('notes')} className="reader-draw-button">Notes</button><button type="button" onClick={() => void createHighlight()} className="reader-draw-button">Highlights</button></div></div><div className="mt-4 flex flex-wrap items-center gap-2 border-t border-paper-300/80 pt-3 dark:border-forest-700">{(['pen', 'marker', 'eraser'] as const).map((mode) => <button key={mode} type="button" onClick={() => setDrawMode(drawMode === mode ? null : mode)} className={`reader-draw-button capitalize ${drawMode === mode ? 'reader-draw-button-active' : ''}`}>{mode}</button>)}<button type="button" onClick={undo} disabled={!past.length} className="reader-draw-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-draw-button">Redo</button><button type="button" onClick={() => setConfirmClearDrawings(true)} disabled={!strokes.length} className="reader-draw-button">Clear page</button><span className="reader-save-status" role="status">{drawingStatus === 'saving' ? 'Savingâ€¦' : drawingStatus === 'saved' ? 'Saved' : drawingStatus === 'error' ? 'Save failed' : ''}</span>{drawMode ? <><label className="ml-2 flex items-center gap-2 text-xs">Size <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label><span className="font-mono text-xs">{brushSize}px</span></> : null}{(drawMode === 'pen' || drawMode === 'marker') ? <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} aria-label="Pen color" className="h-7 w-8" /> : null}{drawMode === 'marker' ? <label className="flex items-center gap-2 text-xs">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div></div>
-    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><div className="reader-sidebar-pages"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page">←</button><span>Page {pageNumber} / {numPages ?? "…"}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} aria-label="Next page">→</button></div><button type="button" onClick={() => setActivePanel('notes')} className="reader-sidebar-button">Notes</button><button type="button" onClick={() => setActivePanel('highlights')} className="reader-sidebar-button">Highlights</button><button type="button" onClick={activateNoteMode} className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Marker</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} disabled={!past.length} className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace overflow-auto rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: â€œ{selectedText}â€</p><div className="flex gap-2"><button type="button" onClick={() => setActivePanel('highlights')} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => setNumPages(total)}><ContinuousPdfPages PageComponent={Page} pageCount={numPages ?? 0} width={pageWidth * scale} pageFrameRef={pageFrameRef} onActivePageChange={setVisiblePage} onPageRendered={() => requestAnimationFrame(syncCanvas)} /></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading roomâ€¦</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">Ã—</button></div>{note.selection_text ? <p className="reader-note-quote">â€œ{note.selection_text}â€</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => requestDeleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">â† Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Next page â†’</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
+    <div className="reader-toolbar rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/60 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-4"><a href="/dashboard" className="rounded-xl border border-paper-300 bg-paper-100 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-forest-700 dark:bg-forest-900 dark:text-paper-100">Dashboard</a><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">E-Study Room</p><h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2></div></div><div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300"><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))} disabled={pageNumber <= 1} className="px-3 py-2 disabled:opacity-40" aria-label="Previous page">Prev</button><label className="reader-page-number"><span className="sr-only">Current PDF page</span><input type="number" min={1} max={numPages ?? undefined} value={pageNumber} onChange={(event) => goToPage(Number(event.target.value))} aria-label="Go to page" /></label><span className="reader-page-total">/ {numPages ?? '...'}</span><button type="button" onClick={() => setPageNumber((page) => numPages ? Math.min(numPages, page + 1) : page + 1)} disabled={numPages ? pageNumber >= numPages : false} className="px-3 py-2 disabled:opacity-40" aria-label="Next page">Next</button></div><div className="reader-progress" aria-label="Reading progress"><span>{numPages ? Math.round((pageNumber / numPages) * 100) : 0}%</span><div className="reader-progress-track"><span style={{ width: `${numPages ? (pageNumber / numPages) * 100 : 0}%` }} /></div></div><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setScale((value) => Math.max(0.6, value - 0.1))} className="px-2.5 py-2" aria-label="Zoom out">-</button><button type="button" onClick={() => setScale(1)} className="px-2 py-2 font-mono">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale((value) => Math.min(2, value + 0.1))} className="px-2.5 py-2" aria-label="Zoom in">+</button></div><button type="button" onClick={() => setScale(1)} className="reader-draw-button" title="Fit document to width">Fit</button><button type="button" onClick={() => setToolsOpen((open) => !open)} className={`reader-draw-button ${toolsOpen ? 'reader-draw-button-active' : ''}`} aria-expanded={toolsOpen} aria-controls="reader-study-tools">Study tools</button></div></div>{toolsOpen ? <div id="reader-study-tools" className="reader-tool-drawer"><div className="reader-tool-actions"><button type="button" onClick={activateNoteMode} className={`reader-draw-button ${noteMode ? 'reader-draw-button-active' : ''}`}>Add note</button>{noteMode ? <div className="reader-note-colors" aria-label="Note colors">{noteColors.map((color) => <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label="Choose note color" className={noteColor === color ? 'reader-color-swatch reader-color-swatch-active' : 'reader-color-swatch'} style={{ backgroundColor: color }} />)}</div> : null}<button type="button" onClick={() => void createHighlight()} className="reader-draw-button">Highlights</button></div><div className="mt-4 flex flex-wrap items-center gap-2 border-t border-paper-300/80 pt-3 dark:border-forest-700">{(['pen', 'marker', 'eraser'] as const).map((mode) => <button key={mode} type="button" onClick={() => setDrawMode(drawMode === mode ? null : mode)} className={`reader-draw-button capitalize ${drawMode === mode ? 'reader-draw-button-active' : ''}`}>{mode}</button>)}<button type="button" onClick={undo} disabled={!past.length} className="reader-draw-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-draw-button">Redo</button><button type="button" onClick={() => setConfirmClearDrawings(true)} disabled={!strokes.length} className="reader-draw-button">Clear page</button><span className="reader-save-status" role="status">{drawingStatus === 'saving' ? 'Saving...' : drawingStatus === 'saved' ? 'Saved' : drawingStatus === 'error' ? 'Save failed' : ''}</span>{drawMode ? <><label className="ml-2 flex items-center gap-2 text-xs">Size <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label><span className="font-mono text-xs">{brushSize}px</span></> : null}{(drawMode === 'pen' || drawMode === 'marker') ? <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} aria-label="Pen color" className="h-7 w-8" /> : null}{drawMode === 'marker' ? <label className="flex items-center gap-2 text-xs">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div></div> : null}</div>
+    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><div className="reader-sidebar-pages"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page">Prev</button><span>Page {pageNumber} / {numPages ?? "…"}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} aria-label="Next page">Next</button></div><button type="button" onClick={activateNoteMode} data-reader-tool="note" data-tooltip="Add note" className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} data-reader-tool="pen" data-tooltip="Pen" className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} data-reader-tool="highlighter" data-tooltip="Highlighter" aria-label="Highlighter" aria-pressed={drawMode === 'marker'} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Highlighter</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} data-reader-tool="eraser" data-tooltip="Eraser" className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} data-reader-tool="undo" data-tooltip="Undo" disabled={!past.length} aria-label="Undo" title="Undo last drawing action" className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} data-reader-tool="redo" data-tooltip="Redo" disabled={!future.length} aria-label="Redo" title="Redo drawing action" className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{readerError ? <p role="alert" className="reader-error">{readerError}</p> : null}{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: "{selectedText}"</p><div className="flex gap-2"><button type="button" onClick={() => void createHighlight()} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => { setNumPages(total); setReaderError(null) }} onLoadError={(error: Error) => { console.error("Unable to load the PDF document.", error); setReaderError("Unable to load this PDF. Check that the file is available, then try again.") }} onSourceError={(error: Error) => { console.error("Unable to access the PDF source.", error); setReaderError("Unable to access this PDF file.") }}><div className="reader-single-page" data-page-number={pageNumber} style={{ width: pageWidth * scale }}><Page pageNumber={pageNumber} width={pageWidth * scale} onRenderSuccess={() => requestAnimationFrame(syncCanvas)} onRenderError={(error: Error) => { console.error("Unable to render the current PDF page.", error); setReaderError("This PDF page could not be rendered.") }} /></div></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading room...</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84, 0.02, 0.98); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08, 0.015, 0.985); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">x</button></div>{note.selection_text ? <p className="reader-note-quote">"{note.selection_text}"</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => requestDeleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Previous page</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
   </div>
-  {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">Ã—</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to rememberâ€¦" /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: â€œ{noteDraft.selection_text}â€</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Savingâ€¦' : 'Save note'}</button></div></section></div> : null}
-  {activePanel ? <div className="study-panel-backdrop" role="presentation"><section className="study-panel-modal" role="dialog" aria-modal="true" aria-labelledby="study-panel-title"><div className="mb-5 flex items-center justify-between"><div><h2 id="study-panel-title" className="text-lg font-bold">{activePanel === 'notes' ? 'Your notes' : 'Your highlights'}</h2><p className="mt-1 text-xs text-slate-500">{activePanel === 'notes' ? `${notes.length} saved` : `${highlights.length} saved`}</p></div><button type="button" onClick={() => setActivePanel(null)} aria-label="Close study panel" className="study-panel-close">Close</button></div>{activePanel === 'notes' ? notes.length ? <div className="space-y-2">{notes.map((note) => <div key={note.id} className="flex items-start gap-2 rounded-xl border border-paper-300 p-3 dark:border-forest-700"><button type="button" onClick={() => { setActivePanel(null); if (note.page) goToPage(note.page); setNoteDraft({ ...note }) }} className="min-w-0 flex-1 text-left"><span className="block text-xs font-bold text-pine-700 dark:text-pine-200">{note.meta?.title || `Page ${note.page ?? '—'}`}</span><span className="mt-1 block line-clamp-3 text-xs text-slate-600 dark:text-slate-300">{note.text || note.selection_text || 'No note text'}</span></button><button type="button" onClick={() => requestDeleteNote(note.id)} aria-label={`Delete note from page ${note.page ?? 'unknown'}`} className="reader-tool-button reader-tool-button-muted">Delete</button></div>)}</div> : <p className="rounded-xl bg-paper-100 p-4 text-sm text-slate-600 dark:bg-forest-900 dark:text-slate-300">No notes yet. Add a note from the toolbar while reading.</p> : highlights.length ? <div className="space-y-2">{highlights.map((highlight) => <button key={highlight.id} type="button" onClick={() => { setActivePanel(null); goToPage(highlight.page) }} className="block w-full rounded-xl border border-paper-300 p-3 text-left dark:border-forest-700"><span className="block text-xs font-bold text-pine-700 dark:text-pine-200">Page {highlight.page}</span><span className="mt-1 block line-clamp-3 text-xs text-slate-600 dark:text-slate-300">{highlight.meta?.selection_text || 'Saved highlight'}</span></button>)}</div> : <p className="rounded-xl bg-paper-100 p-4 text-sm text-slate-600 dark:bg-forest-900 dark:text-slate-300">No highlights yet. Select text and choose Highlight to save one.</p>}</section></div> : null}
-  <ActionModal open={confirmDeleteNoteId !== null} title="Delete study note?" description="This note will be permanently removed." confirmLabel="Delete note" tone="danger" onClose={() => setConfirmDeleteNoteId(null)} onConfirm={() => { const id = confirmDeleteNoteId; setConfirmDeleteNoteId(null); if (id !== null) void deleteNote(id) }} />
+  {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">x</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to remember..." /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: "{noteDraft.selection_text}"</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Saving...' : 'Save note'}</button></div></section></div> : null}
+    <ActionModal open={confirmDeleteNoteId !== null} title="Delete study note?" description="This note will be permanently removed." confirmLabel="Delete note" tone="danger" onClose={() => setConfirmDeleteNoteId(null)} onConfirm={() => { const id = confirmDeleteNoteId; setConfirmDeleteNoteId(null); if (id !== null) void deleteNote(id) }} />
   <ActionModal open={confirmClearDrawings} title="Clear drawings?" description="All drawings on this page will be permanently removed." confirmLabel="Clear drawings" tone="danger" onClose={() => setConfirmClearDrawings(false)} onConfirm={() => { setConfirmClearDrawings(false); persistStrokes([]) }} />
   </div>
 }

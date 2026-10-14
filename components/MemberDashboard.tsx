@@ -31,6 +31,7 @@ type Book = {
   page_count?: number | null
   pdf_url?: string | null
   catalog_type: 'digital' | 'physical' | 'hybrid'
+  is_archived: boolean
   isOwner?: boolean
   physical_registered_copies?: number
   physical_available_copies?: number
@@ -78,6 +79,7 @@ type UserProfile = {
 
 type Fine = { id: number; amount: number; status: string; created_at: string | null }
 type SystemNotification = { id: number; title: string; message: string; read_at: string | null; created_at: string }
+type FeedbackModal = { title: string; message: string; tone: 'success' | 'error' | 'info' }
 type PhysicalLoan = {
   id: number
   book_id: number
@@ -117,7 +119,6 @@ function CloseIcon() { return <LineIcon><path d="m6 6 12 12M18 6 6 18" /></LineI
 
 export default function MemberDashboard({ memberType }: { memberType: 'student' | 'faculty' }) {
   const router = useRouter()
-  const [query, setQuery] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const debouncedSearch = useDebounce(searchInput, 200)
   const [catalogSort, setCatalogSort] = useState<'relevance' | 'title' | 'author' | 'newest'>('relevance')
@@ -129,9 +130,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [physicalLoans, setPhysicalLoans] = useState<PhysicalLoan[]>([])
   const [physicalWaitlist, setPhysicalWaitlist] = useState<PhysicalWaitlist[]>([])
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
+  const [feedbackModal, setFeedbackModal] = useState<FeedbackModal | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [premiumReference, setPremiumReference] = useState('')
   const [premiumProofFile, setPremiumProofFile] = useState<File | null>(null)
+  const [premiumSimulationConfirmed, setPremiumSimulationConfirmed] = useState(false)
   const [premiumPurchaseSaving, setPremiumPurchaseSaving] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
@@ -149,6 +152,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [physicalReturnActionId, setPhysicalReturnActionId] = useState<number | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState('')
+  const [scannerStatus, setScannerStatus] = useState('')
   const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
   const [continueReadingOpen, setContinueReadingOpen] = useState(false)
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
@@ -168,8 +172,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [contributionOpen, setContributionOpen] = useState(false)
   const [contributionSubmitting, setContributionSubmitting] = useState(false)
   const [contributionStatus, setContributionStatus] = useState<string | null>(null)
+  const [contributionMetadataStatus, setContributionMetadataStatus] = useState<string | null>(null)
   const [contributionForm, setContributionForm] = useState({ title: '', author: '', description: '', pdfUrl: '' })
   const [contributionFile, setContributionFile] = useState<File | null>(null)
+  const contributionMetadataRequest = useRef(0)
   const [lastReadPages, setLastReadPages] = useState<Record<number, number>>({})
   const [readingProgress, setReadingProgress] = useState<Record<number, { current_page: number; total_pages: number | null }>>({})
   const [dataReloadToken, setDataReloadToken] = useState(0)
@@ -224,48 +230,75 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     let stream: MediaStream | null = null
     let timer: number | null = null
     const startScanner = async () => {
-      type Detector = { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>> }
-      type DetectorConstructor = new (options?: { formats?: string[] }) => Detector
-      const BarcodeDetectorApi = (window as Window & { BarcodeDetector?: DetectorConstructor }).BarcodeDetector
-      if (!BarcodeDetectorApi) {
-        setScannerError('QR scanning is not supported by this browser. Use the QR sticker link or open the catalog manually.')
-        return
-      }
       if (!navigator.mediaDevices?.getUserMedia) {
-        setScannerError('Camera access is not available in this browser.')
+        setScannerError('Camera access is unavailable. Open Smart Lib over HTTPS or use the QR sticker link.')
         return
       }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
-        if (!active || !scannerVideoRef.current) return
-        scannerVideoRef.current.srcObject = stream
-        await scannerVideoRef.current.play()
-        const detector = new BarcodeDetectorApi({ formats: ['qr_code'] })
-        const scan = async () => {
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        const video = scannerVideoRef.current
+        if (!video) throw new Error('The camera preview could not be initialized.')
+        video.srcObject = stream
+        await video.play()
+        if (!active) return
+        setScannerStatus('Camera ready. Point it at a Smart Lib QR sticker.')
+
+        const { default: jsQR } = await import('jsqr')
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (!context) throw new Error('QR scanning is unavailable in this browser.')
+        const scan = () => {
           if (!active || !scannerVideoRef.current) return
-          try {
-            const results = await detector.detect(scannerVideoRef.current)
-            const rawValue = results[0]?.rawValue
-            if (rawValue) {
-              const url = new URL(rawValue, window.location.origin)
-              if (url.searchParams.has('copy')) {
-                window.location.href = `${url.pathname}${url.search}${url.hash || '#explore'}`
+          const currentVideo = scannerVideoRef.current
+          if (currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && currentVideo.videoWidth > 0) {
+            const scale = Math.min(1, 640 / currentVideo.videoWidth)
+            canvas.width = Math.round(currentVideo.videoWidth * scale)
+            canvas.height = Math.round(currentVideo.videoHeight * scale)
+            context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height)
+            const frame = context.getImageData(0, 0, canvas.width, canvas.height)
+            const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'attemptBoth' })
+            if (result?.data) {
+              try {
+                const url = new URL(result.data, window.location.origin)
+                const copyToken = url.searchParams.get('copy')
+                if (copyToken) {
+                  window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
+                  return
+                }
+              } catch {
+                setScannerError('That QR code is not a valid Smart Lib book sticker.')
+                setScannerStatus('')
                 return
               }
             }
-          } catch { /* The camera may not have a frame ready yet. */ }
-          timer = window.setTimeout(() => void scan(), 500)
+          }
+          timer = window.setTimeout(scan, 250)
         }
-        void scan()
+        scan()
       } catch (cause) {
-        setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access to scan a physical-copy QR code.' : 'Unable to open the camera for QR scanning.')
+        if (!active) return
+        setScannerStatus('')
+        setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError'
+          ? 'Camera permission was denied. Allow camera access in your browser settings and try again.'
+          : cause instanceof DOMException && cause.name === 'NotFoundError'
+            ? 'No camera was found on this device.'
+            : cause instanceof Error
+              ? cause.message
+              : 'Unable to open the camera for QR scanning.')
       }
     }
+    setScannerError('')
+    setScannerStatus('Requesting camera access…')
     void startScanner()
     return () => {
       active = false
       if (timer !== null) window.clearTimeout(timer)
       stream?.getTracks().forEach((track) => track.stop())
+      if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
     }
   }, [scannerOpen])
 
@@ -363,7 +396,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, physicalWaitlistResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
+          .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -385,6 +418,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const requiredError = [booksResult, requestsResult].find((result) => result.error)?.error
       if (requiredError) {
         setLoadError(`Unable to load your library data. Apply the required Supabase schema, then try again. (${requiredError.message})`)
+        return
+      }
+      if (contributionResult.error) {
+        setLoadError(`Unable to verify permanent contribution access. (${contributionResult.error.message})`)
         return
       }
       if (physicalLoansResult.error && !isMissingTableError(physicalLoansResult)) {
@@ -417,6 +454,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
         catalog_type: book.catalog_type ?? 'digital',
+        is_archived: book.is_archived ?? false,
         isOwner: ownedContributionBookIds.has(book.id),
         physical_registered_copies: physicalCatalog.get(book.id)?.registered_copies ?? 0,
         physical_available_copies: physicalCatalog.get(book.id)?.available_copies ?? 0,
@@ -476,17 +514,18 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const categories = useMemo(() => {
     const set = new Set<string>()
     books.forEach((b) => {
-      if (b.category && b.category.trim()) set.add(b.category.trim())
+      if (!b.is_archived && b.category && b.category.trim()) set.add(b.category.trim())
     })
     return ['All', ...Array.from(set)]
   }, [books])
 
   const filteredBooks = useMemo(
     () => {
-      const activeSearch = (query || debouncedSearch).trim().toLowerCase()
+      const activeSearch = debouncedSearch.trim().toLowerCase()
       const searchTokens = activeSearch ? activeSearch.split(/\s+/) : []
 
       const results = books
+        .filter((book) => !book.is_archived)
         .map((book) => ({
           ...book,
           status: 'Digital access',
@@ -519,7 +558,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         return 0
       })
     },
-    [books, query, debouncedSearch, selectedCategory, selectedFormat, catalogSort]
+    [books, debouncedSearch, selectedCategory, selectedFormat, catalogSort]
   )
 
   const activeLoans = useMemo(
@@ -530,6 +569,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     ),
     [borrowRequests, clock]
   )
+  const ownedContributionBooks = useMemo(
+    () => books.filter((book) => book.isOwner && book.pdf_url),
+    [books]
+  )
+  const activePhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'checked_out').length
+  const pendingPhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'pending' || loan.status === 'return_pending').length
 
   const activeBorrowRequests = useMemo(() => {
     const activeLoanIds = new Set(activeLoans.map((loan) => loan.id))
@@ -546,8 +591,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   }, [activeLoans])
 
   const continueReading = useMemo(
-    () => activeLoans.filter((loan) => loan.pdf_url),
-    [activeLoans]
+    () => [
+      ...activeLoans.filter((loan) => loan.pdf_url).map((loan) => ({ ...loan, isOwner: false })),
+      ...ownedContributionBooks.map((book) => ({
+        id: `contribution-${book.id}`,
+        book_id: book.id,
+        title: book.title,
+        isOwner: true,
+      })),
+    ],
+    [activeLoans, ownedContributionBooks]
   )
 
   const readingHistory = useMemo(
@@ -699,26 +752,30 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setSelectedBook(null)
       return
     }
-    if (book.access_mode === 'premium') {
-      setRequestStatus('Paid e-book checkout is temporarily unavailable. Choose a free or points-based e-book instead.')
-      return
-    }
     setRequestingBookId(book.id)
     setRequestStatus(null)
 
-    const response = await fetch('/api/loans', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookId: book.id, durationDays: Number(durationDays) }),
-    })
-    const data = await response.json()
+    try {
+      const response = await fetch('/api/loans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookId: book.id, durationDays: Number(durationDays) }),
+      })
+      const data = await response.json()
 
-    if (!response.ok) {
-      setRequestStatus(data.error || 'Something went wrong while requesting digital access.')
-    } else {
-      setRequestStatus(data.status === 'approved'
-        ? `Access unlocked for ${book.title} for ${durationDays} days. You can start reading now.`
-        : `Access requested for ${book.title} for ${durationDays} days.`)
+      if (!response.ok) {
+        setFeedbackModal({ title: 'Request not completed', message: data.error || 'Something went wrong while requesting digital access.', tone: 'error' })
+        return
+      }
+
+      const isApproved = data.status === 'approved'
+      setFeedbackModal({
+        title: isApproved ? 'Access granted' : 'Request submitted',
+        message: isApproved
+          ? `Access to ${book.title} is ready for ${durationDays} days. You can start reading now.`
+          : `Your request for ${book.title} (${durationDays} days) was submitted successfully. You’ll see an update when it is reviewed.`,
+        tone: 'success',
+      })
       const pointsCost = book.access_mode === 'points' ? Number(data.pointsCost ?? getDigitalAccessCost(book.access_costs, Number(durationDays), book.access_points)) : 0
       const supabase = getSupabase()
       const { data: refreshedProfile } = await supabase.from('profiles').select('points_balance').eq('id', userId).maybeSingle()
@@ -732,14 +789,24 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         ...request,
         title: request.title ?? books.find((book) => book.id === request.book_id)?.title,
       })))
+    } catch (error) {
+      setFeedbackModal({
+        title: 'Request not completed',
+        message: error instanceof Error ? error.message : 'Unable to request digital access. Please try again.',
+        tone: 'error',
+      })
+    } finally {
+      setRequestingBookId(null)
+      setSelectedBook(null)
     }
-
-    setRequestingBookId(null)
-    setSelectedBook(null)
   }
 
   const submitPremiumPurchase = async () => {
     if (!selectedBook || selectedBook.access_mode !== 'premium' || !userId) return
+    if (!premiumSimulationConfirmed) {
+      setRequestStatus('Confirm that you are submitting a simulated GCash payment for this capstone demo.')
+      return
+    }
     if (!premiumReference.trim() || !premiumProofFile) {
       setRequestStatus('Enter the payment reference and upload the payment proof.')
       return
@@ -763,13 +830,22 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         p_payment_proof_path: proofPath,
       })
       if (purchaseError) throw new Error(purchaseError.message)
-      setRequestStatus(`Payment submitted for ${selectedBook.title}. Staff will verify it before permanent access is granted.`)
+      setFeedbackModal({
+        title: 'Payment submitted',
+        message: `Your payment evidence for ${selectedBook.title} was submitted successfully. Staff will verify it before permanent access is granted.`,
+        tone: 'success',
+      })
       setPremiumReference('')
       setPremiumProofFile(null)
+      setPremiumSimulationConfirmed(false)
       setSelectedBook(null)
     } catch (cause) {
       if (proofPath) await supabase.storage.from('ebook-payment-proofs').remove([proofPath])
-      setRequestStatus(cause instanceof Error ? cause.message : 'Unable to submit the premium e-book payment.')
+      setFeedbackModal({
+        title: 'Payment not submitted',
+        message: cause instanceof Error ? cause.message : 'Unable to submit the premium e-book payment.',
+        tone: 'error',
+      })
     } finally {
       setPremiumPurchaseSaving(false)
     }
@@ -778,26 +854,31 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const executeRenewLoan = async (loanId: number) => {
     const loan = borrowRequests.find((request) => request.id === loanId)
     if (!loan || loan.status !== 'approved' || loan.returned_date) {
-      setRequestStatus('This e-book is no longer available for renewal.')
+      setFeedbackModal({ title: 'Renewal unavailable', message: 'This e-book is no longer available for renewal.', tone: 'error' })
       return
     }
     setLoanActionId(loanId)
     setRequestStatus(null)
-    const supabase = getSupabase()
-    const { data, error } = await supabase.rpc('renew_digital_loan', { request_id: loanId, extension_days: 14 })
-    if (error) {
-      setRequestStatus(error.message)
-    } else {
+    try {
+      const { data, error } = await getSupabase().rpc('renew_digital_loan', { request_id: loanId, extension_days: 14 })
+      if (error) throw new Error(error.message)
       setBorrowRequests((current) => current.map((request) => request.id === loanId ? { ...request, ...data } : request))
-      setRequestStatus('Access renewed for 14 more days.')
+      setFeedbackModal({ title: 'Access renewed', message: `Access to ${loan.title ?? 'this e-book'} was renewed for 14 more days.`, tone: 'success' })
+    } catch (error) {
+      setFeedbackModal({
+        title: 'Renewal not completed',
+        message: error instanceof Error ? error.message : 'Unable to renew this e-book.',
+        tone: 'error',
+      })
+    } finally {
+      setLoanActionId(null)
     }
-    setLoanActionId(null)
   }
 
   const executeReturnLoan = async (loanId: number) => {
     const loan = borrowRequests.find((request) => request.id === loanId)
     if (!loan || loan.status !== 'approved' || loan.returned_date) {
-      setRequestStatus('This e-book has already been returned or is no longer active.')
+      setFeedbackModal({ title: 'Return unavailable', message: 'This e-book has already been returned or is no longer active.', tone: 'error' })
       return
     }
     setLoanActionId(loanId)
@@ -811,9 +892,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Unable to return this e-book.')
       setBorrowRequests((current) => current.map((request) => request.id === loanId ? { ...request, ...result.loan } : request))
-      setRequestStatus('E-book returned successfully.')
+      setFeedbackModal({ title: 'E-book returned', message: `${loan.title ?? 'The e-book'} was returned successfully.`, tone: 'success' })
     } catch (error) {
-      setRequestStatus(error instanceof Error ? error.message : 'Unable to return this e-book.')
+      setFeedbackModal({
+        title: 'Return not completed',
+        message: error instanceof Error ? error.message : 'Unable to return this e-book.',
+        tone: 'error',
+      })
     } finally {
       setLoanActionId(null)
     }
@@ -823,10 +908,21 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const handleReturnLoan = (loanId: number) => setConfirmAction({ type: 'return', id: loanId })
   const requestPhysicalReturn = async (loanId: number) => {
     setPhysicalReturnActionId(loanId)
-    const { error } = await getSupabase().rpc('request_physical_return', { p_request_id: loanId })
-    if (error) setLoadError(`Unable to request the physical-book return. (${error.message})`)
-    setPhysicalReturnActionId(null)
-    if (!error) setDataReloadToken((token) => token + 1)
+    const loan = physicalLoans.find((item) => item.id === loanId)
+    try {
+      const { error } = await getSupabase().rpc('request_physical_return', { p_request_id: loanId })
+      if (error) throw new Error(error.message)
+      setDataReloadToken((token) => token + 1)
+      setFeedbackModal({ title: 'Return requested', message: `Your return request for ${loan?.title ?? 'the physical book'} was submitted. A librarian will inspect it at the library desk.`, tone: 'success' })
+    } catch (error) {
+      setFeedbackModal({
+        title: 'Return request not completed',
+        message: error instanceof Error ? error.message : 'Unable to request the physical-book return.',
+        tone: 'error',
+      })
+    } finally {
+      setPhysicalReturnActionId(null)
+    }
   }
 
   async function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -868,11 +964,78 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setContributionFile(null)
       setContributionOpen(false)
       setContributionStatus('Contribution submitted successfully and is awaiting review.')
+      setFeedbackModal({
+        title: 'Contribution submitted',
+        message: 'Your contribution was received and is awaiting administrator review. It will appear in the library only if it is approved.',
+        tone: 'success',
+      })
       setDataReloadToken((value) => value + 1)
     } catch (error) {
-      setContributionStatus(error instanceof Error ? error.message : 'Unable to submit contribution.')
+      const message = error instanceof Error ? error.message : 'Unable to submit contribution.'
+      setContributionStatus(message)
+      setFeedbackModal({
+        title: 'Contribution not submitted',
+        message,
+        tone: 'error',
+      })
     } finally {
       setContributionSubmitting(false)
+    }
+  }
+
+  async function handleContributionFileSelected(file: File | null) {
+    const requestId = ++contributionMetadataRequest.current
+    setContributionFile(file)
+    setContributionMetadataStatus(null)
+    if (!file) return
+
+    const formAtSelection = contributionForm
+    const fallbackTitle = file.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (file.type !== 'application/pdf' || file.size > 50 * 1024 * 1024) {
+      setContributionMetadataStatus('Choose a PDF file up to 50 MB to autofill its details.')
+      return
+    }
+
+    try {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+      const document = await pdfjs.getDocument({
+        data: new Uint8Array(await file.arrayBuffer()),
+        useSystemFonts: true,
+        isEvalSupported: false,
+      }).promise
+      try {
+        const metadata = await document.getMetadata()
+        if (requestId !== contributionMetadataRequest.current) return
+        const info = metadata.info as { Title?: unknown; Author?: unknown; Subject?: unknown }
+        const title = typeof info.Title === 'string' ? info.Title.trim() : ''
+        const author = typeof info.Author === 'string' ? info.Author.trim() : ''
+        const description = typeof info.Subject === 'string' ? info.Subject.trim() : ''
+        const values = { title: title || fallbackTitle, author, description }
+        setContributionForm((current) => ({
+          ...current,
+          title: !formAtSelection.title && current.title === formAtSelection.title && values.title ? values.title : current.title,
+          author: !formAtSelection.author && current.author === formAtSelection.author && values.author ? values.author : current.author,
+          description: !formAtSelection.description && current.description === formAtSelection.description && values.description ? values.description : current.description,
+        }))
+        const filledFields = [
+          values.title && !formAtSelection.title ? 'title' : '',
+          values.author && !formAtSelection.author ? 'author' : '',
+          values.description && !formAtSelection.description ? 'description' : '',
+        ].filter(Boolean)
+        setContributionMetadataStatus(filledFields.length
+          ? `Filled ${filledFields.join(', ')} from the PDF. Please review before submitting.`
+          : 'PDF selected. Its details were not used because you already entered them.')
+      } finally {
+        await document.destroy()
+      }
+    } catch {
+      if (requestId !== contributionMetadataRequest.current) return
+      if (!formAtSelection.title) {
+        setContributionForm((current) => current.title === formAtSelection.title && fallbackTitle
+          ? { ...current, title: fallbackTitle }
+          : current)
+      }
+      setContributionMetadataStatus('Could not read the PDF metadata. The filename can be used as the title; please enter the other details manually.')
     }
   }
 
@@ -908,7 +1071,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <a className="active" href="#overview" onClick={() => setSidebarOpen(false)}><DashboardIcon /><span>Overview</span></a>
             <button type="button" onClick={() => { setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
             <a href="#explore" onClick={() => setSidebarOpen(false)}><BookIcon /><span>Catalog</span></a>
-            <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true); setSidebarOpen(false) }}><BookIcon /><span>Contribute material</span></button>
+            <button type="button" onClick={() => { setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Contributions</span></button>
+            <button type="button" onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span aria-hidden="true">▣</span><span>Scan book QR</span></button>
           </nav>
           <div className="student-sidebar-footer">
             <div className="student-theme-control"><ThemeToggle /></div>
@@ -976,29 +1140,39 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
         {/* Student Personal Study Analytics Strip */}
         <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="student-stat-card rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
+          <div className="student-stat-card student-points-card rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
             <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{profile?.points_balance ?? 0}</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">points</span>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="student-stat-actions mt-3 flex flex-wrap gap-2">
               <button type="button" onClick={() => setWalletOpen(true)} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
             </div>
           </div>
 
-          <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
-            <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{physicalLoans.filter((loan) => loan.status === 'checked_out').length}</span><span className="text-xs text-slate-500 dark:text-slate-400">active loans</span></div>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{physicalLoans.length} request{physicalLoans.length === 1 ? '' : 's'}, {physicalWaitlist.length} availability queue{physicalWaitlist.length === 1 ? '' : 's'}</p>
-            {physicalLoans.some((loan) => loan.status === 'pending') ? <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{physicalLoans.filter((loan) => loan.status === 'pending').length} request{physicalLoans.filter((loan) => loan.status === 'pending').length === 1 ? '' : 's'} waiting for librarian confirmation.</p> : null}
-            {physicalLoans[0]?.receipt_number ? <p className="mt-2 truncate font-mono text-xs text-pine-700 dark:text-pine-200">Latest: {physicalLoans[0].receipt_number}</p> : null}
-            <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">View requests & receipts</button>{physicalLoans.some((loan) => loan.status === 'checked_out') ? <button type="button" onClick={() => setPhysicalReturnPickerOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Request return</button> : null}</div>
+          <div className="student-stat-card physical-lending-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <div className="physical-lending-heading">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
+            </div>
+            <div className="physical-lending-metrics">
+              <div><span className="physical-lending-count">{activePhysicalLoanCount}</span><span>active loans</span></div>
+              <div><span className="physical-lending-count">{pendingPhysicalLoanCount}</span><span>pending requests</span></div>
+            </div>
+            <div className="physical-lending-status" aria-live="polite">
+              {pendingPhysicalLoanCount > 0
+                ? <p className="physical-lending-pending">{pendingPhysicalLoanCount} request{pendingPhysicalLoanCount === 1 ? '' : 's'} awaiting librarian confirmation</p>
+                : <p>{physicalLoans.length} total request{physicalLoans.length === 1 ? '' : 's'} · no pending requests</p>}
+            </div>
+            <div className="physical-lending-actions">
+              <button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action">Requests & receipts</button>
+              {activePhysicalLoanCount > 0 ? <button type="button" onClick={() => setPhysicalReturnPickerOpen(true)} className="secondary-action">Request return</button> : null}
+            </div>
           </div>
 
           <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Reading History
+              Reading history
             </span>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
@@ -1011,97 +1185,90 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             </p>
           </div>
 
+          <div className="student-stat-card student-reading-now-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Reading now</span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{continueReading.length}</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">books available</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              {continueReading.length > 0
+                ? `${Object.keys(readingProgress).filter((bookId) => continueReading.some((loan) => loan.book_id === Number(bookId))).length} with saved progress`
+                : 'No active e-books to resume'}
+            </p>
+            <button type="button" onClick={() => {
+              if (continueReading.length > 0) setContinueReadingOpen(true)
+              else document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })
+            }} className="student-reading-now-action">
+              {continueReading.length > 0 ? 'Continue reading' : 'Browse catalog'}
+            </button>
+          </div>
+
         </div>
 
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-6">
             <div id="explore" className="catalog-panel rounded-[2rem] p-6 lg:p-8">
-              <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search digital and physical library materials in one catalog.</p>
-                  <div className="catalog-heading-actions mt-4">
-                  <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true) }} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Contribute material</span></button>
-                  <button type="button" onClick={() => { setScannerError(''); setScannerOpen(true) }} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><span aria-hidden="true">▣</span><span>Scan book QR</span></button>
-                  <button type="button" className="catalog-filter-toggle catalog-filter-toggle-heading" onClick={() => setCatalogControlsOpen((current) => !current)} aria-expanded={catalogControlsOpen} aria-controls="catalog-controls"><FilterIcon /><span>{catalogControlsOpen ? 'Hide filters' : 'Show filters'}</span></button>
-                  </div>
-                </div>
-                {catalogControlsOpen ? <div className="catalog-controls-wrap is-open"><form id="catalog-controls"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  setQuery(searchInput)
-                }}
-                className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-              >
-                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><SearchIcon /><span>Search</span></span>
-                  <div className="mt-2 flex gap-2">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
+              <div className="catalog-tools">
+                <form id="catalog-controls" className="catalog-toolbar" onSubmit={(event) => event.preventDefault()}>
+                  <label className="catalog-search-box">
+                    <SearchIcon />
                     <input
                       value={searchInput}
                       onChange={(event) => setSearchInput(event.target.value)}
-                      className="workspace-input min-w-0 flex-1 rounded-2xl border px-3 py-2 text-sm outline-none transition"
-                      placeholder="Title, author or category"
+                      placeholder="Search title, author or category"
+                      aria-label="Search title, author or category"
                     />
-                    <button
-                      type="submit"
-                      className="pine-action rounded-2xl px-4 py-2 text-sm font-semibold transition"
+                    {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear search">×</button> : null}
+                  </label>
+                  <label className="catalog-sort-box">
+                    <span className="sr-only">Sort by</span>
+                    <SortIcon />
+                    <select
+                      value={catalogSort}
+                      onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
+                      aria-label="Sort by"
                     >
-                      Search
-                    </button>
-                    {query || searchInput ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchInput('')
-                          setQuery('')
-                        }}
-                        className="rounded-2xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                        title="Clear search"
-                      >
-                        ✕
-                      </button>
+                      <option value="relevance">Relevance</option>
+                      <option value="title">Title A-Z</option>
+                      <option value="author">Author A-Z</option>
+                      <option value="newest">Recently added</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className={`catalog-filter-toggle${selectedCategory !== 'All' || selectedFormat !== 'all' ? ' has-active-filters' : ''}`}
+                    onClick={() => setCatalogControlsOpen((current) => !current)}
+                    aria-expanded={catalogControlsOpen}
+                    aria-controls="catalog-filter-menu"
+                  >
+                    <FilterIcon />
+                    <span>Filters</span>
+                    {selectedCategory !== 'All' || selectedFormat !== 'all' ? <span className="catalog-filter-count">{Number(selectedCategory !== 'All') + Number(selectedFormat !== 'all')}</span> : null}
+                  </button>
+                </form>
+                {catalogControlsOpen ? (
+                  <div id="catalog-filter-menu" className="catalog-filter-menu">
+                    <label>
+                      <span>Category</span>
+                      <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+                        {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Format</span>
+                      <select value={selectedFormat} onChange={(event) => setSelectedFormat(event.target.value as typeof selectedFormat)}>
+                        <option value="all">All materials</option>
+                        <option value="digital">Digital</option>
+                        <option value="physical">Physical</option>
+                      </select>
+                    </label>
+                    {selectedCategory !== 'All' || selectedFormat !== 'all' ? (
+                      <button type="button" className="catalog-clear-filters" onClick={() => { setSelectedCategory('All'); setSelectedFormat('all') }}>Clear filters</button>
                     ) : null}
                   </div>
-                </label>
-                <label className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/80">
-                  <span className="field-label flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]"><SortIcon /><span>Sort by</span></span>
-                  <select
-                    value={catalogSort}
-                    onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  >
-                    <option value="relevance">Relevance</option>
-                    <option value="title">Title A-Z</option>
-                    <option value="author">Author A-Z</option>
-                    <option value="newest">Recently added</option>
-                  </select>
-                </label>
-                </form></div> : null}
-              </div>
-
-              {/* Category Pills Bar */}
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Category:</span>
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                      selectedCategory === cat
-                        ? 'bg-forest-900 text-paper-100 dark:bg-paper-100 dark:text-forest-900 shadow-sm'
-                        : 'border border-paper-300 bg-paper-50 text-slate-600 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800/50 dark:text-slate-300'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Format:</span>
-                {([['all', 'All materials'], ['digital', 'Digital'], ['physical', 'Physical']] as const).map(([value, label]) => (
-                  <button key={value} type="button" onClick={() => setSelectedFormat(value)} className={`rounded-full px-3 py-1 text-xs font-semibold transition ${selectedFormat === value ? 'bg-pine-700 text-white shadow-sm dark:bg-paper-100 dark:text-forest-900' : 'border border-paper-300 bg-paper-50 text-slate-600 hover:border-pine-500 dark:border-forest-700 dark:bg-forest-800/50 dark:text-slate-300'}`}>{label}</button>
-                ))}
+                ) : null}
               </div>
 
               <div className="mt-4 flex items-center justify-end">
@@ -1134,7 +1301,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 dark:text-slate-400">Access</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid access temporarily unavailable' : book.access_mode === 'points' ? 'Automatic points access' : 'Automatic access'}</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Simulated GCash checkout' : book.access_mode === 'points' ? 'Automatic points access' : 'Automatic access'}</p>
                         </div>
                       </div>
                       {book.catalog_type !== 'digital' ? <div className="mt-4 rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm dark:border-forest-700 dark:bg-forest-800/60"><div className="flex flex-wrap gap-x-4 gap-y-1"><span><strong>{book.physical_available_copies ?? 0}</strong> available</span><span><strong>{book.physical_borrowed_copies ?? 0}</strong> borrowed</span><span><strong>{book.physical_registered_copies ?? 0}</strong> total copies</span></div>{book.physical_locations?.length ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">Location: {book.physical_locations.join(', ')}</p> : <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">Location has not been assigned yet.</p>}</div> : null}
@@ -1162,6 +1329,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                             return
                           }
                           setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
+                          if (book.access_mode === 'premium') {
+                            setPremiumReference(`DEMO-GCASH-${Date.now().toString().slice(-8)}`)
+                            setPremiumProofFile(null)
+                            setPremiumSimulationConfirmed(false)
+                          }
                           setSelectedBook(book)
                           setRequestStatus(null)
                         }}
@@ -1202,12 +1374,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">My books & active access</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Books you can currently read, remaining access time, and direct reader access.</p>
                 </div>
-                <span className="rounded-full bg-slate-100 px-3.5 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{activeLoans.length} active</span>
+                <span className="rounded-full bg-slate-100 px-3.5 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{activeLoans.length + ownedContributionBooks.length} available</span>
               </div>
 
               <div className="mt-6 space-y-4">
-                {activeLoans.length > 0 ? (
-                  activeLoans.map((loan) => {
+                {activeLoans.length > 0 || ownedContributionBooks.length > 0 ? (
+                  <>
+                  {activeLoans.map((loan) => {
                     const dueDate = loan.due_date ? new Date(loan.due_date) : null
                     const diffDays = dueDate ? Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24)) : null
                     const isUrgent = diffDays !== null && diffDays <= 3
@@ -1271,7 +1444,21 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         </div>
                       </div>
                     )
-                  })
+                  })}
+                  {ownedContributionBooks.map((book) => (
+                    <div key={`contribution-${book.id}`} className="loan-row rounded-[1.25rem] border border-pine-200 bg-pine-50/70 p-5 dark:border-forest-700 dark:bg-forest-800/40">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-bold text-slate-900 dark:text-slate-100">{book.title}</p>
+                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Your approved contribution · permanent access</p>
+                        </div>
+                        <button type="button" onClick={() => router.push(`/reader/${book.id}`)} className="pine-action inline-flex items-center justify-center rounded-xl px-4 py-2 text-xs font-semibold shadow-sm transition hover:opacity-90">
+                          Read Now &rarr;
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  </>
                 ) : dataReady ? (
                   <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     You do not have any active digital access yet. Explore the collection below to request resources.
@@ -1373,7 +1560,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               ))}
             </div> : null}
 
-            {selectedBook.access_mode === 'premium' ? <div className="mt-5 space-y-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70"><div className="flex items-center justify-between gap-4 text-sm"><span className="font-semibold text-slate-800 dark:text-slate-100">Premium price</span><span className="font-semibold text-pine-700 dark:text-pine-200">₱{Number(selectedBook.premium_price).toFixed(2)}</span></div><label className="block text-sm font-medium">Payment reference<input value={premiumReference} onChange={(event) => setPremiumReference(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><label className="block text-sm font-medium">Payment proof<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPremiumProofFile(event.target.files?.[0] ?? null)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Use the configured payment channel and upload a clear receipt image. A screenshot is evidence for review, not automatic confirmation.</p></div> : <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
+            {selectedBook.access_mode === 'premium' ? <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              <p className="font-semibold">Checkout simulation</p>
+              <p className="mt-1 text-xs leading-5">This is a capstone demo only. No real GCash account or payment gateway is connected. The request will remain pending until an administrator reviews it.</p>
+              <label className="mt-3 flex items-start gap-2 text-xs leading-5">
+                <input type="checkbox" checked={premiumSimulationConfirmed} onChange={(event) => setPremiumSimulationConfirmed(event.target.checked)} className="mt-1" />
+                <span>I understand this is a simulated payment and not a real charge.</span>
+              </label>
+            </div> : null}
+
+            {selectedBook.access_mode === 'premium' ? <div className="mt-5 space-y-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70"><div className="flex items-center justify-between gap-4 text-sm"><span className="font-semibold text-slate-800 dark:text-slate-100">Premium price</span><span className="font-semibold text-pine-700 dark:text-pine-200">₱{Number(selectedBook.premium_price).toFixed(2)}</span></div><label className="block text-sm font-medium">Demo GCash reference<input value={premiumReference} onChange={(event) => setPremiumReference(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><label className="block text-sm font-medium">Sample payment receipt<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPremiumProofFile(event.target.files?.[0] ?? null)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><p className="text-xs leading-5 text-slate-500 dark:text-slate-300">A demo reference is generated for you. Upload a sample receipt image so the administrator can practice reviewing the checkout evidence.</p></div> : <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
@@ -1387,7 +1583,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
               <button type="button" onClick={() => void (selectedBook.access_mode === 'premium' ? submitPremiumPurchase() : submitAccessRequest())} disabled={requestingBookId !== null || premiumPurchaseSaving || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id || premiumPurchaseSaving ? 'Submitting...' : selectedBook.access_mode === 'premium' ? `Submit payment · ₱${Number(selectedBook.premium_price).toFixed(2)}` : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
+                {requestingBookId === selectedBook.id || premiumPurchaseSaving ? 'Submitting...' : selectedBook.access_mode === 'premium' ? `Simulate GCash payment · ₱${Number(selectedBook.premium_price).toFixed(2)}` : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
@@ -1407,8 +1603,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <form onSubmit={handleContributionSubmit} className="mt-6 space-y-4">
               <input required value={contributionForm.title} onChange={(event) => setContributionForm({ ...contributionForm, title: event.target.value })} placeholder="Book title" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <input required value={contributionForm.author} onChange={(event) => setContributionForm({ ...contributionForm, author: event.target.value })} placeholder="Author" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Why is this useful for the library?" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <label className="block"><span className="text-sm font-medium">PDF file</span><input required type="file" accept="application/pdf,.pdf" onChange={(event) => setContributionFile(event.target.files?.[0] ?? null)} className="workspace-input mt-2 block w-full rounded-2xl border border-dashed px-4 py-3 text-sm" /><span className="mt-1 block text-xs text-slate-500">PDF only, maximum 50 MB.</span></label>
+              <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Document subject or why this is useful for the library" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
+              <label className="block"><span className="text-sm font-medium">PDF file</span><input required type="file" accept="application/pdf,.pdf" onChange={(event) => void handleContributionFileSelected(event.target.files?.[0] ?? null)} className="workspace-input mt-2 block w-full rounded-2xl border border-dashed px-4 py-3 text-sm" /><span className="mt-1 block text-xs text-slate-500">PDF only, maximum 50 MB. Title, author, and subject are filled from PDF metadata when available.</span></label>
+              {contributionMetadataStatus ? <p aria-live="polite" className="text-xs text-slate-600 dark:text-slate-300">{contributionMetadataStatus}</p> : null}
               <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. Do not submit copyrighted material unless the library has permission to store and share it.</p>
               {contributionStatus ? <p className="rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm text-slate-700 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100">{contributionStatus}</p> : null}
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -1427,6 +1624,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Point your camera at a Smart Lib copy sticker. The matching book will open in the catalog.</p>
             <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" muted playsInline />
             {scannerError ? <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{scannerError}</p> : null}
+            {!scannerError && scannerStatus ? <p aria-live="polite" className="mt-4 text-sm text-slate-600 dark:text-slate-300">{scannerStatus}</p> : null}
           </section>
         </div>
       ) : null}
@@ -1447,6 +1645,23 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           else if (action?.type === 'return') void executeReturnLoan(action.id)
         }}
       />
+      {feedbackModal ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFeedbackModal(null) }}>
+          <section className="notification-modal action-feedback-modal" role="alertdialog" aria-modal="true" aria-labelledby="action-feedback-title" aria-describedby="action-feedback-message">
+            <div className="notification-modal-header">
+              <div>
+                <p className={`action-feedback-eyebrow action-feedback-${feedbackModal.tone}`}>
+                  {feedbackModal.tone === 'success' ? 'Completed' : feedbackModal.tone === 'error' ? 'Needs attention' : 'Update'}
+                </p>
+                <h2 id="action-feedback-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{feedbackModal.title}</h2>
+              </div>
+              <button type="button" className="notification-modal-close" onClick={() => setFeedbackModal(null)} aria-label="Close message">×</button>
+            </div>
+            <p id="action-feedback-message" className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-300">{feedbackModal.message}</p>
+            <button type="button" autoFocus onClick={() => setFeedbackModal(null)} className="pine-action mt-6 w-full rounded-xl px-4 py-3 text-sm font-semibold">Done</button>
+          </section>
+        </div>
+      ) : null}
       {continueReadingOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setContinueReadingOpen(false) }}>
           <section className="notification-modal continue-reading-modal" role="dialog" aria-modal="true" aria-labelledby="continue-reading-modal-title">
@@ -1468,8 +1683,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   const page = progress?.current_page ?? lastReadPages[loan.book_id] ?? 1
                   const totalPages = progress?.total_pages ?? books.find((book) => book.id === loan.book_id)?.page_count ?? null
                   const percentage = totalPages ? Math.min(100, Math.round((page / totalPages) * 100)) : null
-                  return <article key={loan.id} className="continue-reading-card rounded-2xl border border-paper-300 bg-paper-100/70 p-4 dark:border-forest-700 dark:bg-forest-800/60">
-                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Last opened page {page}{totalPages ? ` of ${totalPages}` : ''}</p></div><span className="rounded-full bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{percentage === null ? 'Active' : `${percentage}%`}</span></div>
+                  return <article key={`${loan.isOwner ? 'contribution' : 'loan'}-${loan.id}`} className="continue-reading-card rounded-2xl border border-paper-300 bg-paper-100/70 p-4 dark:border-forest-700 dark:bg-forest-800/60">
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{loan.isOwner ? 'Your contribution · permanent access' : `Last opened page ${page}${totalPages ? ` of ${totalPages}` : ''}`}</p></div><span className="rounded-full bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{loan.isOwner ? 'Permanent' : percentage === null ? 'Active' : `${percentage}%`}</span></div>
                     <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-paper-300 dark:bg-forest-700"><span className="block h-full rounded-full bg-pine-500" style={{ width: `${percentage ?? 0}%` }} /></div>
                     <button type="button" onClick={() => router.push(`/reader/${loan.book_id}`)} className="pine-action mt-4 w-full rounded-xl px-3 py-2 text-xs font-semibold">Resume reading</button>
                   </article>
@@ -1483,14 +1698,17 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setActiveAccessOpen(false) }}>
           <section className="notification-modal active-access-modal" role="dialog" aria-modal="true" aria-labelledby="my-library-modal-title">
             <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Reading space</p><h2 id="my-library-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">My library</h2></div><button type="button" className="notification-modal-close" onClick={() => setActiveAccessOpen(false)} aria-label="Close my library">×</button></div>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Your active e-book access. It expires automatically on the due date; renew before then if you need more time.</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Your active e-book access and permanent access to your approved contributions.</p>
             <div className="active-access-list">
-              {activeLoans.length > 0 ? activeLoans.map((loan) => {
+              {activeLoans.length > 0 || ownedContributionBooks.length > 0 ? <>
+                {activeLoans.map((loan) => {
                 const dueDate = loan.due_date ? new Date(loan.due_date) : null
                 const diffDays = dueDate ? Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24)) : null
                 const isUrgent = diffDays !== null && diffDays <= 3
                 return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unlocked {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Expires {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}<button type="button" onClick={() => void handleLoanAction(loan.id)} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}</button><button type="button" onClick={() => void handleReturnLoan(loan.id)} disabled={loanActionId !== null} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">Return</button></div></article>
-              }) : <div className="modal-empty-state">You do not have any active digital access yet. Explore the catalog to unlock a resource.</div>}
+                })}
+                {ownedContributionBooks.map((book) => <article key={`contribution-${book.id}`} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Your approved contribution · Permanent access</p></div><span className="rounded-full bg-pine-100 px-2.5 py-1 text-xs font-semibold text-pine-700 dark:bg-forest-700 dark:text-pine-200">Permanent</span></div><div className="mt-3"><button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${book.id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button></div></article>)}
+              </> : <div className="modal-empty-state">You do not have any active digital access yet. Explore the catalog to unlock a resource.</div>}
             </div>
           </section>
         </div>
@@ -1510,7 +1728,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       </div> : null}
       {physicalHistoryOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalHistoryOpen(false) }}>
-          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track requests, queue positions, payment, checkout, returns, and receipts.</p><div className="modal-record-list">{physicalWaitlist.map((entry) => <div key={`physical-waitlist-${entry.book_id}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{entry.title ?? `Book #${entry.book_id}`}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Waitlisted</span></div>)}{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status === 'pending' ? 'Awaiting librarian review' : loan.status === 'return_pending' ? 'Return requested' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 && physicalWaitlist.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track requests, queue positions, payment, checkout, returns, and receipts.</p><div className="modal-record-list">{physicalWaitlist.map((entry) => <div key={`physical-waitlist-${entry.book_id}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{entry.title ?? `Book #${entry.book_id}`}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Waitlisted</span></div>)}{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status === 'pending' ? 'Awaiting librarian review' : loan.status === 'return_pending' ? 'Return request awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 && physicalWaitlist.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
         </div>
       ) : null}
       {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>

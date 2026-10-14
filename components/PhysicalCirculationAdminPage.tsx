@@ -7,10 +7,11 @@ import { getSupabase } from '@/utils/supabase/client'
 import { AdminPhysicalSkeleton } from '@/components/skeletons/AdminDashboardSkeleton'
 import ResultModal from '@/components/ResultModal'
 import ActionModal from '@/components/ActionModal'
+import BaseModal from '@/components/BaseModal'
 import { DIGITAL_ACCESS_DURATION_OPTIONS } from '@/utils/libraryContracts'
 import { isStaffRole } from '@/utils/roles'
 
-type Book = { id: number; title: string; author: string; category: string; isbn: string | null; description?: string | null; catalog_type: string; cover_image_url: string | null }
+type Book = { id: number; title: string; author: string; category: string; isbn: string | null; description?: string | null; catalog_type: string; cover_image_url: string | null; is_archived: boolean }
 type Copy = { id: number; book_id: number; copy_code: string; qr_token: string; status: string; location: string | null; section: string | null; shelf_number: string | null; row_number: string | null; position_number: string | null }
 type Option = { id: number; book_id: number; duration_days: number; fee_amount: number; is_active: boolean }
 type Loan = {
@@ -65,6 +66,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [copyFormOpen, setCopyFormOpen] = useState(false)
   const [optionFormOpen, setOptionFormOpen] = useState(false)
   const [catalogSearch, setCatalogSearch] = useState('')
+  const [showArchivedBooks, setShowArchivedBooks] = useState(false)
   const [catalogFormat, setCatalogFormat] = useState<'all' | 'physical' | 'hybrid'>('all')
   const [catalogSort, setCatalogSort] = useState<'title' | 'author' | 'available'>('title')
   const [catalogPage, setCatalogPage] = useState(1)
@@ -72,10 +74,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [requestStatus, setRequestStatus] = useState<RequestQueueFilter>('all')
   const [requestPage, setRequestPage] = useState(1)
   const [copyDetailsBookId, setCopyDetailsBookId] = useState<number | null>(null)
+  const [manageBook, setManageBook] = useState<Book | null>(null)
   const [editingBook, setEditingBook] = useState<Book | null>(null)
   const [editBookForm, setEditBookForm] = useState({ title: '', author: '', category: '', isbn: '', description: '' })
   const [locationDrafts, setLocationDrafts] = useState<Record<number, { section: string; shelf: string; row: string; position: string }>>({})
-  const [pendingAction, setPendingAction] = useState<{ type: 'checkout' | 'close' | 'reject' | 'resolve'; id: number } | null>(null)
+  const [pendingAction, setPendingAction] = useState<{ type: 'checkout' | 'close' | 'reject' | 'resolve'; id: number } | { type: 'archiveBook'; id: number; title: string; archived: boolean } | null>(null)
+  const [processingRequestId, setProcessingRequestId] = useState<number | null>(null)
   const [checkoutLoan, setCheckoutLoan] = useState<Loan | null>(null)
   const [checkoutPaidAmount, setCheckoutPaidAmount] = useState('')
   const [checkoutNotes, setCheckoutNotes] = useState('')
@@ -98,7 +102,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       }
     })()
     const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, waitlistResult] = await Promise.all([
-      supabase.from('books').select('id,title,author,category,isbn,description,catalog_type,cover_image_url').order('title'),
+      supabase.from('books').select('id,title,author,category,isbn,description,catalog_type,cover_image_url,is_archived').order('title'),
       copyResultPromise,
       supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').order('book_id').order('duration_days'),
       supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,payment_proof_path,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at').order('requested_at', { ascending: false }),
@@ -228,6 +232,29 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setBusy(false)
   }
 
+  const setBookArchived = async (bookId: number, title: string, archived: boolean) => {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const { error: archiveError } = await getSupabase()
+        .from('books')
+        .update({ is_archived: archived })
+        .eq('id', bookId)
+      if (archiveError) {
+        setError(archiveError.message)
+      } else {
+        setBooks((current) => current.map((book) => book.id === bookId ? { ...book, is_archived: archived } : book))
+        setCatalogPage(1)
+        setMessage(archived
+          ? `"${title}" was removed from the active catalog. Its loan history and records are preserved.`
+          : `"${title}" was restored to the active catalog.`)
+      }
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : 'Unable to update the catalog status.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submitPhysicalBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const formElement = event.currentTarget
@@ -302,11 +329,19 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }
 
   const executeCheckout = async (loanId: number, paidAmount = Number(loans.find((loan) => loan.id === loanId)?.fee_amount ?? 0), notes = '') => {
+    setProcessingRequestId(loanId)
     setBusy(true); setError(''); setMessage('')
-    const { error: actionError } = await getSupabase().rpc('admin_confirm_physical_checkout', { p_request_id: loanId, p_amount_paid: paidAmount, p_payment_notes: notes.trim() || null })
-    if (actionError) setError(actionError.message)
-    else { await load(); setMessage('Payment confirmed and physical checkout recorded. Digital receipt issued to the borrower.') }
-    setBusy(false)
+    try {
+      const { error: actionError } = await getSupabase().rpc('admin_confirm_physical_checkout', { p_request_id: loanId, p_amount_paid: paidAmount, p_payment_notes: notes.trim() || null })
+      if (actionError) throw new Error(actionError.message)
+      await load()
+      setMessage('Payment confirmed and physical checkout recorded. Digital receipt issued to the borrower.')
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to confirm the physical-book checkout.')
+    } finally {
+      setProcessingRequestId(null)
+      setBusy(false)
+    }
   }
 
   const executeCloseLoan = async (loanId: number) => {
@@ -320,13 +355,21 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }
 
   const executeRejectRequest = async (loanId: number) => {
+    setProcessingRequestId(loanId)
     setBusy(true); setError(''); setMessage('')
-    const { error: actionError } = await getSupabase().rpc('admin_decide_physical_request', {
-      p_request_id: loanId, p_decision: 'rejected',
-    })
-    if (actionError) setError(actionError.message)
-    else { await load(); setMessage('Physical-book request rejected.') }
-    setBusy(false)
+    try {
+      const { error: actionError } = await getSupabase().rpc('admin_decide_physical_request', {
+        p_request_id: loanId, p_decision: 'rejected',
+      })
+      if (actionError) throw new Error(actionError.message)
+      await load()
+      setMessage('Physical-book request rejected.')
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to reject the physical-book request.')
+    } finally {
+      setProcessingRequestId(null)
+      setBusy(false)
+    }
   }
 
   const executeResolveLostLoan = async (loanId: number) => {
@@ -440,6 +483,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }, [requestSearch, requestStatus])
   const activeLoans = loans.filter((loan) => loan.status === 'checked_out' || loan.status === 'return_pending')
   const lostLoans = loans.filter((loan) => loan.status === 'lost')
+  const confirmingReturnRequest = pendingAction?.type === 'close'
+    && loans.some((loan) => loan.id === pendingAction.id && loan.status === 'return_pending')
   const historyLoans = loanHistory.filter((loan) => !historyBookId || String(loan.book_id) === historyBookId)
   const catalogRows = useMemo(() => {
     const copiesByBook = new Map<number, Copy[]>()
@@ -451,7 +496,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
 
     const query = catalogSearch.trim().toLowerCase()
     return books
-      .filter((book) => book.catalog_type === 'physical' || book.catalog_type === 'hybrid')
+      .filter((book) => book.is_archived === showArchivedBooks && (book.catalog_type === 'physical' || book.catalog_type === 'hybrid'))
       .map((book) => {
         const bookCopies = copiesByBook.get(book.id) ?? []
         return {
@@ -460,13 +505,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           total: bookCopies.length,
           available: bookCopies.filter((copy) => copy.status === 'available').length,
           borrowed: bookCopies.filter((copy) => copy.status === 'borrowed').length,
-          locations: Array.from(new Set(bookCopies.map((copy) => [copy.section, copy.shelf_number, copy.row_number].filter(Boolean).join(' Â· ')).filter(Boolean))).join(', '),
+          locations: Array.from(new Set(bookCopies.map((copy) => [copy.section, copy.shelf_number, copy.row_number].filter(Boolean).join(' · ')).filter(Boolean))).join(', '),
         }
       })
       .filter((row) => (!query || [row.book.title, row.book.author, row.book.isbn, row.book.category].some((value) => value?.toLowerCase().includes(query)))
         && (catalogFormat === 'all' || row.book.catalog_type === catalogFormat))
       .sort((a, b) => catalogSort === 'author' ? a.book.author.localeCompare(b.book.author) : catalogSort === 'available' ? b.available - a.available : a.book.title.localeCompare(b.book.title))
-  }, [books, copies, catalogSearch, catalogFormat, catalogSort])
+  }, [books, copies, catalogSearch, catalogFormat, catalogSort, showArchivedBooks])
   const catalogPageSize = 10
   const catalogPageCount = Math.max(1, Math.ceil(catalogRows.length / catalogPageSize))
   const visibleCatalogRows = catalogRows.slice((catalogPage - 1) * catalogPageSize, catalogPage * catalogPageSize)
@@ -504,16 +549,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
 
   return <main className={requestsOnly ? 'physical-requests-only contents' : 'min-h-screen bg-slate-50 px-4 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:px-8'}>
     <div className="mx-auto max-w-6xl space-y-6">
-      <header className={panel}>
-        <h1 className="text-3xl font-semibold">Physical catalog</h1>
-        <p className="mt-2 text-sm text-slate-500">Manage physical titles, copy availability, library locations, and printable QR labels.</p>
-      </header>
-      <ResultModal
-        open={Boolean(error || message)}
-        status={error ? 'error' : 'success'}
-        message={error || message}
-        onClose={() => { setError(''); setMessage('') }}
-      />
+      <div className={requestsOnly ? 'physical-requests-result' : undefined}>
+        <ResultModal
+          open={Boolean(error || message)}
+          status={error ? 'error' : 'success'}
+          message={error || message}
+          onClose={() => { setError(''); setMessage('') }}
+        />
+      </div>
 
       {newPhysicalBookOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setNewPhysicalBookOpen(false) }}><form onSubmit={(event) => void submitPhysicalBook(event)} className={`${panel} max-h-[90vh] w-full max-w-4xl space-y-3 overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="add-physical-book-title">
         <div className="flex items-start justify-between gap-4"><div><h2 id="add-physical-book-title" className="text-lg font-semibold">Add a physical book to the catalog</h2><p className="text-sm text-slate-500">Create the title, initial copies, and QR labels together.</p></div><button type="button" disabled={busy} onClick={() => setNewPhysicalBookOpen(false)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
@@ -525,7 +568,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <label className="text-sm font-medium">Copy-code prefix<input required maxLength={32} pattern="[A-Za-z0-9_-]+" value={newPhysicalBook.prefix} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, prefix: event.target.value })} placeholder="e.g. BIO101" className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Number of copies<input required type="number" min="1" max="100" value={newPhysicalBook.quantity} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, quantity: event.target.value })} className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Shelf / location (optional)<input maxLength={120} value={newPhysicalBook.location} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, location: event.target.value })} placeholder="e.g. Science shelf B" className={`${input} mt-1`} /></label>
-          <label className="text-sm font-medium">Front cover (optional)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => setCoverFile(event.target.files?.[0] ?? null)} className={`${input} mt-1`} /><span className="mt-1 block text-xs font-normal text-slate-500">JPG, PNG, or WebP Â· up to 5 MB</span></label>
+          <label className="text-sm font-medium">Front cover (optional)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => setCoverFile(event.target.files?.[0] ?? null)} className={`${input} mt-1`} /><span className="mt-1 block text-xs font-normal text-slate-500">JPG, PNG, or WebP · up to 5 MB</span></label>
         </div>
         <label className="block text-sm font-medium">Description (optional)<textarea maxLength={3000} rows={3} value={newPhysicalBook.description} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, description: event.target.value })} className={`${input} mt-1`} /></label>
         <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Add book and copies'}</button>
@@ -534,9 +577,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       {copyFormOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCopyFormOpen(false) }}>
         <form onSubmit={(event) => void submitCopyForm(event)} className={`${panel} w-full max-w-xl space-y-4`} role="dialog" aria-modal="true" aria-labelledby="add-copies-title">
           <div className="flex items-start justify-between gap-4"><div><h2 id="add-copies-title" className="text-lg font-semibold">Add copies to an existing title</h2><p className="mt-1 text-sm text-slate-500">New copies receive unique IDs and QR labels.</p></div><button type="button" disabled={busy} onClick={() => setCopyFormOpen(false)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
-          <label className="block text-sm font-medium">Book<select required value={copyForm.bookId} onChange={(event) => setCopyForm({ ...copyForm, bookId: event.target.value })} className={`${input} mt-1`}><option value="">Choose a book</option>{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
+          <label className="block text-sm font-medium">Book<select required value={copyForm.bookId} onChange={(event) => setCopyForm({ ...copyForm, bookId: event.target.value })} className={`${input} mt-1`}><option value="">Choose a book</option>{books.filter((book) => !book.is_archived).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
           <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Copy-code prefix<input required value={copyForm.prefix} onChange={(event) => setCopyForm({ ...copyForm, prefix: event.target.value })} maxLength={32} pattern="[A-Za-z0-9_-]+" placeholder="e.g. BIO101" className={`${input} mt-1`} /></label><label className="text-sm font-medium">Quantity<input required type="number" min="1" max="100" value={copyForm.quantity} onChange={(event) => setCopyForm({ ...copyForm, quantity: event.target.value })} className={`${input} mt-1`} /></label></div>
-          <label className="block text-sm font-medium">Shelf / location (optional)<input value={copyForm.location} onChange={(event) => setCopyForm({ ...copyForm, location: event.target.value })} maxLength={120} placeholder="e.g. Science Â· Shelf 2" className={`${input} mt-1`} /></label>
+          <label className="block text-sm font-medium">Shelf / location (optional)<input value={copyForm.location} onChange={(event) => setCopyForm({ ...copyForm, location: event.target.value })} maxLength={120} placeholder="e.g. Science · Shelf 2" className={`${input} mt-1`} /></label>
           <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Creating...' : 'Create copies'}</button>
         </form>
       </div> : null}
@@ -548,9 +591,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             const bookId = event.target.value
             const existing = options.filter((option) => option.book_id === Number(bookId))
             setOptionForm({ bookId, fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])) })
-          }} className={`${input} mt-1`}><option value="">Choose a book</option>{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
+          }} className={`${input} mt-1`}><option value="">Choose a book</option>{books.filter((book) => !book.is_archived).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-sm">{days} {days === 1 ? 'day' : 'days'} fee (â‚±)<input required type="number" min="0" step="0.01" value={optionForm.fees[String(days)] ?? '0'} onChange={(event) => setOptionForm({ ...optionForm, fees: { ...optionForm.fees, [days]: event.target.value } })} className={`${input} mt-1`} /></label>)}
+            {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-sm">{days} {days === 1 ? 'day' : 'days'} fee (₱)<input required type="number" min="0" step="0.01" value={optionForm.fees[String(days)] ?? '0'} onChange={(event) => setOptionForm({ ...optionForm, fees: { ...optionForm.fees, [days]: event.target.value } })} className={`${input} mt-1`} /></label>)}
           </div>
           <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save fees'}</button>
         </form>
@@ -571,6 +614,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <select value={catalogSort} onChange={(event) => { setCatalogSort(event.target.value as typeof catalogSort); setCatalogPage(1) }} className={`${input} min-w-0`}>
             <option value="title">Sort: title</option><option value="author">Sort: author</option><option value="available">Sort: availability</option>
           </select>
+          <button type="button" onClick={() => { setShowArchivedBooks((current) => !current); setCatalogPage(1) }} className="whitespace-nowrap rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">
+            {showArchivedBooks ? 'View active' : 'View archived'}
+          </button>
           <button type="button" onClick={() => setNewPhysicalBookOpen(true)} className="whitespace-nowrap rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Add book</button>
           <button type="button" onClick={() => setCopyFormOpen(true)} className="whitespace-nowrap rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Add copies</button>
         </div>
@@ -581,10 +627,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             </thead>
             <tbody>
               {visibleCatalogRows.map((row) => <tr key={row.book.id} className="border-b border-slate-100 align-top dark:border-slate-800">
-                <td className="break-words px-2 py-3 sm:px-3"><strong>{row.book.title}</strong><span className="mt-1 block text-xs text-slate-600 dark:text-slate-400">{row.book.author} Â· {row.book.category}</span><span className="mt-1 block text-xs capitalize text-slate-500">{row.book.isbn ? `ISBN ${row.book.isbn} Â· ` : ''}{row.book.catalog_type}</span></td>
-                <td className="px-2 py-3 sm:px-3"><strong className="block text-emerald-700 dark:text-emerald-300">{row.available} available</strong><span className="mt-1 block text-xs text-slate-600 dark:text-slate-400">{row.total} total Â· {row.borrowed} borrowed</span></td>
+                <td className="break-words px-2 py-3 sm:px-3"><strong>{row.book.title}</strong>{row.book.is_archived ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">Archived</span> : null}<span className="mt-1 block text-xs text-slate-600 dark:text-slate-400">{row.book.author} · {row.book.category}</span><span className="mt-1 block text-xs capitalize text-slate-500">{row.book.isbn ? `ISBN ${row.book.isbn} · ` : ''}{row.book.catalog_type}</span></td>
+                <td className="px-2 py-3 sm:px-3"><strong className="block text-emerald-700 dark:text-emerald-300">{row.available} available</strong><span className="mt-1 block text-xs text-slate-600 dark:text-slate-400">{row.total} total · {row.borrowed} borrowed</span></td>
                 <td className="break-words px-2 py-3 text-xs text-slate-600 dark:text-slate-400 sm:px-3">{row.locations || 'Location not set'}</td>
-                <td className="physical-catalog-actions px-2 py-3 sm:px-3"><div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setCopyDetailsBookId(row.book.id)} className="whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-700 dark:text-white dark:hover:bg-slate-600">Copies &amp; QR</button><button type="button" onClick={() => openOptionEditor(row.book.id)} className="whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-700 dark:text-white dark:hover:bg-slate-600">Loan fees</button><button type="button" onClick={() => { setEditingBook(row.book); setEditBookForm({ title: row.book.title, author: row.book.author, category: row.book.category, isbn: row.book.isbn ?? '', description: row.book.description ?? '' }) }} className="whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-700 dark:text-white dark:hover:bg-slate-600">Edit</button></div></td>
+                <td className="physical-catalog-actions px-2 py-3 sm:px-3"><button type="button" disabled={busy} onClick={() => setManageBook(row.book)} className="whitespace-nowrap rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Manage book</button></td>
               </tr>)}
             </tbody>
           </table>
@@ -596,17 +642,44 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         </div>
       </section>
 
+      <BaseModal
+        open={manageBook !== null}
+        title="Manage physical book"
+        description={manageBook ? `${manageBook.title} · ${manageBook.author}` : undefined}
+        onClose={() => setManageBook(null)}
+        size="md"
+      >
+        {manageBook ? <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800">
+              <p className="text-xs text-slate-500 dark:text-slate-400">Copies</p>
+              <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">{catalogRows.find((row) => row.book.id === manageBook.id)?.total ?? 0} registered</p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800">
+              <p className="text-xs text-slate-500 dark:text-slate-400">Shelf location</p>
+              <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">{catalogRows.find((row) => row.book.id === manageBook.id)?.locations || 'Not set'}</p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setCopyDetailsBookId(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Copies &amp; QR</button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); openOptionEditor(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Loan fees</button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setEditingBook(book); setEditBookForm({ title: book.title, author: book.author, category: book.category, isbn: book.isbn ?? '', description: book.description ?? '' }) }} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Edit details</button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'archiveBook', id: book.id, title: book.title, archived: !book.is_archived }) }} className="rounded-xl border border-rose-300 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30">{manageBook.is_archived ? 'Restore to catalog' : 'Remove from catalog'}</button>
+          </div>
+        </> : null}
+      </BaseModal>
+
       {false && <section className={panel}>
         <h2 className="text-xl font-semibold">Copy inventory and printable QR stickers</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {copies.map((copy) => <article key={copy.id} className="rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700">
             {qrImages[copy.qr_token] ? <img src={qrImages[copy.qr_token]} alt={`QR sticker for copy ${copy.copy_code}`} className="mx-auto h-36 w-36" /> : <div className="mx-auto h-36 w-36 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />}
-            <strong className="mt-2 block">{copy.copy_code}</strong><p className="mt-1 text-xs capitalize text-slate-500">{copy.status}{copy.location ? ` Â· ${copy.location}` : ''}</p><p className="mt-1 text-xs text-slate-500">{[copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`].filter(Boolean).join(' Â· ') || 'Location not set'}</p>
+            <strong className="mt-2 block">{copy.copy_code}</strong><p className="mt-1 text-xs capitalize text-slate-500">{copy.status}{copy.location ? ` · ${copy.location}` : ''}</p><p className="mt-1 text-xs text-slate-500">{[copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`].filter(Boolean).join(' · ') || 'Location not set'}</p>
             {qrImages[copy.qr_token] ? <a href={qrImages[copy.qr_token]} download={`${copy.copy_code}-qr.png`} className="mt-2 inline-block text-xs font-semibold text-sky-700 underline dark:text-sky-300">Download sticker</a> : null}
           </article>)}
           {copies.length === 0 ? <p className="text-sm text-slate-500">No physical copies registered yet.</p> : null}
         </div>
-        <div className="mt-6 space-y-2">{options.map((option) => <p key={option.id} className="text-sm text-slate-600 dark:text-slate-300">{bookName(option.book_id)} Â· {option.duration_days} days Â· â‚±{Number(option.fee_amount).toFixed(2)}{option.is_active ? '' : ' Â· inactive'}</p>)}</div>
+        <div className="mt-6 space-y-2">{options.map((option) => <p key={option.id} className="text-sm text-slate-600 dark:text-slate-300">{bookName(option.book_id)} · {option.duration_days} days · ₱{Number(option.fee_amount).toFixed(2)}{option.is_active ? '' : ' · inactive'}</p>)}</div>
       </section>}
 
       <div className="physical-queue-nav mt-5 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/60">
@@ -617,38 +690,38 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         <button type="button" onClick={() => setOpenPanel('lost')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Lost items <span className="ml-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-800 dark:bg-rose-950 dark:text-rose-200">{lostLoans.length}</span></button>
       </div>
 
-      {openPanel === 'requests' ? <div className="physical-requests-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setOpenPanel(null); onClose?.() } }}>
-        <section className={`${panel} max-h-[90vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="physical-requests-title">
+      {openPanel === 'requests' ? <div className={requestsOnly ? 'physical-requests-inline' : 'physical-requests-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4'} role={requestsOnly ? undefined : 'presentation'} onMouseDown={(event) => { if (!requestsOnly && event.target === event.currentTarget) { setOpenPanel(null); onClose?.() } }}>
+        <section className={`${panel} ${requestsOnly ? 'w-full' : 'max-h-[90vh] w-full max-w-5xl overflow-y-auto'}`} role={requestsOnly ? undefined : 'dialog'} aria-modal={requestsOnly ? undefined : true} aria-labelledby="physical-requests-title">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 id="physical-requests-title" className="text-xl font-semibold">Requests and payment verification</h2>
               <p className="mt-1 text-sm text-slate-500">Review payment details and confirm or reject pending requests. A copy is assigned only at checkout.</p>
             </div>
-            <button type="button" onClick={() => { setOpenPanel(null); onClose?.() }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button>
+            <button type="button" onClick={() => { setOpenPanel(null); onClose?.() }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">{requestsOnly ? 'Back to overview' : 'Close'}</button>
           </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">Showing {filteredWaitingLoans.length} of {queueLoans.length} queue items.</p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input type="search" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search member, book, or request ID..." aria-label="Search physical requests" className={`${input} sm:min-w-80`} />
               <select value={requestStatus} onChange={(event) => setRequestStatus(event.target.value as RequestQueueFilter)} aria-label="Filter physical requests by operational state" className={input}>
-                <option value="all">All queue items</option><option value="pending">Pending requests</option><option value="awaiting_payment">Awaiting payment</option><option value="ready">Ready for checkout</option><option value="checked_out">Checked out</option><option value="overdue">Overdue</option><option value="return_pending">Return pending</option><option value="waitlisted">Waitlisted</option>
+                <option value="all">All queue items</option><option value="pending">Pending requests</option><option value="awaiting_payment">Awaiting payment</option><option value="ready">Ready for checkout</option><option value="checked_out">Checked out</option><option value="overdue">Overdue</option><option value="return_pending">Return requests</option><option value="waitlisted">Waitlisted</option>
               </select>
             </div>
           </div>
         <div className="mt-4 space-y-3">
           {visibleWaitingLoans.map((loan) => <article key={loan.id} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status} Â· {loan.copy_id ? copyCode(loan.copy_id) : 'Copy assigned at checkout'} Â· {loan.duration_days} days Â· â‚±{Number(loan.fee_amount).toFixed(2)} Â· {loan.payment_method} Â· {loan.payment_status.replace('_', ' ')}</p>{loan.due_date && loan.status === 'checked_out' ? <p className={`mt-1 text-xs ${new Date(loan.due_date) < new Date() ? 'font-semibold text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>{new Date(loan.due_date) < new Date() ? 'Overdue' : 'Due'} {new Date(loan.due_date).toLocaleDateString()}</p> : null}{loan.transaction_reference ? <p className="mt-1 text-xs text-slate-500">Transaction reference: {loan.transaction_reference}</p> : null}{loan.payment_proof_path ? <button type="button" onClick={() => void openProof(loan.payment_proof_path!)} className="mt-1 text-xs font-semibold text-sky-700 underline dark:text-sky-300">View uploaded payment proof</button> : null}</div>
-              {loan.status === 'pending' ? <div className="flex flex-wrap gap-2"><button disabled={busy} type="button" onClick={() => checkout(loan.id)} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Review &amp; approve</button><button disabled={busy} type="button" onClick={() => void rejectRequest(loan.id)} className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">Reject request</button></div> : loan.status === 'checked_out' || loan.status === 'return_pending' ? <button type="button" onClick={() => setOpenPanel('checkedOut')} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">{loan.status === 'return_pending' ? 'Complete return' : 'Manage return'}</button> : <span className="text-xs text-amber-700 dark:text-amber-300">No checkout action</span>}
+            <div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">{loan.status === 'return_pending' ? 'Return request · awaiting confirmation' : loan.status.replace('_', ' ')} · {loan.copy_id ? copyCode(loan.copy_id) : 'Copy assigned at checkout'} · {loan.duration_days} days · ₱{Number(loan.fee_amount).toFixed(2)} · {loan.payment_method} · {loan.payment_status.replace('_', ' ')}</p>{loan.due_date && loan.status === 'checked_out' ? <p className={`mt-1 text-xs ${new Date(loan.due_date) < new Date() ? 'font-semibold text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>{new Date(loan.due_date) < new Date() ? 'Overdue' : 'Due'} {new Date(loan.due_date).toLocaleDateString()}</p> : null}{loan.transaction_reference ? <p className="mt-1 text-xs text-slate-500">Transaction reference: {loan.transaction_reference}</p> : null}{loan.payment_proof_path ? <button type="button" onClick={() => void openProof(loan.payment_proof_path!)} className="mt-1 text-xs font-semibold text-sky-700 underline dark:text-sky-300">View uploaded payment proof</button> : null}</div>
+              {loan.status === 'pending' ? <div className="flex flex-wrap gap-2"><button disabled={processingRequestId !== null} type="button" onClick={() => checkout(loan.id)} className="physical-review-action rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50">{processingRequestId === loan.id ? 'Processing...' : 'Review & approve'}</button><button disabled={processingRequestId !== null} type="button" onClick={() => void rejectRequest(loan.id)} className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">Reject request</button></div> : loan.status === 'checked_out' || loan.status === 'return_pending' ? <button type="button" onClick={() => setOpenPanel('checkedOut')} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">{loan.status === 'return_pending' ? 'Review return request' : 'Manage return'}</button> : <span className="text-xs text-amber-700 dark:text-amber-300">No checkout action</span>}
             </div>
           </article>)}
-          {visibleWaitlists.map((entry) => <article key={`waitlist-${entry.student_id}-${entry.book_id}`} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(entry.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(entry.student_id)}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue Â· joined {new Date(entry.created_at).toLocaleString()}</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">Waitlisted</span></div></article>)}
+          {visibleWaitlists.map((entry) => <article key={`waitlist-${entry.student_id}-${entry.book_id}`} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(entry.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(entry.student_id)}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleString()}</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">Waitlisted</span></div></article>)}
           {filteredWaitingLoans.length === 0 && visibleWaitlists.length === 0 ? <p className="text-sm text-slate-500">{queueLoans.length === 0 && waitlists.length === 0 ? 'No physical queue items.' : 'No physical requests match the current search or filter.'}</p> : null}
           {filteredWaitingLoans.length > requestPageSize ? <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-sm"><span className="text-slate-500">Page {Math.min(requestPage, requestPageCount)} of {requestPageCount}</span><div className="flex gap-2"><button type="button" disabled={requestPage <= 1} onClick={() => setRequestPage((page) => Math.max(1, page - 1))} className="rounded-xl border border-slate-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700">Previous</button><button type="button" disabled={requestPage >= requestPageCount} onClick={() => setRequestPage((page) => Math.min(requestPageCount, page + 1))} className="rounded-xl border border-slate-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700">Next</button></div></div> : null}
         </div>
         </section>
       </div> : null}
 
-      {openPanel === 'checkedOut' ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpenPanel(null) }}>
+      {openPanel === 'checkedOut' ? <div className="physical-checked-out-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpenPanel(null) }}>
         <section className={`${panel} max-h-[90vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="checked-out-title">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -659,8 +732,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           </div>
         <div className="mt-4 space-y-3">
           {activeLoans.map((loan) => <article key={loan.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-            <div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">{loan.status === 'return_pending' ? 'RETURN PENDING Â· ' : ''}Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'â€”'} Â· Receipt {loan.receipt_number ?? 'â€”'}{loan.due_date && new Date(loan.due_date) < new Date() ? ' Â· OVERDUE' : ''}</p></div>
-            <div className="flex items-end gap-2"><label className="text-xs">Returned condition<select value={returnConditions[loan.id] ?? 'available'} onChange={(event) => setReturnConditions({ ...returnConditions, [loan.id]: event.target.value as 'available' | 'damaged' | 'lost' })} className={`${input} mt-1`}><option value="available">Good / available</option><option value="damaged">Damaged</option><option value="lost">Lost / not returned</option></select></label><button disabled={busy} type="button" onClick={() => void closeLoan(loan.id)} className="rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Record</button></div>
+            <div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">{loan.status === 'return_pending' ? 'RETURN REQUEST · AWAITING LIBRARIAN CONFIRMATION · ' : ''}Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'} · Receipt {loan.receipt_number ?? '—'}{loan.due_date && new Date(loan.due_date) < new Date() ? ' · OVERDUE' : ''}</p></div>
+            <div className="flex items-end gap-2"><label className="text-xs">Returned condition<select value={returnConditions[loan.id] ?? 'available'} onChange={(event) => setReturnConditions({ ...returnConditions, [loan.id]: event.target.value as 'available' | 'damaged' | 'lost' })} className={`${input} mt-1`}><option value="available">Good / available</option><option value="damaged">Damaged</option><option value="lost">Lost / not returned</option></select></label><button disabled={busy} type="button" onClick={() => void closeLoan(loan.id)} className="rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{loan.status === 'return_pending' ? 'Confirm return' : 'Record return'}</button></div>
           </article>)}
           {activeLoans.length === 0 ? <p className="text-sm text-slate-500">No books are currently checked out.</p> : null}
         </div>
@@ -672,18 +745,18 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="circulation-history-catalog-title" className="text-xl font-semibold">Physical loan history</h2><p className="mt-1 text-sm text-slate-500">Choose a title to inspect its complete circulation history.</p></div><button type="button" onClick={() => setOpenPanel(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
           <input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search title, author, ISBN, or category..." aria-label="Search physical-book history" className={`${input} mt-4`} />
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {historyBookRows.map(({ book, records, active, returned, available }) => <button key={book.id} type="button" onClick={() => setHistoryDetailBookId(book.id)} className="rounded-2xl border border-slate-200 p-4 text-left transition hover:border-emerald-600 hover:bg-emerald-50 dark:border-slate-700 dark:hover:border-emerald-400 dark:hover:bg-emerald-950/30"><div className="flex items-start justify-between gap-3"><div><strong className="block">{book.title}</strong><span className="mt-1 block text-xs text-slate-500">{book.author} Â· {book.category}</span></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold dark:bg-slate-800">{records.length} records</span></div><div className="mt-4 grid grid-cols-3 gap-2 text-xs"><span><strong className="block text-base">{active}</strong>Active</span><span><strong className="block text-base">{returned}</strong>Returned</span><span><strong className="block text-base">{available}</strong>Available</span></div><span className="mt-4 block text-xs font-semibold text-emerald-700 dark:text-emerald-300">Open history â†’</span></button>)}
+            {historyBookRows.map(({ book, records, active, returned, available }) => <button key={book.id} type="button" onClick={() => setHistoryDetailBookId(book.id)} className="rounded-2xl border border-slate-200 p-4 text-left text-slate-900 transition hover:border-emerald-600 hover:bg-emerald-50 dark:border-slate-700 dark:hover:border-emerald-400 dark:hover:bg-emerald-950/30"><div className="flex items-start justify-between gap-3"><div><strong className="block text-slate-900">{book.title}</strong><span className="mt-1 block text-xs text-slate-600">{book.author} · {book.category}</span></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">{records.length} records</span></div><div className="mt-4 grid grid-cols-3 gap-2 text-xs text-slate-600"><span><strong className="block text-base text-slate-900">{active}</strong>Active</span><span><strong className="block text-base text-slate-900">{returned}</strong>Returned</span><span><strong className="block text-base text-slate-900">{available}</strong>Available</span></div><span className="mt-4 block text-xs font-semibold text-emerald-700 dark:text-emerald-300">Open history →</span></button>)}
           </div>
           {historyBookRows.length === 0 ? <p className="py-8 text-sm text-slate-500">No physical titles match your search.</p> : null}
         </section>
-        {selectedHistoryBook ? <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDetailBookId(null) }}><section className={`${panel} max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="book-history-title"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Book history</p><h2 id="book-history-title" className="mt-1 text-xl font-semibold">{selectedHistoryBook.title}</h2><p className="mt-1 text-sm text-slate-500">{selectedHistoryRows.length} circulation record{selectedHistoryRows.length === 1 ? '' : 's'} Â· {selectedHistoryBook.author}</p></div><button type="button" onClick={() => setHistoryDetailBookId(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[680px] table-fixed text-left text-xs sm:text-sm"><thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[27%] px-2 py-3">Borrower / copy</th><th className="w-[24%] px-2 py-3">Checkout / due</th><th className="w-[24%] px-2 py-3">Return</th><th className="w-[25%] px-2 py-3">Status / receipt</th></tr></thead><tbody>{selectedHistoryRows.map((loan) => <tr key={loan.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3"><strong className="block">{memberName(loan.student_id)}</strong><span className="text-slate-500">{copyCode(loan.copy_id)}</span></td><td className="break-words px-2 py-3"><span className="block">{new Date(loan.checked_out_at).toLocaleString()}</span><span className="text-slate-500">Due {new Date(loan.due_date).toLocaleDateString()}</span></td><td className="break-words px-2 py-3"><span className="block">{loan.returned_at ? new Date(loan.returned_at).toLocaleString() : 'Not returned'}</span><span className="text-slate-500">{loan.return_condition ? `Condition: ${loan.return_condition}` : `${loan.duration_days} days`}</span></td><td className="break-words px-2 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${loan.status === 'returned' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : loan.status === 'lost' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200'}`}>{loan.status.replace('_', ' ')}</span><span className="mt-1 block text-slate-500">Receipt {loan.receipt_number ?? 'â€”'}</span></td></tr>)}</tbody></table></div>{selectedHistoryRows.length === 0 ? <p className="py-8 text-sm text-slate-500">This book has no completed checkout records yet.</p> : null}</section></div> : null}
+        {selectedHistoryBook ? <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHistoryDetailBookId(null) }}><section className={`${panel} max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="book-history-title"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Book history</p><h2 id="book-history-title" className="mt-1 text-xl font-semibold">{selectedHistoryBook.title}</h2><p className="mt-1 text-sm text-slate-500">{selectedHistoryRows.length} circulation record{selectedHistoryRows.length === 1 ? '' : 's'} · {selectedHistoryBook.author}</p></div><button type="button" onClick={() => setHistoryDetailBookId(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[680px] table-fixed text-left text-xs sm:text-sm"><thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[27%] px-2 py-3">Borrower / copy</th><th className="w-[24%] px-2 py-3">Checkout / due</th><th className="w-[24%] px-2 py-3">Return</th><th className="w-[25%] px-2 py-3">Status / receipt</th></tr></thead><tbody>{selectedHistoryRows.map((loan) => <tr key={loan.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3"><strong className="block">{memberName(loan.student_id)}</strong><span className="text-slate-500">{copyCode(loan.copy_id)}</span></td><td className="break-words px-2 py-3"><span className="block">{new Date(loan.checked_out_at).toLocaleString()}</span><span className="text-slate-500">Due {new Date(loan.due_date).toLocaleDateString()}</span></td><td className="break-words px-2 py-3"><span className="block">{loan.returned_at ? new Date(loan.returned_at).toLocaleString() : 'Not returned'}</span><span className="text-slate-500">{loan.return_condition ? `Condition: ${loan.return_condition}` : `${loan.duration_days} days`}</span></td><td className="break-words px-2 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${loan.status === 'returned' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : loan.status === 'lost' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200'}`}>{loan.status.replace('_', ' ')}</span><span className="mt-1 block text-slate-500">Receipt {loan.receipt_number ?? '—'}</span></td></tr>)}</tbody></table></div>{selectedHistoryRows.length === 0 ? <p className="py-8 text-sm text-slate-500">This book has no completed checkout records yet.</p> : null}</section></div> : null}
         <section className={`${panel} hidden max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="circulation-history-title">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="circulation-history-title" className="text-xl font-semibold">Physical loan history</h2><p className="mt-1 text-sm text-slate-500">Completed checkouts, returns, due dates, and copy condition.</p></div><button type="button" onClick={() => setOpenPanel(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
           <label className="mt-4 block max-w-sm text-sm font-medium">Filter by book<select value={historyBookId} onChange={(event) => setHistoryBookId(event.target.value)} className={`${input} mt-1`}><option value="">All physical books</option>{books.map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
           <div className="mt-4">
             <table className="w-full table-fixed text-left text-xs sm:text-sm">
               <thead className="border-b border-slate-200 text-left uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[30%] px-2 py-3 sm:px-3">Book / borrower</th><th className="w-[23%] px-2 py-3 sm:px-3">Checkout / due</th><th className="w-[25%] px-2 py-3 sm:px-3">Return / term</th><th className="w-[22%] px-2 py-3 sm:px-3">Status</th></tr></thead>
-              <tbody>{historyLoans.map((loan) => <tr key={loan.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3 sm:px-3"><strong className="block">{bookName(loan.book_id)}</strong><span className="block text-slate-600 dark:text-slate-400">{copyCode(loan.copy_id)} Â· {memberName(loan.student_id)}</span><span className="block text-slate-500">Receipt {loan.receipt_number ?? 'â€”'}</span></td><td className="break-words px-2 py-3 sm:px-3"><span className="block">{loan.checked_out_at ? new Date(loan.checked_out_at).toLocaleDateString() : 'â€”'}</span><span className="block text-slate-500">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'â€”'}</span></td><td className="break-words px-2 py-3 sm:px-3"><span className="block">{loan.returned_at ? new Date(loan.returned_at).toLocaleDateString() : 'Not returned'}</span><span className="block text-slate-500">{loan.duration_days} days{loan.return_condition ? ` Â· ${loan.return_condition}` : ''}</span></td><td className="break-words px-2 py-3 capitalize sm:px-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${loan.status === 'checked_out' ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200' : loan.status === 'returned' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : loan.status === 'lost' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}>{loan.status.replace('_', ' ')}</span></td></tr>)}</tbody>
+              <tbody>{historyLoans.map((loan) => <tr key={loan.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3 sm:px-3"><strong className="block">{bookName(loan.book_id)}</strong><span className="block text-slate-600 dark:text-slate-400">{copyCode(loan.copy_id)} · {memberName(loan.student_id)}</span><span className="block text-slate-500">Receipt {loan.receipt_number ?? '—'}</span></td><td className="break-words px-2 py-3 sm:px-3"><span className="block">{loan.checked_out_at ? new Date(loan.checked_out_at).toLocaleDateString() : '—'}</span><span className="block text-slate-500">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</span></td><td className="break-words px-2 py-3 sm:px-3"><span className="block">{loan.returned_at ? new Date(loan.returned_at).toLocaleDateString() : 'Not returned'}</span><span className="block text-slate-500">{loan.duration_days} days{loan.return_condition ? ` · ${loan.return_condition}` : ''}</span></td><td className="break-words px-2 py-3 capitalize sm:px-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${loan.status === 'checked_out' ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200' : loan.status === 'returned' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : loan.status === 'lost' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}>{loan.status.replace('_', ' ')}</span></td></tr>)}</tbody>
             </table>
             {historyLoans.length === 0 ? <p className="py-6 text-sm text-slate-500">No circulation history for this selection.</p> : null}
           </div>
@@ -709,7 +782,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <div className="mt-4">
             <table className="w-full table-fixed text-left text-xs sm:text-sm">
               <thead className="border-b border-slate-200 uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[42%] px-2 py-3 sm:px-3">Book / borrower</th><th className="w-[20%] px-2 py-3 sm:px-3">Due</th><th className="w-[38%] px-2 py-3 sm:px-3">Resolution</th></tr></thead>
-              <tbody>{lostLoans.map((loan) => <tr key={loan.id} className="border-b border-rose-100 align-top dark:border-rose-900/60"><td className="break-words px-2 py-3 sm:px-3"><strong className="block">{bookName(loan.book_id)}</strong><span className="block text-slate-600 dark:text-slate-400">{memberName(loan.student_id)}</span><span className="block text-slate-500">{copyCode(loan.copy_id)}</span></td><td className="break-words px-2 py-3 sm:px-3">{loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'â€”'}</td><td className="px-2 py-3 sm:px-3"><select aria-label={`Resolution for ${copyCode(loan.copy_id)}`} value={lostResolution[loan.id] ?? 'available'} onChange={(event) => setLostResolution({ ...lostResolution, [loan.id]: event.target.value as 'available' | 'damaged' | 'withdrawn' })} className="mb-2 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-950"><option value="available">Found Â· good</option><option value="damaged">Found Â· damaged</option><option value="withdrawn">Close as lost</option></select><button disabled={busy} type="button" onClick={() => void resolveLostLoan(loan.id)} className="w-full rounded-lg bg-slate-900 px-2 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Resolve hold</button></td></tr>)}</tbody>
+              <tbody>{lostLoans.map((loan) => <tr key={loan.id} className="border-b border-rose-100 align-top dark:border-rose-900/60"><td className="break-words px-2 py-3 sm:px-3"><strong className="block">{bookName(loan.book_id)}</strong><span className="block text-slate-600 dark:text-slate-400">{memberName(loan.student_id)}</span><span className="block text-slate-500">{copyCode(loan.copy_id)}</span></td><td className="break-words px-2 py-3 sm:px-3">{loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</td><td className="px-2 py-3 sm:px-3"><select aria-label={`Resolution for ${copyCode(loan.copy_id)}`} value={lostResolution[loan.id] ?? 'available'} onChange={(event) => setLostResolution({ ...lostResolution, [loan.id]: event.target.value as 'available' | 'damaged' | 'withdrawn' })} className="mb-2 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-950"><option value="available">Found · good</option><option value="damaged">Found · damaged</option><option value="withdrawn">Close as lost</option></select><button disabled={busy} type="button" onClick={() => void resolveLostLoan(loan.id)} className="w-full rounded-lg bg-slate-900 px-2 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Resolve hold</button></td></tr>)}</tbody>
             </table>
             {lostLoans.length === 0 ? <p className="py-6 text-sm text-slate-500">No unresolved lost items.</p> : null}
           </div>
@@ -719,14 +792,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     <ActionModal
       open={checkoutLoan !== null}
       title="Review physical-book request"
-      description="Verify the payment, assign the next available copy, and issue the borrowerâ€™s receipt. Pending requests do not reserve a copy."
+      description="Verify the payment, assign the next available copy, and issue the borrower’s receipt. Pending requests do not reserve a copy."
       confirmLabel="Verify payment & issue receipt"
-      busy={busy}
+      busy={checkoutLoan !== null && processingRequestId === checkoutLoan.id}
       onClose={() => setCheckoutLoan(null)}
       onConfirm={() => {
         if (!checkoutLoan) return
         if (!Number.isFinite(Number(checkoutPaidAmount)) || Number(checkoutPaidAmount) !== Number(checkoutLoan.fee_amount)) {
-          setError(`Enter the exact configured payment amount: â‚±${Number(checkoutLoan.fee_amount).toFixed(2)}.`)
+          setError(`Enter the exact configured payment amount: ₱${Number(checkoutLoan.fee_amount).toFixed(2)}.`)
           return
         }
         const loanId = checkoutLoan.id
@@ -748,7 +821,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Loan period
             <input readOnly value={`${checkoutLoan.duration_days} days`} className={`${input} mt-1 bg-slate-100 dark:bg-slate-800`} />
           </label>
-          <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Amount paid (â‚±)
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Amount paid (₱)
             <input type="number" min="0" step="0.01" value={checkoutPaidAmount} onChange={(event) => setCheckoutPaidAmount(event.target.value)} className={`${input} mt-1`} />
           </label>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Payment method
@@ -769,16 +842,17 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     </ActionModal>
     <ActionModal
         open={pendingAction !== null}
-        title={pendingAction?.type === 'checkout' ? 'Confirm physical checkout?' : pendingAction?.type === 'close' ? 'Record physical-book return?' : pendingAction?.type === 'reject' ? 'Reject physical-book request?' : 'Resolve lost-book hold?'}
-        description={pendingAction?.type === 'close' ? `The selected condition (${returnConditions[pendingAction.id] ?? 'available'}) will be recorded.` : undefined}
-        confirmLabel={pendingAction?.type === 'checkout' ? 'Confirm checkout' : pendingAction?.type === 'close' ? 'Record return' : pendingAction?.type === 'reject' ? 'Reject request' : 'Resolve hold'}
-        tone={pendingAction?.type === 'checkout' || pendingAction?.type === 'close' ? 'default' : 'danger'}
-        busy={busy}
+        title={pendingAction?.type === 'checkout' ? 'Confirm physical checkout?' : pendingAction?.type === 'close' ? confirmingReturnRequest ? 'Confirm requested return?' : 'Record physical-book return?' : pendingAction?.type === 'reject' ? 'Reject physical-book request?' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Remove this book from the catalog?' : 'Restore this book?' : 'Resolve lost-book hold?'}
+        description={pendingAction?.type === 'close' ? `${confirmingReturnRequest ? 'The borrower’s return request will be completed. ' : ''}The selected condition (${returnConditions[pendingAction.id] ?? 'available'}) will be recorded.` : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? `“${pendingAction.title}” will be hidden from members. Loan history and existing records will be preserved.` : `“${pendingAction.title}” will become available in the active catalog again.` : undefined}
+        confirmLabel={pendingAction?.type === 'checkout' ? 'Confirm checkout' : pendingAction?.type === 'close' ? confirmingReturnRequest ? 'Confirm return' : 'Record return' : pendingAction?.type === 'reject' ? 'Reject request' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Remove from catalog' : 'Restore book' : 'Resolve hold'}
+        tone={pendingAction?.type === 'checkout' || pendingAction?.type === 'close' || (pendingAction?.type === 'archiveBook' && !pendingAction.archived) ? 'default' : 'danger'}
+        busy={pendingAction?.type === 'archiveBook' ? busy : pendingAction !== null && processingRequestId === pendingAction.id}
         onClose={() => setPendingAction(null)}
         onConfirm={() => {
           const action = pendingAction
           setPendingAction(null)
-          if (action?.type === 'checkout') void executeCheckout(action.id)
+          if (action?.type === 'archiveBook') void setBookArchived(action.id, action.title, action.archived)
+          else if (action?.type === 'checkout') void executeCheckout(action.id)
           else if (action?.type === 'close') void executeCloseLoan(action.id)
           else if (action?.type === 'reject') void executeRejectRequest(action.id)
           else if (action?.type === 'resolve') void executeResolveLostLoan(action.id)
@@ -786,5 +860,3 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       />
   </main>
 }
-
-

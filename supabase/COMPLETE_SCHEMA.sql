@@ -82,6 +82,7 @@
     access_points integer not null default 0,
     access_costs jsonb not null default '{}'::jsonb,
     page_count integer check (page_count is null or page_count > 0),
+    is_archived boolean not null default false,
     created_at timestamptz not null default now(),
     check (available_copies <= total_copies)
   );
@@ -95,6 +96,7 @@
   alter table public.books drop constraint if exists books_catalog_type_check;
   alter table public.books add constraint books_catalog_type_check check (catalog_type in ('digital', 'physical', 'hybrid'));
   alter table public.books add column if not exists page_count integer;
+  alter table public.books add column if not exists is_archived boolean not null default false;
   alter table public.books drop constraint if exists books_page_count_check;
   alter table public.books add constraint books_page_count_check check (page_count is null or page_count > 0);
   alter table public.books drop constraint if exists books_access_points_check;
@@ -618,7 +620,7 @@
   begin
     if not public.is_admin() then raise exception 'Administrator access required'; end if;
     if decision not in ('approved', 'rejected') then raise exception 'Invalid contribution decision'; end if;
-    if reward_points < 0 or reward_points > 100 then raise exception 'Reward must be between 0 and 100 points'; end if;
+    if reward_points < 0 then raise exception 'Reward cannot be negative'; end if;
     if access_points < 0 then raise exception 'Access cost cannot be negative'; end if;
 
     select * into contribution from public.book_contributions where id = contribution_id for update;
@@ -1888,7 +1890,6 @@ grant execute on function public.join_physical_book_waitlist(bigint) to authenti
 grant execute on function public.admin_add_physical_copies(bigint, integer, text, text) to authenticated;
 grant execute on function public.admin_set_physical_loan_option(bigint, integer, numeric, boolean) to authenticated;
 grant execute on function public.admin_confirm_physical_checkout(bigint) to authenticated;
-grant execute on function public.admin_close_physical_loan(bigint, text) to authenticated;
 
 alter table public.physical_book_requests
   add column if not exists payment_received_amount numeric(10, 2),
@@ -2793,7 +2794,7 @@ declare
 begin
   if not public.is_admin() then raise exception 'Administrator access required'; end if;
   if decision not in ('approved', 'rejected') then raise exception 'Invalid contribution decision'; end if;
-  if reward_points < 0 or reward_points > 100 then raise exception 'Reward must be between 0 and 100 points'; end if;
+  if reward_points < 0 then raise exception 'Reward cannot be negative'; end if;
   if access_points < 0 then raise exception 'Access cost cannot be negative'; end if;
 
   select * into contribution from public.book_contributions where id = contribution_id for update;
@@ -2917,7 +2918,7 @@ as $$
     min(c.due_date) filter (where c.status = 'borrowed' and c.due_date is not null) as next_due_date
   from public.books b
   left join public.physical_book_copies c on c.book_id = b.id
-  where b.catalog_type in ('physical', 'hybrid')
+  where b.catalog_type in ('physical', 'hybrid') and not b.is_archived
   group by b.id
   order by b.title;
 $$;
@@ -2940,6 +2941,7 @@ as $$
   join public.books b on b.id = c.book_id
   where c.qr_token = p_qr_token
     and b.catalog_type in ('physical', 'hybrid')
+    and not b.is_archived
   limit 1;
 $$;
 
@@ -3981,7 +3983,7 @@ language sql stable security definer set search_path = public as $$
       case when c.row_number is not null then 'Row ' || c.row_number end,
       case when c.position_number is not null then 'Position ' || c.position_number end, c.location), '')), null)
   from public.books b left join public.physical_book_copies c on c.book_id = b.id
-  where b.catalog_type in ('physical', 'hybrid') group by b.id order by b.title;
+  where b.catalog_type in ('physical', 'hybrid') and not b.is_archived group by b.id order by b.title;
 $$;
 
 grant execute on function public.admin_update_physical_book(bigint, text, text, text, text, text) to authenticated;
@@ -4240,3 +4242,45 @@ end;
 $$;
 
 grant execute on function public.admin_close_physical_loan(bigint, text) to authenticated;
+
+create index if not exists idx_books_active_catalog
+  on public.books (title)
+  where not is_archived;
+
+create or replace function public.reject_archived_book_requests()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (
+    select 1
+    from public.books
+    where id = new.book_id and is_archived
+  ) then
+    raise exception 'This title has been removed from the catalog';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists prevent_archived_borrow_request on public.borrow_requests;
+create trigger prevent_archived_borrow_request
+before insert on public.borrow_requests
+for each row execute function public.reject_archived_book_requests();
+
+drop trigger if exists prevent_archived_physical_request on public.physical_book_requests;
+create trigger prevent_archived_physical_request
+before insert on public.physical_book_requests
+for each row execute function public.reject_archived_book_requests();
+
+drop trigger if exists prevent_archived_physical_waitlist on public.physical_book_waitlist;
+create trigger prevent_archived_physical_waitlist
+before insert on public.physical_book_waitlist
+for each row execute function public.reject_archived_book_requests();
+
+drop trigger if exists prevent_archived_premium_purchase on public.ebook_purchase_requests;
+create trigger prevent_archived_premium_purchase
+before insert on public.ebook_purchase_requests
+for each row execute function public.reject_archived_book_requests();

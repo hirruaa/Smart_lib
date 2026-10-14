@@ -6,15 +6,16 @@ type ResultModalProps = {
   open: boolean
   status: 'success' | 'error'
   message: string
+  successTitle?: string
   onClose: () => void
 }
 
-export default function ResultModal({ open, status, message, onClose }: ResultModalProps) {
+export default function ResultModal({ open, status, message, successTitle = 'Action completed', onClose }: ResultModalProps) {
   const success = status === 'success'
   return (
     <BaseModal
       open={open}
-      title={success ? 'Action completed' : 'Action could not be completed'}
+      title={success ? successTitle : 'Action could not be completed'}
       eyebrow={success ? 'Success' : 'Something went wrong'}
       description={message}
       onClose={onClose}

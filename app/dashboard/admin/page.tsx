@@ -54,6 +54,7 @@ type Book = {
   premium_price: number
   access_duration_days: number
   created_at: string | null
+  is_archived: boolean
 }
 
 type Material = {
@@ -148,18 +149,10 @@ type Contribution = {
   status: string
   created_at: string | null
   review_feedback?: string | null
-  ai_screening_result?: {
-    recommendation: string
-    relevance_score: number
-    summary: string
-    usefulness: string
-    concerns: string[]
-    human_review_required: true
-  } | null
 }
 
 type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
-type AdminConfirm = { type: 'deleteBook' | 'revokeLoan'; id: number; label?: string } | { type: 'deleteMember'; id: string; label?: string } | null
+type AdminConfirm = { type: 'archiveBook' | 'revokeLoan'; id: number; label?: string; isArchived?: boolean } | { type: 'deleteMember'; id: string; label?: string } | null
 
 function memberDisplayName(member?: Pick<Profile, 'full_name' | 'email'> | null, fallback = 'Member') {
   return member?.full_name?.trim() || fallback
@@ -184,7 +177,6 @@ function AdminNavIcon({ section }: { section: string }) {
 export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
-  const [physicalRequestsOpen, setPhysicalRequestsOpen] = useState(false)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
@@ -198,9 +190,9 @@ export default function AdminPage() {
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionSuccessTitle, setActionSuccessTitle] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [screeningId, setScreeningId] = useState<number | null>(null)
   const [newBook, setNewBook] = useState({
     title: '',
     author: '',
@@ -223,6 +215,9 @@ export default function AdminPage() {
   const [materialStorageProvider, setMaterialStorageProvider] = useState<'google_drive' | 'supabase'>('supabase')
   const [bookSearch, setBookSearch] = useState('')
   const debouncedBookSearch = useDebounce(bookSearch, 200)
+  const [showArchivedBooks, setShowArchivedBooks] = useState(false)
+  const [bookCategoryFilter, setBookCategoryFilter] = useState('all')
+  const [bookAuthorFilter, setBookAuthorFilter] = useState('all')
   const [userSearch, setUserSearch] = useState('')
   const debouncedUserSearch = useDebounce(userSearch, 200)
   const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'student' | 'faculty' | 'librarian'>('all')
@@ -236,6 +231,7 @@ export default function AdminPage() {
   const [contributionPage, setContributionPage] = useState(1)
   const [auditPage, setAuditPage] = useState(1)
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
+  const [selectedCatalogBook, setSelectedCatalogBook] = useState<Book | null>(null)
   const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points' | 'premium', premiumPrice: '0', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -244,6 +240,7 @@ export default function AdminPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupMessage, setBackupMessage] = useState<string | null>(null)
+  const [excelBackupLoading, setExcelBackupLoading] = useState(false)
   const [grantForm, setGrantForm] = useState({ studentId: '', bookId: '', duration: '7', reason: '' })
   const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
   const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
@@ -299,29 +296,33 @@ export default function AdminPage() {
     }
   }, [pdfAttachmentOpen, saving])
 
-  const handleDeleteBook = async (bookId: number, title: string) => {
-    setConfirmAction({ type: 'deleteBook', id: bookId, label: title })
+  const handleArchiveBook = (bookId: number, title: string) => {
+    const book = books.find((item) => item.id === bookId)
+    setConfirmAction({ type: 'archiveBook', id: bookId, label: title, isArchived: !book?.is_archived })
   }
 
-  const executeDeleteBook = async (bookId: number, title: string) => {
+  const setBookArchived = async (bookId: number, title: string, archived: boolean) => {
     setSaving(true)
     setError(null)
-    const supabase = getSupabase()
-    const { error: delError } = await supabase.from('books').delete().eq('id', bookId)
-    if (delError) {
-      const message = delError.message.toLowerCase()
-      if (delError.code === '23503' && message.includes('digital_book_loan_history')) {
-        setError(`"${title}" cannot be deleted because it has digital loan history. Keep the title for audit records and remove or replace its PDF instead.`)
-      } else if (delError.code === '23503' && message.includes('physical_book_loan_history')) {
-        setError(`"${title}" cannot be deleted because it has physical circulation history. Keep the title for audit records and manage its copies instead.`)
-      } else {
-        setError(delError.message)
-      }
-    } else {
-      setActionMessage(`"${title}" was removed from the catalog.`)
-      await loadData()
+    setActionMessage(null)
+    try {
+      const { error: updateError } = await getSupabase()
+        .from('books')
+        .update({ is_archived: archived })
+        .eq('id', bookId)
+      if (updateError) throw new Error(updateError.message)
+      setBooks((current) => current.map((book) => book.id === bookId ? { ...book, is_archived: archived } : book))
+      setSelectedCatalogBook((current) => current?.id === bookId ? null : current)
+      setEditingBookId(null)
+      setBookPage(1)
+      setActionMessage(archived
+        ? `"${title}" was removed from the active catalog. Its loan history and records are preserved.`
+        : `"${title}" was restored to the active catalog.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Unable to ${archived ? 'remove' : 'restore'} this title.`)
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const startBookAccessEdit = (book: Book) => {
@@ -331,6 +332,11 @@ export default function AdminPage() {
       premiumPrice: String(book.premium_price ?? 0),
       costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days))])),
     })
+  }
+
+  const openCatalogBook = (book: Book) => {
+    setSelectedCatalogBook(book)
+    setEditingBookId(null)
   }
 
   const saveBookAccessEdit = async (event: FormEvent<HTMLFormElement>, book: Book) => {
@@ -422,7 +428,7 @@ export default function AdminPage() {
     const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, ranksRes, coursesRes, facultyCoursesRes, departmentsRes, physicalRequestsRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, premium_price, access_duration_days, created_at')
+        .select('id, title, author, isbn, category, description, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, premium_price, access_duration_days, created_at, is_archived')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -440,7 +446,7 @@ export default function AdminPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
-        .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, ai_screening_result, ai_screened_at, created_at')
+        .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, created_at')
         .order('created_at', { ascending: false }),
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('faculty_ranks').select('id,title,is_active').order('title'),
@@ -494,20 +500,28 @@ export default function AdminPage() {
     })
     return coursesByFaculty
   }, [facultyCourses, academicCourseMap])
+  const bookFilterOptions = useMemo(() => {
+    const digitalBooks = books.filter((book) => book.catalog_type !== 'physical' && book.is_archived === showArchivedBooks)
+    return {
+      categories: Array.from(new Set(digitalBooks.map((book) => book.category).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+      authors: Array.from(new Set(digitalBooks.map((book) => book.author).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    }
+  }, [books, showArchivedBooks])
   const filteredBooks = useMemo(() => {
-    const digitalBooks = books.filter((book) => book.catalog_type !== 'physical')
-    if (!debouncedBookSearch.trim()) return digitalBooks
+    const digitalBooks = books.filter((book) => book.catalog_type !== 'physical' && book.is_archived === showArchivedBooks)
     const tokens = debouncedBookSearch.toLowerCase().trim().split(/\s+/)
     return digitalBooks.filter((b) =>
-      tokens.every(
+      (bookCategoryFilter === 'all' || b.category === bookCategoryFilter) &&
+      (bookAuthorFilter === 'all' || b.author === bookAuthorFilter) &&
+      (!debouncedBookSearch.trim() || tokens.every(
         (token) =>
           b.title.toLowerCase().includes(token) ||
           b.author.toLowerCase().includes(token) ||
           b.category.toLowerCase().includes(token) ||
           (b.isbn && b.isbn.toLowerCase().includes(token))
-      )
+      ))
     )
-  }, [books, debouncedBookSearch])
+  }, [books, debouncedBookSearch, bookCategoryFilter, bookAuthorFilter, showArchivedBooks])
 
   // Realtime subscription for incoming borrow requests
   useEffect(() => {
@@ -530,6 +544,23 @@ export default function AdminPage() {
           } else if (payload.eventType === 'DELETE') {
             const deleted = payload.old as { id: number }
             setRequests((prev) => prev.filter((r) => r.id !== deleted.id))
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'book_contributions' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newContribution = payload.new as Contribution
+            setContributions((prev) => (prev.some((item) => item.id === newContribution.id) ? prev : [newContribution, ...prev]))
+            setActionMessage('New contribution submitted!')
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = payload.new as Contribution
+            setContributions((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)))
+          } else if (payload.eventType === 'DELETE') {
+            const deleted = payload.old as { id: number }
+            setContributions((prev) => prev.filter((item) => item.id !== deleted.id))
           }
         }
       )
@@ -628,7 +659,7 @@ export default function AdminPage() {
   const auditPageCount = Math.max(1, Math.ceil(auditLogs.length / 10))
   const visibleAuditLogs = auditLogs.slice((Math.min(auditPage, auditPageCount) - 1) * 10, Math.min(auditPage, auditPageCount) * 10)
 
-  useEffect(() => { setBookPage(1) }, [debouncedBookSearch])
+  useEffect(() => { setBookPage(1) }, [debouncedBookSearch, bookCategoryFilter, bookAuthorFilter])
   useEffect(() => { setDigitalHistoryPage(1) }, [debouncedDigitalHistorySearch, digitalHistoryStatus])
   useEffect(() => { setUserPage(1) }, [debouncedUserSearch, userRoleFilter, userLoanFilter])
   useEffect(() => { setContributionPage(1) }, [contributions.length])
@@ -818,33 +849,13 @@ export default function AdminPage() {
     setReviewDialog({ id: contributionId, decision, reward: decision === 'approved' ? '25' : '0', accessPoints: '0' })
   }
 
-  const handleContributionScreen = async (contributionId: number) => {
-    setScreeningId(contributionId)
-    setError(null)
-    setActionMessage(null)
-    try {
-      const response = await fetch(`/api/admin/contributions/${contributionId}/screen`, { method: 'POST' })
-      const result = await response.json()
-      if (!response.ok) {
-        setError(result.error || 'AI screening failed.')
-        return
-      }
-      setContributions((current) => current.map((item) => item.id === contributionId ? { ...item, ai_screening_result: result } : item))
-      setActionMessage('AI screening finished. Its suggestions are advisory; you must make the final decision.')
-    } catch (screenError) {
-      setError(screenError instanceof Error ? screenError.message : 'AI screening failed.')
-    } finally {
-      setScreeningId(null)
-    }
-  }
-
   const executeContributionReview = async () => {
     if (!reviewDialog) return
     const { id: contributionId, decision } = reviewDialog
     const reward = decision === 'approved' ? Number(reviewDialog.reward) : 0
     const accessPoints = decision === 'approved' ? Number(reviewDialog.accessPoints) : 0
-    if (decision === 'approved' && (!Number.isInteger(reward) || reward < 0 || reward > 100)) {
-      setError('Reward must be a whole number between 0 and 100 points.')
+    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0)) {
+      setError('Reward must be a nonnegative whole number of points.')
       return
     }
     if (decision === 'approved' && (!Number.isInteger(accessPoints) || accessPoints < 0)) {
@@ -860,9 +871,12 @@ export default function AdminPage() {
       access_points: accessPoints,
     })
     if (error) {
+      setActionSuccessTitle(null)
       setError(error.message)
     } else {
-      setActionMessage(decision === 'approved' ? `Contribution approved and ${reward} points awarded.` : 'Contribution rejected.')
+      setReviewDialog(null)
+      setActionSuccessTitle(decision === 'approved' ? 'Approved' : 'Rejected')
+      setActionMessage(decision === 'approved' ? `Contribution approved. ${reward} points awarded.` : 'Contribution rejected.')
       await loadData()
     }
     setSaving(false)
@@ -907,13 +921,18 @@ export default function AdminPage() {
   }
 
   const submitRecognition = async () => {
+    const awardPoints = Number(recognitionForm.points)
+    if (!Number.isSafeInteger(awardPoints) || awardPoints <= 0) {
+      setError('Enter a positive whole number of points.')
+      return
+    }
     setSaving(true)
     setError(null)
     setActionMessage(null)
     const { error } = await getSupabase().rpc('admin_award_recognition', {
       target_user_id: recognitionForm.studentId,
       award_category: recognitionForm.category,
-      award_points: Number(recognitionForm.points),
+      award_points: awardPoints,
       award_reason: recognitionForm.reason,
     })
     if (error) setError(error.message)
@@ -1081,6 +1100,32 @@ export default function AdminPage() {
     URL.revokeObjectURL(url)
   }
 
+  const downloadExcelBackup = async () => {
+    setExcelBackupLoading(true)
+    setBackupMessage(null)
+    try {
+      const response = await fetch('/api/admin/exports')
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(result.error || 'Excel backup download failed.')
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `smart-lib-backup-${new Date().toISOString().slice(0, 10)}.xls`
+      link.click()
+      URL.revokeObjectURL(url)
+      setBackupMessage('Excel backup downloaded successfully.')
+    } catch (backupError) {
+      const message = backupError instanceof Error ? backupError.message : 'Excel backup download failed.'
+      setBackupMessage(message)
+      setError(message)
+    } finally {
+      setExcelBackupLoading(false)
+    }
+  }
+
   const createBackup = async () => {
     setBackupLoading(true)
     setBackupMessage(null)
@@ -1105,16 +1150,19 @@ export default function AdminPage() {
       {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
       <div className={`dashboard-layout admin-layout mx-auto max-w-[1500px] ${sidebarCollapsed ? 'dashboard-sidebar-collapsed admin-sidebar-collapsed' : ''}`}>
         <aside id="admin-navigation" className={`dashboard-sidebar admin-sidebar ${sidebarOpen ? 'dashboard-sidebar-open admin-sidebar-open' : ''}`}>
-          <div className="mb-8 space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
-            <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
+          <div className="admin-sidebar-brand mb-8 space-y-3">
+            <BrandLogo className="admin-brand-logo" iconSize="sm" subtitle="Admin workspace" />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
+              <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Control Panel</h2>
+            </div>
           </div>
           <button type="button" className="admin-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{sidebarOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}</svg></button>
           <nav className="admin-nav-groups">
             {navGroups.map((group) => <div key={group.label} className="admin-nav-group">
               <p className="admin-nav-group-label">{group.label}</p>
               <div className="space-y-1">
-                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { if (item.section === 'physical-requests') setPhysicalRequestsOpen(true); else setSection(item.section); setSidebarOpen(false) }} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
+                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { setSection(item.section); setSidebarOpen(false) }} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
               </div>
             </div>)}
           </nav>
@@ -1156,53 +1204,99 @@ export default function AdminPage() {
           </header>
 
           {section === 'overview' && (
-            <section className="admin-overview-grid grid items-start gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-              <div className="space-y-6 xl:col-start-1 xl:row-start-1">
-              <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library operations</h2></div>
-                  <button type="button" onClick={exportLoanReport} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Export digital loan report</button>
-                </div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="admin-action-tile rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left dark:border-emerald-900/50 dark:bg-emerald-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">Physical requests</span><strong className="mt-2 block text-lg text-emerald-950 dark:text-emerald-100">Open librarian queue</strong><span className="text-xs text-emerald-800/75 dark:text-emerald-300/80">Verify payment and confirm checkout</span></button>
-                  <button type="button" onClick={() => setSection('requests')} className="admin-action-tile rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left dark:border-sky-900/50 dark:bg-sky-950/20"><span className="text-xs font-semibold uppercase tracking-wider text-sky-800 dark:text-sky-300">Active digital access</span><strong className="mt-2 block text-2xl text-sky-950 dark:text-sky-100">{activeDigitalAccess.length}</strong><span className="text-xs text-sky-800/75 dark:text-sky-300/80">Granted automatically · view history</span></button>
+            <section className="admin-overview">
+              <div className="admin-overview-heading">
+                <div>
+                  <p className="admin-overview-kicker">Admin workspace</p>
+                  <h2>Today at a glance</h2>
+                  <p>Monitor requests, check activity, and get to common tasks quickly.</p>
                 </div>
               </div>
-              <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-                <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Physical borrow requests</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review the newest requests waiting for librarian confirmation.</p></div><button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-sky-500 dark:text-slate-950">View all requests</button></div>
-                <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="border-b border-slate-200 uppercase text-slate-500 dark:border-slate-700"><tr><th className="px-2 py-2">Borrower</th><th className="px-2 py-2">Book</th><th className="px-2 py-2">Payment</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Action</th></tr></thead><tbody>{physicalRequestPreview.map((request) => <tr key={request.id} className="border-b border-slate-100 dark:border-slate-800"><td className="px-2 py-3 font-medium">{physicalBorrowerName(request.student_id)}</td><td className="px-2 py-3">{physicalBookTitle(request.book_id)}</td><td className="px-2 py-3 capitalize">{request.payment_method} · ₱{Number(request.fee_amount).toFixed(2)}</td><td className="px-2 py-3 capitalize">{request.status.replace('_', ' ')}<span className="block text-slate-500">{request.payment_status.replace('_', ' ')}</span></td><td className="px-2 py-3"><button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="font-semibold text-emerald-700 hover:underline dark:text-emerald-300">Review</button></td></tr>)}{physicalRequestPreview.length === 0 ? <tr><td colSpan={5} className="px-2 py-6 text-center text-slate-500">No physical borrow requests yet.</td></tr> : null}</tbody></table></div>
-              </div>
-              </div>
-              <div className="space-y-6 xl:col-start-2 xl:row-start-1">
-                <div className="rounded-[2rem] border border-sky-200 bg-sky-50/80 p-6 shadow-xl shadow-slate-900/5 dark:border-sky-900/50 dark:bg-sky-950/20">
-                  <div className="flex items-start justify-between gap-3">
-                    <div><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Quick actions</h2><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Complete common member actions without leaving the dashboard.</p></div>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-700 dark:bg-slate-900 dark:text-sky-300">Admin</span>
-                  </div>
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <button type="button" onClick={() => setQuickAction('recognition')} className="rounded-2xl bg-slate-900 px-4 py-4 text-left text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"><strong className="block text-sm">Give points</strong><span className="mt-1 block text-xs opacity-75">Recognize a student instantly</span></button>
-                    <button type="button" onClick={() => setQuickAction('grant')} className="rounded-2xl border border-sky-200 bg-white px-4 py-4 text-left text-sky-900 transition hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900 dark:text-sky-200 dark:hover:bg-slate-800"><strong className="block text-sm">Grant access</strong><span className="mt-1 block text-xs opacity-75">Unlock a resource temporarily</span></button>
-                  </div>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <button type="button" onClick={() => setSection('users')} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-white dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">Manage members</button>
-                    <button type="button" onClick={() => setSection('contributions')} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-white dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">Review contributions</button>
-                    <button type="button" onClick={() => { setSection('books'); openPdfAttachment() }} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-white dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">Manage PDF attachments</button>
-                    <button type="button" onClick={() => void createBackup()} disabled={backupLoading} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50 dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">{backupLoading ? 'Creating backup...' : 'Create backup'}</button>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => setSection('requests')} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">Digital loan history</button><button type="button" onClick={() => setSection('audit')} className="rounded-xl border border-sky-200 bg-white/70 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-sky-800 dark:bg-slate-900/60 dark:text-slate-200 dark:hover:bg-slate-800">View audit log</button></div>
-                  {backupMessage ? <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">{backupMessage}</p> : null}
+              <div className="admin-overview-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
+                <div className="admin-overview-column space-y-5">
+                  <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="library-operations-title">
+                    <div className="admin-overview-section-heading">
+                      <div><h2 id="library-operations-title">Library operations</h2><p>Live counts and shortcuts to the work queue.</p></div>
+                    </div>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <button type="button" onClick={() => setSection('physical-requests')} className="admin-action-tile admin-stat-tile admin-stat-emerald">
+                        <span>Physical requests</span><strong>{physicalRequestPreview.filter((request) => request.status === 'pending').length}</strong><small>Awaiting payment or review</small>
+                      </button>
+                      <button type="button" onClick={() => setSection('requests')} className="admin-action-tile admin-stat-tile admin-stat-blue">
+                        <span>Active digital access</span><strong>{activeDigitalAccess.length}</strong><small>Open access history</small>
+                      </button>
+                      <button type="button" onClick={() => setSection('contributions')} className="admin-action-tile admin-stat-tile admin-stat-violet">
+                        <span>Pending contributions</span><strong>{pendingContributions.length}</strong><small>Review submissions</small>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="physical-requests-title">
+                    <div className="admin-overview-section-heading">
+                      <div><h2 id="physical-requests-title">Recent physical requests</h2><p>Latest requests, payment status, and checkout progress.</p></div>
+                      <button type="button" onClick={() => setSection('physical-requests')} className="admin-overview-link">Open queue <span aria-hidden="true">→</span></button>
+                    </div>
+                    <div className="admin-overview-table-wrap mt-4">
+                      <table className="admin-overview-table">
+                        <thead><tr><th scope="col">Borrower</th><th scope="col">Book</th><th scope="col">Payment</th><th scope="col">Status</th></tr></thead>
+                        <tbody>
+                          {physicalRequestPreview.map((request) => <tr key={request.id}>
+                            <td className="font-medium">{physicalBorrowerName(request.student_id)}</td>
+                            <td>{physicalBookTitle(request.book_id)}</td>
+                            <td><span className="capitalize">{request.payment_method}</span><small>₱{Number(request.fee_amount).toFixed(2)}</small></td>
+                            <td><span className={`admin-status-pill ${request.status === 'pending' ? 'is-pending' : request.status === 'checked_out' ? 'is-active' : 'is-muted'}`}>{request.status.replace(/_/g, ' ')}</span><small className="capitalize">{request.payment_status.replace(/_/g, ' ')}</small></td>
+                          </tr>)}
+                          {physicalRequestPreview.length === 0 ? <tr><td colSpan={4} className="admin-overview-empty">No physical requests yet. New requests will appear here.</td></tr> : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
                 </div>
-                {false && <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library health</h2><div className="mt-5 space-y-4"><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Digital materials</span><strong className="text-slate-900 dark:text-slate-100">{materials.length} / {books.length || 1}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, books.length ? materials.length / books.length * 100 : 0)}%` }} /></div></div><div><div className="flex justify-between text-sm"><span className="text-slate-600 dark:text-slate-300">Active access</span><strong className="text-slate-900 dark:text-slate-100">{activeDigitalAccess.length}</strong></div><div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800"><span className="block h-full rounded-full bg-sky-500" style={{ width: `${Math.min(100, requests.length ? activeDigitalAccess.length / requests.length * 100 : 0)}%` }} /></div></div></div></div>}
-                <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80"><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Recent activity</h2><div className="mt-4 space-y-3">{requests.slice(0, 5).map((request) => <div key={`activity-${request.id}`} className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 text-sm last:border-0 dark:border-slate-800"><div><p className="font-medium text-slate-800 dark:text-slate-100">{memberDisplayName(studentMap.get(request.student_id), 'Student')} requested {bookMap.get(request.book_id)?.title ?? 'a resource'}</p><p className="mt-1 text-xs text-slate-500">{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'Recently'}</p></div><span className="capitalize text-xs text-slate-500">{request.status}</span></div>)}{requests.length === 0 ? <p className="text-sm text-slate-500">No activity yet.</p> : null}</div></div>
+
+                <div className="admin-overview-column space-y-5">
+                  <section className="admin-overview-card admin-quick-actions rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="quick-actions-title">
+                    <div className="admin-overview-section-heading">
+                      <div><h2 id="quick-actions-title">Quick actions</h2><p>Common admin tasks, one click away.</p></div>
+                    </div>
+                    <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                      <button type="button" onClick={() => setQuickAction('recognition')} className="admin-quick-action admin-quick-action-primary"><strong>Give points</strong><span>Recognize a member</span></button>
+                      <button type="button" onClick={() => setQuickAction('grant')} className="admin-quick-action"><strong>Grant access</strong><span>Unlock a resource</span></button>
+                    </div>
+                    {backupMessage ? <p className="mt-3 text-xs text-slate-600 dark:text-slate-300">{backupMessage}</p> : null}
+                  </section>
+
+                  <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="recent-activity-title">
+                    <div className="admin-overview-section-heading">
+                      <div><h2 id="recent-activity-title">Recent digital activity</h2><p>The latest member access requests.</p></div>
+                      <button type="button" onClick={() => setSection('requests')} className="admin-overview-link">View all <span aria-hidden="true">→</span></button>
+                    </div>
+                    <div className="admin-activity-list mt-4">
+                      {requests.slice(0, 5).map((request) => <article key={`activity-${request.id}`} className="admin-activity-item">
+                        <div className="min-w-0">
+                          <p><strong>{memberDisplayName(studentMap.get(request.student_id), 'Student')}</strong> requested <strong>{bookMap.get(request.book_id)?.title ?? 'a resource'}</strong></p>
+                          <time dateTime={request.request_date ?? undefined}>{request.request_date ? new Date(request.request_date).toLocaleDateString() : 'Recently'}</time>
+                        </div>
+                        <span className={`admin-status-pill ${request.status === 'approved' ? 'is-active' : request.status === 'pending' ? 'is-pending' : 'is-muted'}`}>{request.status.replace(/_/g, ' ')}</span>
+                      </article>)}
+                      {requests.length === 0 ? <p className="admin-overview-empty">No digital activity yet.</p> : null}
+                    </div>
+                  </section>
+                </div>
               </div>
             </section>
           )}
 
           {section === 'analytics' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track borrowing velocity, inventory health, fulfillment rates, and storage utilization.</p>
+              <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track borrowing velocity, inventory health, fulfillment rates, and storage utilization.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={exportLoanReport} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Export digital loan report</button>
+                  <button type="button" onClick={() => void downloadExcelBackup()} disabled={excelBackupLoading} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">{excelBackupLoading ? 'Preparing Excel backup...' : 'Download Excel backup'}</button>
+                </div>
               </div>
               <AdminAnalytics
                 totalBooks={books.length}
@@ -1219,18 +1313,23 @@ export default function AdminPage() {
 
           {section === 'books' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Digital catalog</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage digital and hybrid titles, protected PDFs, access terms, and storage. Physical-only books are managed in the physical catalog.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{showArchivedBooks ? 'Archived books' : 'Digital catalog'}</h2>
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                   <input
                     value={bookSearch}
                     onChange={(e) => setBookSearch(e.target.value)}
                     placeholder="Search books by title, author, category..."
-                    className="w-64 rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-72 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   />
+                  <select value={bookCategoryFilter} onChange={(event) => setBookCategoryFilter(event.target.value)} aria-label="Filter books by category" className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                    <option value="all">All categories</option>
+                    {bookFilterOptions.categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                  <select value={bookAuthorFilter} onChange={(event) => setBookAuthorFilter(event.target.value)} aria-label="Filter books by author" className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                    <option value="all">All authors</option>
+                    {bookFilterOptions.authors.map((author) => <option key={author} value={author}>{author}</option>)}
+                  </select>
                   {bookSearch ? (
                     <button
                       type="button"
@@ -1240,7 +1339,14 @@ export default function AdminPage() {
                       ✕
                     </button>
                   ) : null}
-                  <button type="button" onClick={() => setNewBookOpen(true)} className="pine-action rounded-2xl px-4 py-2 text-xs font-semibold">Add digital title</button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowArchivedBooks((current) => !current); setBookPage(1); setBookCategoryFilter('all'); setBookAuthorFilter('all') }}
+                    className="rounded-2xl border border-slate-300 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    {showArchivedBooks ? 'View active' : 'View archived'}
+                  </button>
+                  <button type="button" onClick={() => setNewBookOpen(true)} className="pine-action rounded-2xl px-4 py-2 text-xs font-semibold text-white">Add digital title</button>
                 </div>
               </div>
 
@@ -1253,22 +1359,33 @@ export default function AdminPage() {
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleBooks.map((book) => <Fragment key={book.id}>
                         <tr className="bg-white align-top dark:bg-slate-900">
-                          <td className="px-4 py-4"><p className="font-semibold text-slate-900 dark:text-slate-100">{book.title}</p><p className="mt-1 text-xs text-slate-500">ISBN: {book.isbn || 'N/A'}</p></td>
+                          <td className="px-4 py-4"><p className="font-semibold text-slate-900 dark:text-slate-100">{book.title}</p>{book.is_archived ? <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">Archived</span> : null}<p className="mt-1 text-xs text-slate-500">ISBN: {book.isbn || 'N/A'}</p></td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
                           <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{book.catalog_type}</td>
                           <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? `Premium · ₱${Number(book.premium_price).toFixed(2)}` : book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <span className="mt-1 block text-xs text-slate-500">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => `${days}d: ${book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts`).join(' · ')}</span> : book.access_mode === 'premium' ? <span className="mt-1 block text-xs text-slate-500">Staff verifies payment before permanent access.</span> : null}</td>
                           <td className="px-4 py-4">{book.pdf_url || book.storage_file_id || book.storage_path ? <span className="rounded-md bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{book.storage_provider === 'google_drive' ? 'Drive' : book.storage_provider === 'external' ? 'External' : 'PDF ready'}</span> : <span className="text-xs text-slate-400">Missing</span>}</td>
-                          <td className="px-4 py-4"><div className="flex flex-wrap gap-2">{book.pdf_url || book.storage_path ? <a href={`/reader/${book.id}`} className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30">Open reader</a> : null}<button type="button" disabled={saving} onClick={() => openPdfAttachment(book.id)} className="rounded-xl border border-sky-200 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{book.pdf_url || book.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(book)} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleDeleteBook(book.id, book.title)} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-400 dark:hover:bg-rose-950/40">Delete</button></div></td>
+                          <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openCatalogBook(book)} className="pine-action rounded-xl px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Manage book</button></td>
                         </tr>
-                        {editingBookId === book.id ? <tr className="bg-paper-50/70 dark:bg-forest-800/40"><td colSpan={7} className="px-4 py-4"><form onSubmit={(event) => void saveBookAccessEdit(event, book)}><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings for {book.title}</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-7"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option><option value="premium">Premium</option></select></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Premium price (₱)<input type="number" min="0.01" step="0.01" value={bookAccessDraft.premiumPrice} onChange={(event) => setBookAccessDraft((current) => ({ ...current, premiumPrice: event.target.value }))} disabled={bookAccessDraft.mode !== 'premium'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} disabled={bookAccessDraft.mode !== 'points'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>)}</div><div className="mt-3 flex gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Cancel</button></div></form></td></tr> : null}
                       </Fragment>) }
-                      {filteredBooks.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">No matching books found.</td></tr> : null}
+                      {filteredBooks.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">No matching books found.</td></tr> : null}
                     </tbody>
                   </table>
                 </div>
                 <ListPagination page={Math.min(bookPage, bookPageCount)} pageCount={bookPageCount} total={filteredBooks.length} onPageChange={setBookPage} />
               </div>
+
+              {selectedCatalogBook ? <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setSelectedCatalogBook(null); setEditingBookId(null) } }}>
+                <section className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="catalog-book-details-title">
+                  <div className="flex items-start justify-between gap-4">
+                    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Catalog book</p><h3 id="catalog-book-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedCatalogBook.author} · {selectedCatalogBook.category}</p></div>
+                    <button type="button" onClick={() => { setSelectedCatalogBook(null); setEditingBookId(null) }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button>
+                  </div>
+                  <div className="mt-6 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Format</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.catalog_type}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Access</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.access_mode}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">ISBN</p><p className="mt-1 font-semibold">{selectedCatalogBook.isbn || 'Not set'}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">File</p><p className="mt-1 font-semibold">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'Available' : 'Missing'}</p></div></div>
+                  {selectedCatalogBook.description ? <p className="mt-5 text-sm leading-6 text-slate-600 dark:text-slate-300">{selectedCatalogBook.description}</p> : null}
+                  {editingBookId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookAccessEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option><option value="premium">Premium</option></select></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Premium price (₱)<input type="number" min="0.01" step="0.01" value={bookAccessDraft.premiumPrice} onChange={(event) => setBookAccessDraft((current) => ({ ...current, premiumPrice: event.target.value }))} disabled={bookAccessDraft.mode !== 'premium'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} disabled={bookAccessDraft.mode !== 'points'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>)}</div><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : <div className="mt-6 flex flex-wrap gap-2"><button type="button" disabled={saving || !(selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path)} onClick={() => window.open(`/reader/${selectedCatalogBook.id}`, '_blank', 'noopener,noreferrer')} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Open reader</button><button type="button" disabled={saving} onClick={() => openPdfAttachment(selectedCatalogBook.id)} className="rounded-xl border border-sky-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(selectedCatalogBook)} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleArchiveBook(selectedCatalogBook.id, selectedCatalogBook.title)} className="!bg-rose-700 !text-white rounded-xl px-4 py-2.5 text-sm font-semibold hover:!bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-rose-700 dark:hover:!bg-rose-600">{selectedCatalogBook.is_archived ? 'Restore to catalog' : 'Remove from catalog'}</button></div>}
+                </section>
+              </div> : null}
 
               {newBookOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setNewBookOpen(false) }}>
               <form onSubmit={handleAddBook} className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800/95" role="dialog" aria-modal="true" aria-labelledby="add-digital-title">
@@ -1394,8 +1511,7 @@ export default function AdminPage() {
           )}
 
           {section === 'physical' && <PhysicalCirculationAdminPage />}
-          {section === 'physical-requests' && <PhysicalCirculationAdminPage initialPanel="requests" />}
-          {physicalRequestsOpen && <PhysicalCirculationAdminPage initialPanel="requests" requestsOnly onClose={() => setPhysicalRequestsOpen(false)} />}
+          {section === 'physical-requests' && <PhysicalCirculationAdminPage initialPanel="requests" requestsOnly onClose={() => setSection('overview')} />}
 
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
@@ -1600,7 +1716,7 @@ export default function AdminPage() {
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Community contributions</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">AI screening is advisory only. Check the submitted PDF and make the final approval decision yourself.</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review each submitted PDF before deciding whether to approve, request a revision, or reject it.</p>
               </div>
               <div className="space-y-3">
                 {pendingContributions.length > 0 ? visiblePendingContributions.map((contribution) => (
@@ -1611,16 +1727,8 @@ export default function AdminPage() {
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {memberDisplayName(students.find((student) => student.id === contribution.user_id), 'Unknown student')}</p>
                         {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
                         {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <a href={`/api/contributions/${contribution.id}/file`} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
-                        {contribution.ai_screening_result ? <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm dark:border-sky-900/50 dark:bg-sky-950/20">
-                          <p className="font-semibold text-sky-900 dark:text-sky-200">Gemini screening · {contribution.ai_screening_result.relevance_score}/100 · {contribution.ai_screening_result.recommendation}</p>
-                          <p className="mt-1 text-slate-700 dark:text-slate-300">{contribution.ai_screening_result.summary}</p>
-                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{contribution.ai_screening_result.usefulness}</p>
-                          {contribution.ai_screening_result.concerns.length ? <ul className="mt-2 list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{contribution.ai_screening_result.concerns.map((concern, index) => <li key={index}>{concern}</li>)}</ul> : null}
-                          <p className="mt-2 text-xs font-semibold text-sky-800 dark:text-sky-300">Always requires human review. AI does not verify copyright or authorship.</p>
-                        </div> : null}
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        <button type="button" disabled={saving || screeningId !== null} onClick={() => void handleContributionScreen(contribution.id)} className="rounded-xl border border-sky-200 px-3 py-2 text-xs font-semibold text-sky-700 disabled:opacity-50 dark:border-sky-900/50 dark:text-sky-300">{screeningId === contribution.id ? 'Screening...' : contribution.ai_screening_result ? 'Screen again' : 'Screen with Gemini'}</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'rejected')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-300">Reject</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'approved')} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Approve</button>
@@ -1723,7 +1831,6 @@ export default function AdminPage() {
                       <th className="px-4 py-3 font-semibold">Points</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
                       <th className="px-4 py-3 font-semibold">Joined</th>
-                      <th className="px-4 py-3 font-semibold">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -1738,7 +1845,6 @@ export default function AdminPage() {
                         <td className="px-4 py-4 font-semibold text-slate-700 dark:text-slate-200">{Number(student.points_balance ?? 0).toLocaleString()}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
                         <td className="whitespace-nowrap px-4 py-4 text-slate-600 dark:text-slate-300">{student.created_at ? new Date(student.created_at).toLocaleDateString() : '—'}</td>
-                        <td className="px-4 py-4"><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: student.id })); setQuickAction('recognition') }} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" disabled={saving} onClick={() => openMemberEditor(student)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:hover:bg-slate-800">Edit profile</button>{profile?.role === 'admin' && (student.role === 'student' || student.role === 'faculty') ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteMember', id: student.id, label: memberDisplayName(student, student.email) })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30">Delete account</button> : null}</div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1772,7 +1878,7 @@ export default function AdminPage() {
               <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account activity</h3><div className="mt-3 space-y-2 text-sm"><p>{digitalLoanHistory.filter((loan) => loan.student_id === selectedMember.id).length} digital loan record(s)</p><p>{physicalRequestPreview.filter((request) => request.student_id === selectedMember.id).length} recent physical request(s)</p><p>{contributions.filter((contribution) => contribution.user_id === selectedMember.id).length} contribution(s)</p></div></section>
             </div>
             <section className="mt-6"><h3 className="font-semibold text-slate-900 dark:text-slate-100">Recent digital loans</h3><div className="mt-3 space-y-2">{digitalLoanHistory.filter((loan) => loan.student_id === selectedMember.id).slice(0, 5).map((loan) => <div key={loan.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><span>{bookMap.get(loan.book_id)?.title ?? 'Unknown resource'}</span><span className="text-xs capitalize text-slate-500">{loan.status.replace('_', ' ')} · {loan.points_cost} points</span></div>)}{digitalLoanHistory.every((loan) => loan.student_id !== selectedMember.id) ? <p className="text-sm text-slate-500">No digital loan history.</p> : null}</div></section>
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setSelectedMember(null); openMemberEditor(selectedMember) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit profile</button>{profile?.role === 'admin' && (selectedMember.role === 'student' || selectedMember.role === 'faculty') ? <button type="button" onClick={() => { setSelectedMember(null); setConfirmAction({ type: 'deleteMember', id: selectedMember.id, label: memberDisplayName(selectedMember, selectedMember.email) }) }} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white">Delete account</button> : null}</div>
+            <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: selectedMember.id })); setSelectedMember(null); setQuickAction('recognition') }} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" onClick={() => { setSelectedMember(null); openMemberEditor(selectedMember) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit profile</button>{profile?.role === 'admin' && (selectedMember.role === 'student' || selectedMember.role === 'faculty') ? <button type="button" onClick={() => { setSelectedMember(null); setConfirmAction({ type: 'deleteMember', id: selectedMember.id, label: memberDisplayName(selectedMember, selectedMember.email) }) }} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white">Delete account</button> : null}</div>
           </section>
         </div> : null}
         <ActionModal
@@ -1795,13 +1901,13 @@ export default function AdminPage() {
                   <select required value={recognitionForm.studentId} onChange={(event) => setRecognitionForm({ ...recognitionForm, studentId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{memberDisplayName(student)}</option>)}</select>
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Points
-              <input required type="number" min="1" max="100" value={recognitionForm.points} onChange={(event) => setRecognitionForm({ ...recognitionForm, points: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+              <input required type="text" inputMode="numeric" pattern="[0-9]+" value={recognitionForm.points} onChange={(event) => setRecognitionForm((current) => ({ ...current, points: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Category
               <select value={recognitionForm.category} onChange={(event) => setRecognitionForm({ ...recognitionForm, category: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="academic_assistance">Academic assistance</option><option value="community_contribution">Community contribution</option><option value="volunteer_work">Volunteer work</option><option value="academic_achievement">Academic achievement</option><option value="special_recognition">Special recognition</option></select>
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
-              <textarea required maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm({ ...recognitionForm, reason: event.target.value })} rows={3} placeholder="What did the student do?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+              <textarea required maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm((current) => ({ ...current, reason: event.target.value }))} rows={3} placeholder="What did the student do?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
             </label>
           </div>
         </ActionModal>
@@ -1900,20 +2006,28 @@ export default function AdminPage() {
           </div>
         ) : null}
         <ActionModal
-          open={confirmAction?.type === 'deleteBook'}
-          title="Remove this book?"
-          description={confirmAction?.label ? `“${confirmAction.label}” will be removed from the catalog.` : undefined}
-          confirmLabel="Remove book"
-          tone="danger"
+          open={confirmAction?.type === 'archiveBook'}
+          title={confirmAction?.type === 'archiveBook' && confirmAction.isArchived ? 'Remove this book from the catalog?' : 'Restore this book?'}
+          description={confirmAction?.type === 'archiveBook' ? confirmAction.isArchived
+            ? `“${confirmAction.label ?? 'This title'}” will be hidden from members. Loan history and existing records will be preserved.`
+            : `“${confirmAction.label ?? 'This title'}” will become available in the active catalog again.` : undefined}
+          confirmLabel={confirmAction?.type === 'archiveBook' && confirmAction.isArchived ? 'Remove from catalog' : 'Restore book'}
+          tone={confirmAction?.type === 'archiveBook' && confirmAction.isArchived ? 'danger' : 'default'}
           busy={saving}
           onClose={() => setConfirmAction(null)}
-          onConfirm={() => { if (confirmAction?.type === 'deleteBook') void executeDeleteBook(confirmAction.id, confirmAction.label ?? 'Book') }}
+          onConfirm={() => {
+            if (confirmAction?.type !== 'archiveBook') return
+            const { id, label, isArchived } = confirmAction
+            setConfirmAction(null)
+            void setBookArchived(id, label ?? 'Book', Boolean(isArchived))
+          }}
         />
         <ResultModal
           open={Boolean(error || (actionMessage && !actionMessage.startsWith('Uploading')))}
           status={error ? 'error' : 'success'}
           message={error || actionMessage || ''}
-          onClose={() => { setError(null); setActionMessage(null) }}
+          successTitle={actionSuccessTitle ?? undefined}
+          onClose={() => { setError(null); setActionMessage(null); setActionSuccessTitle(null) }}
         />
         <ActionModal
           open={confirmAction?.type === 'revokeLoan'}
@@ -1946,7 +2060,7 @@ export default function AdminPage() {
           onConfirm={() => void executeContributionReview()}
         >
           {reviewDialog?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Reward points<input type="number" min="0" max="100" value={reviewDialog.reward} onChange={(event) => setReviewDialog({ ...reviewDialog, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Reward points<input type="number" min="0" step="1" value={reviewDialog.reward} onChange={(event) => setReviewDialog({ ...reviewDialog, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Access cost / 7 days<input type="number" min="0" value={reviewDialog.accessPoints} onChange={(event) => setReviewDialog({ ...reviewDialog, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
           </div> : null}
         </ActionModal>

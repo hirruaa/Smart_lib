@@ -17,6 +17,11 @@ const sizeClasses = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl' }
 export default function BaseModal({ open, title, eyebrow, description, onClose, children, size = 'md' }: BaseModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
+  const onCloseRef = useRef(onClose)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     if (!open) return
@@ -25,7 +30,7 @@ export default function BaseModal({ open, title, eyebrow, description, onClose, 
     document.body.style.overflow = 'hidden'
     closeRef.current?.focus()
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return }
       if (event.key !== 'Tab') return
       const dialog = closeRef.current?.closest('[role="dialog"]')
       if (!dialog) return
@@ -38,7 +43,7 @@ export default function BaseModal({ open, title, eyebrow, description, onClose, 
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown); document.body.style.overflow = previousOverflow; triggerRef.current?.focus() }
-  }, [onClose, open])
+  }, [open])
 
   if (!open) return null
   const titleId = `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`

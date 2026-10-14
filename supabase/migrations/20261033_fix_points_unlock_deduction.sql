@@ -12,7 +12,7 @@ begin
       select 1 from public.profiles
       where id = auth.uid() and role in ('admin', 'librarian')
     ) then
-    if old.role is distinct from new.role then
+    if old.role is distinct from new.role then  
       raise exception 'Only an administrator can change account roles';
     end if;
     if old.points_balance is distinct from new.points_balance
