@@ -116,7 +116,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         } else {
           if (result.data.user && !result.data.session) {
             setAwaitingOtp(true)
-            setSuccessMsg('We sent a 6-digit confirmation code to your email. Enter it below to activate your account.')
+            setSuccessMsg('We sent an 8-digit confirmation code to your email. Enter it below to activate your account.')
           } else {
             setSuccessMsg('Account registered successfully! You can sign in now.')
           }
@@ -179,7 +179,7 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
     try {
       const result = await getSupabase().auth.resend({ type: 'signup', email })
       if (result.error) setErrorMsg(result.error.message)
-      else setSuccessMsg('A new 6-digit confirmation code was sent. Please check your inbox.')
+      else setSuccessMsg('A new 8-digit confirmation code was sent. Please check your inbox.')
     } catch (error: any) {
       setErrorMsg(error?.message || 'Unable to resend the confirmation code.')
     } finally {
@@ -263,9 +263,9 @@ export default function AuthForm({ defaultMode }: AuthFormProps) {
         ) : null}
 
         {awaitingOtp ? <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
-          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Check your inbox for the 6-digit confirmation code sent to <strong>{email}</strong>.</p>
-          <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Confirmation code</span><input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.45em] text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="000000" /></label>
-          <button type="submit" disabled={isSubmitting || otp.length !== 6} className="w-full rounded-xl bg-forest-900 py-3 text-sm font-semibold text-paper-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-paper-100 dark:text-forest-900">{isSubmitting ? 'Verifying...' : 'Verify email'}</button>
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Check your inbox for the 8-digit confirmation code sent to <strong>{email}</strong>.</p>
+          <label className="block"><span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">Confirmation code</span><input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{8}" maxLength={8} required value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 8))} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-center text-2xl tracking-[0.35em] text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="00000000" /></label>
+          <button type="submit" disabled={isSubmitting || otp.length !== 8} className="w-full rounded-xl bg-forest-900 py-3 text-sm font-semibold text-paper-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-paper-100 dark:text-forest-900">{isSubmitting ? 'Verifying...' : 'Verify email'}</button>
           <button type="button" disabled={isSubmitting} onClick={() => void resendOtp()} className="w-full text-sm font-semibold text-pine-700 hover:underline disabled:opacity-50 dark:text-pine-200">Resend code</button>
         </form> : <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           {mode === 'signup' && (
