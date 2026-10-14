@@ -95,6 +95,7 @@ type PhysicalLoan = {
   transaction_reference?: string | null
   title?: string
 }
+type PhysicalWaitlist = { book_id: number; created_at: string; title?: string }
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
 }
@@ -126,6 +127,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [books, setBooks] = useState<Book[]>([])
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
   const [physicalLoans, setPhysicalLoans] = useState<PhysicalLoan[]>([])
+  const [physicalWaitlist, setPhysicalWaitlist] = useState<PhysicalWaitlist[]>([])
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
@@ -355,7 +357,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0, department: profileData?.department ?? null })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult] = await Promise.all([
+      const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, physicalWaitlistResult] = await Promise.all([
         supabase
           .from('books')
           .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
@@ -372,6 +374,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           .order('requested_at', { ascending: false }),
         supabase.from('book_contributions').select('approved_book_id').eq('user_id', currentUser.id).eq('status', 'approved'),
         supabase.rpc('get_public_physical_catalog'),
+        supabase.from('physical_book_waitlist').select('book_id,created_at').eq('student_id', currentUser.id).order('created_at', { ascending: true }),
       ])
 
       const isMissingTableError = (result: { error?: { code?: string; message?: string } | null }) =>
@@ -383,6 +386,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       }
       if (physicalLoansResult.error && !isMissingTableError(physicalLoansResult)) {
         setLoadError(`Unable to load physical lending data. (${physicalLoansResult.error.message})`)
+        return
+      }
+      if (physicalWaitlistResult.error && !isMissingTableError(physicalWaitlistResult)) {
+        setLoadError(`Unable to load physical availability queue. (${physicalWaitlistResult.error.message})`)
         return
       }
 
@@ -414,8 +421,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         physical_locations: physicalCatalog.get(book.id)?.locations ?? null,
       }))
 
-      setBooks(fetchedBooks)
       const bookLookup = new Map<number, Book>(fetchedBooks.map((b) => [b.id, b]))
+      setBooks(fetchedBooks)
+      setPhysicalWaitlist((physicalWaitlistResult.data ?? []).map((entry: PhysicalWaitlist) => ({
+        ...entry,
+        title: bookLookup.get(entry.book_id)?.title,
+      })))
       setBorrowRequests((requestsResult.data ?? []).map((request: BorrowRequest) => {
         const matchingBook = bookLookup.get(request.book_id)
         return {
@@ -938,7 +949,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
             <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{physicalLoans.filter((loan) => loan.status === 'checked_out').length}</span><span className="text-xs text-slate-500 dark:text-slate-400">active loans</span></div>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{physicalLoans.length} request{physicalLoans.length === 1 ? '' : 's'} and receipt record{physicalLoans.length === 1 ? '' : 's'}</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{physicalLoans.length} request{physicalLoans.length === 1 ? '' : 's'}, {physicalWaitlist.length} availability queue{physicalWaitlist.length === 1 ? '' : 's'}</p>
             {physicalLoans.some((loan) => loan.status === 'pending') ? <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{physicalLoans.filter((loan) => loan.status === 'pending').length} request{physicalLoans.filter((loan) => loan.status === 'pending').length === 1 ? '' : 's'} waiting for librarian confirmation.</p> : null}
             {physicalLoans[0]?.receipt_number ? <p className="mt-2 truncate font-mono text-xs text-pine-700 dark:text-pine-200">Latest: {physicalLoans[0].receipt_number}</p> : null}
             <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">View requests & receipts</button>{physicalLoans.some((loan) => loan.status === 'checked_out') ? <button type="button" onClick={() => setPhysicalReturnPickerOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Request return</button> : null}</div>
@@ -1458,7 +1469,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       </div> : null}
       {physicalHistoryOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalHistoryOpen(false) }}>
-          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track your request, payment, checkout, due date, and receipt.</p><div className="modal-record-list">{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track requests, queue positions, payment, checkout, returns, and receipts.</p><div className="modal-record-list">{physicalWaitlist.map((entry) => <div key={`physical-waitlist-${entry.book_id}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{entry.title ?? `Book #${entry.book_id}`}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Waitlisted</span></div>)}{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status === 'pending' ? 'Awaiting librarian review' : loan.status === 'return_pending' ? 'Return requested' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 && physicalWaitlist.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
         </div>
       ) : null}
       {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>

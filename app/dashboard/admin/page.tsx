@@ -15,7 +15,7 @@ import PasswordInput from '@/components/PasswordInput'
 import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
-import PhysicalCirculationAdminPage from '@/app/dashboard/admin/physical/page'
+import PhysicalCirculationAdminPage from '@/components/PhysicalCirculationAdminPage'
 import { isStaffRole } from '@/utils/roles'
 
 const navGroups = [
