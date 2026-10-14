@@ -75,6 +75,16 @@ type RequestItem = {
   notes: string | null
   duration_days?: number | null
 }
+type PhysicalRequestPreview = {
+  id: number
+  student_id: string
+  book_id: number
+  status: string
+  payment_status: string
+  payment_method: string
+  fee_amount: number
+  requested_at: string
+}
 
 type DigitalLoanHistoryItem = {
   id: number
@@ -177,6 +187,7 @@ export default function AdminPage() {
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
+  const [physicalRequestPreview, setPhysicalRequestPreview] = useState<PhysicalRequestPreview[]>([])
   const [digitalLoanHistory, setDigitalLoanHistory] = useState<DigitalLoanHistoryItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
   const [facultyRanks, setFacultyRanks] = useState<FacultyRank[]>([])
@@ -295,7 +306,14 @@ export default function AdminPage() {
     const supabase = getSupabase()
     const { error: delError } = await supabase.from('books').delete().eq('id', bookId)
     if (delError) {
-      setError(delError.message)
+      const message = delError.message.toLowerCase()
+      if (delError.code === '23503' && message.includes('digital_book_loan_history')) {
+        setError(`"${title}" cannot be deleted because it has digital loan history. Keep the title for audit records and remove or replace its PDF instead.`)
+      } else if (delError.code === '23503' && message.includes('physical_book_loan_history')) {
+        setError(`"${title}" cannot be deleted because it has physical circulation history. Keep the title for audit records and manage its copies instead.`)
+      } else {
+        setError(delError.message)
+      }
     } else {
       setActionMessage(`"${title}" was removed from the catalog.`)
       await loadData()
@@ -390,7 +408,7 @@ export default function AdminPage() {
     const isMissingTableError = (error: { code?: string; message?: string } | null) =>
       Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, ranksRes, coursesRes, facultyCoursesRes, departmentsRes] = await Promise.all([
+    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, ranksRes, coursesRes, facultyCoursesRes, departmentsRes, physicalRequestsRes] = await Promise.all([
       supabase
         .from('books')
         .select('id, title, author, isbn, category, description, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, premium_price, access_duration_days, created_at')
@@ -418,6 +436,7 @@ export default function AdminPage() {
       supabase.from('academic_courses').select('id,name,is_active').order('name'),
       supabase.from('faculty_courses').select('faculty_id,course_id'),
       supabase.from('academic_departments').select('id,name,is_active').order('name'),
+      supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').order('requested_at', { ascending: false }).limit(10),
     ])
 
     // Optional insights modules may not exist yet in older Supabase projects.
@@ -436,6 +455,7 @@ export default function AdminPage() {
       access_mode: normalizeAccessMode(book.access_mode, book.access_points),
     })) as Book[])
     setRequests((requestsRes.data ?? []) as RequestItem[])
+    setPhysicalRequestPreview((physicalRequestsRes.data ?? []) as PhysicalRequestPreview[])
     setDigitalLoanHistory((historyRes.data ?? []) as DigitalLoanHistoryItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
     setFacultyRanks((ranksRes.data ?? []) as FacultyRank[])
@@ -585,6 +605,8 @@ export default function AdminPage() {
 
   const bookPageCount = Math.max(1, Math.ceil(filteredBooks.length / 10))
   const visibleBooks = filteredBooks.slice((Math.min(bookPage, bookPageCount) - 1) * 10, Math.min(bookPage, bookPageCount) * 10)
+  const physicalBookTitle = (bookId: number) => books.find((book) => book.id === bookId)?.title ?? `Book #${bookId}`
+  const physicalBorrowerName = (studentId: string) => students.find((student) => student.id === studentId)?.full_name?.trim() || 'Unknown borrower'
   const digitalHistoryPageCount = Math.max(1, Math.ceil(filteredDigitalLoanHistory.length / 10))
   const visibleDigitalLoanHistory = filteredDigitalLoanHistory.slice((Math.min(digitalHistoryPage, digitalHistoryPageCount) - 1) * 10, Math.min(digitalHistoryPage, digitalHistoryPageCount) * 10)
   const userPageCount = Math.max(1, Math.ceil(filteredStudentDetails.length / 10))
@@ -1104,12 +1126,8 @@ export default function AdminPage() {
                 </div>
               </div>
               <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Quick access</h2>
-                <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                  <button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="rounded-xl border border-emerald-200 px-3 py-2.5 text-left text-sm font-semibold text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/30">Physical requests</button>
-                  <button type="button" onClick={() => setSection('physical')} className="rounded-xl border border-slate-200 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Physical catalog</button>
-                  <button type="button" onClick={() => setSection('analytics')} className="rounded-xl border border-slate-200 px-3 py-2.5 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Analytics</button>
-                </div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Physical borrow requests</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review the newest requests waiting for librarian confirmation.</p></div><button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white dark:bg-sky-500 dark:text-slate-950">View all requests</button></div>
+                <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-xs"><thead className="border-b border-slate-200 uppercase text-slate-500 dark:border-slate-700"><tr><th className="px-2 py-2">Borrower</th><th className="px-2 py-2">Book</th><th className="px-2 py-2">Payment</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Action</th></tr></thead><tbody>{physicalRequestPreview.map((request) => <tr key={request.id} className="border-b border-slate-100 dark:border-slate-800"><td className="px-2 py-3 font-medium">{physicalBorrowerName(request.student_id)}</td><td className="px-2 py-3">{physicalBookTitle(request.book_id)}</td><td className="px-2 py-3 capitalize">{request.payment_method} · ₱{Number(request.fee_amount).toFixed(2)}</td><td className="px-2 py-3 capitalize">{request.status.replace('_', ' ')}<span className="block text-slate-500">{request.payment_status.replace('_', ' ')}</span></td><td className="px-2 py-3"><button type="button" onClick={() => setPhysicalRequestsOpen(true)} className="font-semibold text-emerald-700 hover:underline dark:text-emerald-300">Review</button></td></tr>)}{physicalRequestPreview.length === 0 ? <tr><td colSpan={5} className="px-2 py-6 text-center text-slate-500">No physical borrow requests yet.</td></tr> : null}</tbody></table></div>
               </div>
               </div>
               <div className="space-y-6 xl:col-start-2 xl:row-start-1">

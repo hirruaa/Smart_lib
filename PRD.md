@@ -292,6 +292,50 @@ The current application is a Next.js web application using React/TypeScript and 
 - Supabase: authoritative authentication/profile data, relational records, transaction/authorization functions, and storage.
 - Optional external services: Gemini, Google Drive, payment provider (future), and email delivery worker/provider (future).
 
+### Physical checkout data flow
+
+The physical payment and checkout flow is staff-controlled. A member may submit a request and payment evidence, but only the database-authorized librarian/administrator checkout action can record payment as paid, assign a copy, and issue a receipt.
+
+1. The member browses a physical title and submits a borrow request with the selected loan option and payment details. The request remains `pending`, has no `copy_id`, and does not reduce availability.
+2. The browser sends the staff checkout action to the application/database function `admin_confirm_physical_checkout`.
+3. The database verifies the caller role, request status, amount, payment state, and notes; locks the request and serializes allocation for the requested book.
+4. The database locks one available physical copy, marks it `borrowed`, updates the request with payment audit information, assigns the copy and due date, sets `payment_status = paid`, and creates the receipt number in one transaction.
+5. The transaction creates an in-app notification for the member. The admin view receives the resulting request/copy state through the normal authorized data path and, where enabled, Supabase Realtime.
+6. If validation or copy allocation fails, the transaction raises an error and the request/copy/payment state remains unchanged. No receipt or successful checkout notification is produced.
+
+```mermaid
+flowchart TD
+    A[Member selects physical title and loan option] --> B[Submit borrow request and payment details]
+    B --> C[Request pending; no copy reserved]
+    C --> D[Librarian reviews request and payment]
+    D --> E{Authorized and valid?}
+    E -- No --> F[Show error or keep request pending]
+    E -- Yes --> G[admin_confirm_physical_checkout]
+    G --> H[Lock request and serialize book allocation]
+    H --> I{Available copy found?}
+    I -- No --> J[Rollback; request remains pending]
+    I -- Yes --> K[Mark copy borrowed and set due date]
+    K --> L[Record payment audit and mark paid]
+    L --> M[Assign copy and issue receipt]
+    M --> N[Notify member and refresh staff circulation view]
+```
+
+### Physical payment and circulation data structure
+
+Only the records needed for the physical checkout decision are shown here. The relational database is authoritative; client-side status labels and uploaded evidence are not proof of payment.
+
+| Record | Important data | Relationship / responsibility |
+|---|---|---|
+| `books` | Title metadata and `catalog_type` | Parent title for physical copies and loan options; physical availability comes from copy rows, not legacy digital counts. |
+| `physical_book_copies` | `id`, `book_id`, copy code, QR token, `status`, location, `checked_out_at`, `due_date` | One physical item per row. A successful checkout changes exactly one available copy to `borrowed`. |
+| `physical_loan_options` | Book, loan duration, PHP fee, active/configuration fields | Defines the expected `fee_amount` and `duration_days` used during checkout validation. |
+| `physical_book_requests` | Member/book/loan option, `status`, `copy_id`, `payment_method`, `payment_status`, payment reference/proof, `fee_amount`, `duration_days`, `receipt_number`, `checked_out_at`, `due_date` | Source-of-truth workflow record. Pending requests have no copy assignment. |
+| Payment audit fields on `physical_book_requests` | `payment_received_amount`, `payment_verified_at`, `payment_verified_by`, `payment_notes` | Records the amount physically received, verification time, authorized verifier, and optional note (maximum 500 characters). Amount must be non-negative and equal to the configured fee at confirmation. |
+| `physical_book_loan_history` | Request/member/book/copy, payment, checkout, due date, return condition, and status | Synchronized history projection created/updated from completed physical checkouts; current request/copy state remains authoritative. |
+| `notifications` | Member, event type, title/message, reference request | In-app confirmation after a successful physical checkout. |
+
+The checkout transaction has these required invariants: the caller is an authorized librarian/administrator; the request is `pending`; GCash requests are awaiting verification; the received amount equals the configured fee to two decimal places; one currently available copy is locked and assigned; and payment, copy status, due date, receipt, and notification are committed together or not at all.
+
 ### Database installation rule
 
 [`supabase/COMPLETE_SCHEMA.sql`](./supabase/COMPLETE_SCHEMA.sql) is a consolidated schema intended for a fresh Supabase project. It must not be blindly rerun against an existing populated project as an upgrade. Existing installations need a reviewed migration derived from the actual deployed schema, tested in staging with a verified backup and rollback/recovery plan. Confirm the live database contains every column, table, function, trigger, and policy required by the deployed application.
