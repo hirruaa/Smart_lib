@@ -207,7 +207,8 @@ export default function AdminPage() {
     isbn: '',
     pdf_url: '',
     access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>,
-    access_mode: 'free' as 'free' | 'points',
+    access_mode: 'free' as 'free' | 'points' | 'premium',
+    premium_price: '',
     access_duration_days: '30',
     description: '',
   })
@@ -234,7 +235,7 @@ export default function AdminPage() {
   const [contributionPage, setContributionPage] = useState(1)
   const [auditPage, setAuditPage] = useState(1)
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
-  const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
+  const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points' | 'premium', premiumPrice: '0', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '' })
@@ -324,7 +325,8 @@ export default function AdminPage() {
   const startBookAccessEdit = (book: Book) => {
     setEditingBookId(book.id)
     setBookAccessDraft({
-      mode: book.access_mode === 'points' ? 'points' : 'free',
+      mode: book.access_mode,
+      premiumPrice: String(book.premium_price ?? 0),
       costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days))])),
     })
   }
@@ -334,6 +336,11 @@ export default function AdminPage() {
     const costs = Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [String(days), Number(bookAccessDraft.costs[String(days)])]))
     if (Object.values(costs).some((cost) => !Number.isInteger(cost) || cost < 0)) {
       setError('Each access cost must be a whole number of points greater than or equal to zero.')
+      return
+    }
+    const premiumPrice = Number(bookAccessDraft.premiumPrice)
+    if (bookAccessDraft.mode === 'premium' && (!Number.isFinite(premiumPrice) || premiumPrice <= 0)) {
+      setError('Set a premium price greater than zero.')
       return
     }
 
@@ -346,9 +353,10 @@ export default function AdminPage() {
         access_mode: bookAccessDraft.mode,
         access_points: bookAccessDraft.mode === 'points' ? costs['7'] : 0,
         access_costs: costs,
+        premium_price: bookAccessDraft.mode === 'premium' ? premiumPrice : 0,
       })
       .eq('id', book.id)
-      .select('id, access_points, access_costs, access_mode, access_duration_days')
+      .select('id, access_points, access_costs, access_mode, premium_price, access_duration_days')
       .single()
 
     if (updateError) {
@@ -359,6 +367,7 @@ export default function AdminPage() {
         access_points: data.access_points,
         access_costs: data.access_costs as DigitalAccessCosts,
         access_mode: normalizeAccessMode(data.access_mode, data.access_points),
+        premium_price: Number(data.premium_price ?? 0),
         access_duration_days: data.access_duration_days,
       } : item))
       setEditingBookId(null)
@@ -937,6 +946,12 @@ export default function AdminPage() {
       setSaving(false)
       return
     }
+    const premiumPrice = Number(newBook.premium_price)
+    if (newBook.access_mode === 'premium' && (!Number.isFinite(premiumPrice) || premiumPrice <= 0)) {
+      setError('Set a premium price greater than zero.')
+      setSaving(false)
+      return
+    }
     const { error } = await supabase.from('books').insert([
       {
         title: newBook.title,
@@ -949,7 +964,7 @@ export default function AdminPage() {
         access_points: Number(newBook.access_costs['7']) || 0,
         access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [String(days), Number(newBook.access_costs[String(days)] ?? 0)])),
         access_mode: newBook.access_mode,
-        premium_price: 0,
+        premium_price: newBook.access_mode === 'premium' ? premiumPrice : 0,
         catalog_type: 'digital',
         access_duration_days: Number(newBook.access_duration_days) || 30,
         total_copies: 0,
@@ -961,7 +976,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New e-book added to the online catalog.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', premium_price: '', access_duration_days: '30', description: '' })
       setNewBookFile(null)
       setNewBookOpen(false)
       await loadData()
@@ -1214,11 +1229,11 @@ export default function AdminPage() {
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
                           <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{book.catalog_type}</td>
-                          <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid paused' : book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <span className="mt-1 block text-xs text-slate-500">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => `${days}d: ${book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts`).join(' · ')}</span> : null}</td>
+                          <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? `Premium · ₱${Number(book.premium_price).toFixed(2)}` : book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <span className="mt-1 block text-xs text-slate-500">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => `${days}d: ${book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts`).join(' · ')}</span> : book.access_mode === 'premium' ? <span className="mt-1 block text-xs text-slate-500">Staff verifies payment before permanent access.</span> : null}</td>
                           <td className="px-4 py-4">{book.pdf_url || book.storage_file_id || book.storage_path ? <span className="rounded-md bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{book.storage_provider === 'google_drive' ? 'Drive' : book.storage_provider === 'external' ? 'External' : 'PDF ready'}</span> : <span className="text-xs text-slate-400">Missing</span>}</td>
                           <td className="px-4 py-4"><div className="flex flex-wrap gap-2">{book.pdf_url || book.storage_path ? <a href={`/reader/${book.id}`} className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30">Open reader</a> : null}<button type="button" disabled={saving} onClick={() => openPdfAttachment(book.id)} className="rounded-xl border border-sky-200 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{book.pdf_url || book.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(book)} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleDeleteBook(book.id, book.title)} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-400 dark:hover:bg-rose-950/40">Delete</button></div></td>
                         </tr>
-                        {editingBookId === book.id ? <tr className="bg-paper-50/70 dark:bg-forest-800/40"><td colSpan={7} className="px-4 py-4"><form onSubmit={(event) => void saveBookAccessEdit(event, book)}><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings for {book.title}</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as 'free' | 'points' }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option></select></label>{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} disabled={bookAccessDraft.mode === 'free'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>)}</div><div className="mt-3 flex gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Cancel</button></div></form></td></tr> : null}
+                        {editingBookId === book.id ? <tr className="bg-paper-50/70 dark:bg-forest-800/40"><td colSpan={7} className="px-4 py-4"><form onSubmit={(event) => void saveBookAccessEdit(event, book)}><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings for {book.title}</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-7"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option><option value="premium">Premium</option></select></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Premium price (₱)<input type="number" min="0.01" step="0.01" value={bookAccessDraft.premiumPrice} onChange={(event) => setBookAccessDraft((current) => ({ ...current, premiumPrice: event.target.value }))} disabled={bookAccessDraft.mode !== 'premium'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} disabled={bookAccessDraft.mode !== 'points'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>)}</div><div className="mt-3 flex gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Cancel</button></div></form></td></tr> : null}
                       </Fragment>) }
                       {filteredBooks.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">No matching books found.</td></tr> : null}
                     </tbody>
@@ -1276,8 +1291,14 @@ export default function AdminPage() {
                     >
                       <option value="free">Free access</option>
                       <option value="points">Points-based access</option>
+                      <option value="premium">Premium paid access</option>
                     </select>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">All standard e-books unlock immediately. Use points-based access when a title should require points. Paid checkout is paused until an online payment provider can confirm transactions automatically.</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Free and points access unlock immediately. Premium access requires the member to submit payment evidence for staff verification.</span>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Premium price (₱)</span>
+                    <input type="number" min="0.01" step="0.01" value={newBook.premium_price} onChange={(event) => setNewBook({ ...newBook, premium_price: event.target.value })} disabled={newBook.access_mode !== 'premium'} required={newBook.access_mode === 'premium'} className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Premium purchases grant permanent access after staff verifies payment.</span>
                   </label>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration</span>

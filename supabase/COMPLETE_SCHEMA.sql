@@ -543,7 +543,6 @@
   create or replace function public.prevent_student_role_change()
   returns trigger
   language plpgsql
-  security definer
   set search_path = public
   as $$
   begin
@@ -552,7 +551,8 @@
       if old.role is distinct from new.role then
         raise exception 'Only an administrator can change account roles';
       end if;
-      if old.points_balance is distinct from new.points_balance then
+      if old.points_balance is distinct from new.points_balance
+        and current_user not in ('postgres', 'service_role') then
         raise exception 'Only an administrator or approved workflow can change points';
       end if;
       if old.email is distinct from new.email then
@@ -2874,33 +2874,13 @@ grant execute on function public.admin_review_book_contribution(bigint, text, in
 grant execute on function public.admin_request_contribution_revision(bigint, text) to authenticated;
 
 -- ============================================================================
--- Disable unverified paid e-book checkout
+-- Premium e-book payments
 -- ============================================================================
 
--- Pause paid e-book checkout until an online payment provider can confirm
--- successful transactions server-to-server. Free and points access stay instant.
-
-create or replace function public.prevent_unverified_premium_ebook()
-returns trigger
-language plpgsql
-set search_path = public
-as $$
-begin
-  if new.access_mode = 'premium' then
-    if tg_op = 'INSERT' then
-      raise exception 'Paid e-book checkout is unavailable until automatic payment verification is configured';
-    elsif old.access_mode is distinct from 'premium' then
-      raise exception 'Paid e-book checkout is unavailable until automatic payment verification is configured';
-    end if;
-  end if;
-  return new;
-end;
-$$;
-
+-- Premium titles use the staff-verified payment-evidence workflow below.
+-- Do not add a trigger that blocks the premium access mode: the database
+-- validates the configured price and staff approval before granting access.
 drop trigger if exists prevent_unverified_premium_ebook on public.books;
-create trigger prevent_unverified_premium_ebook
-before insert or update of access_mode on public.books
-for each row execute function public.prevent_unverified_premium_ebook();
 
 create or replace function public.get_public_physical_catalog()
 returns table (
@@ -2969,7 +2949,9 @@ grant execute on function public.get_public_physical_catalog() to anon, authenti
 grant execute on function public.get_public_physical_copy(uuid) to anon, authenticated;
 
 revoke all on function public.request_premium_ebook_purchase(bigint, text, text)
-from public, anon, authenticated;
+from public, anon;
+grant execute on function public.request_premium_ebook_purchase(bigint, text, text)
+to authenticated;
 
 -- ============================================================================
 -- Serialized circulation and FIFO waitlist hardening

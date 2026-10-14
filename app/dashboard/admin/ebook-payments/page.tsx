@@ -104,13 +104,13 @@ export default function EbookPaymentsPage() {
       <header className="surface-card p-6">
         <button type="button" onClick={() => router.push('/dashboard/admin')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Admin dashboard</button>
         <p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">Digital library</p>
-        <h1 className="mt-2 text-3xl font-semibold">Legacy e-book payment records</h1>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">New paid e-book checkout is paused until an online payment provider can confirm transactions automatically. This screen is only for reconciling GCash submissions created before the pause; verify any existing payment against the merchant account before resolving it.</p>
+        <h1 className="mt-2 text-3xl font-semibold">Premium e-book payments</h1>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Review payment evidence against the merchant record. Approving a valid payment grants permanent access and issues a digital receipt; uploaded screenshots and references remain evidence, not automatic confirmation.</p>
       </header>
       {error ? <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{error}</div> : null}
       {notice ? <div role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div> : null}
       <section className="surface-card space-y-4 p-6">
-        <h2 className="text-xl font-semibold">Older submissions awaiting reconciliation ({pending.length})</h2>
+        <h2 className="text-xl font-semibold">Payments awaiting verification ({pending.length})</h2>
         {pending.map((purchase) => {
           const book = books.find((item) => item.id === purchase.book_id)
           const member = members.find((item) => item.id === purchase.student_id)

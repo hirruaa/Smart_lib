@@ -42,7 +42,7 @@ Make useful academic resources easier to discover and access while preserving pr
 
 - Replacing the physical book, librarian judgment, or the school's official student-information system.
 - Treating AI output, OCR, uploaded images, or a typed payment reference as payment settlement.
-- Enabling paid e-book checkout before a provider can verify a payment server-to-server.
+- Fully automatic paid e-book settlement before a trusted payment provider integration is available. The current premium flow is staff-verified and requires payment evidence.
 - Claiming that browser UI controls can prevent operating-system screenshots or external photography.
 - Guaranteeing 24/7 availability solely through application code; uptime also depends on hosting, database, operations, and support arrangements.
 - Building a full learning-management system, gradebook, institutional email suite, or general-purpose AI chatbot.
@@ -77,7 +77,7 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 | P1 | Contribution upload, revision, AI screening, administrator decision, and post-approval points | Present in source; AI remains advisory and points are tied to human approval |
 | P1 | Member points wallet, transaction history, recognition and achievement surfaces | Present in source/schema; confirm policy, transaction integrity, and optional-table behavior |
 | P1 | Admin member management, academic rank/course lists, library operations, dashboard access-grant quick action, and audit surfaces | Present in source; validate staff-only authorization and data integrity |
-| P2 | Verified paid e-book purchase with immediate automatic access | Not available; checkout is paused until a payment provider and trusted webhook are implemented |
+| P1 | Premium e-book pricing, payment-evidence submission, staff verification, permanent access, and digital receipts | Implemented in source/schema; verify payment policy, storage privacy, and staff reconciliation in staging |
 | P2 | OCR-assisted physical-book table-of-contents entry during registration | Proposed enhancement; not represented as a currently delivered workflow |
 | P2 | Admin-configurable contribution point bonuses and broader reward campaigns | Existing approval/points foundations; configurable award policy needs product definition and implementation |
 | P2 | Outbound email notification worker and delivery status | Email queue exists, but the application does not itself prove delivery; worker/provider required |
@@ -98,7 +98,7 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 ### 5.2 Digital browse, access, and reading
 
 1. A student or faculty member searches or browses digital books/materials.
-2. The catalog clearly presents whether access is free, points-based, restricted, or premium/paused, plus the available access duration.
+2. The catalog clearly presents whether access is free, points-based, restricted, or premium, plus the available access duration or configured price.
 3. The member requests eligible free or points access.
 4. The server/database validates the member, resource, duration, existing access, and point balance. It grants free access or atomically deducts points and grants access.
 5. On success, the member can read immediately; no administrator approval is inserted into this eligible free/points flow.
@@ -110,7 +110,7 @@ The current dashboard offers access durations of 1, 3, 7, 14, and 30 days. Produ
 
 ### 5.3 Paid digital access
 
-Paid e-book checkout is paused. A user-uploaded receipt, OCR extraction, or typed reference must not unlock a premium e-book. Once an approved payment provider is integrated, a verified, idempotent server-to-server payment event should issue the access grant and receipt automatically, without routine administrator approval. Staff reconciliation is reserved for exceptions, disputes, or legacy submissions.
+Premium e-book checkout uses a staff-verified payment-evidence flow. The member submits the configured price, transaction reference, and a private proof image; an authorized administrator/librarian verifies the payment against the merchant record. A screenshot, OCR extraction, or typed reference alone never grants access. Approval creates permanent access, a digital receipt, and a member notification. A future trusted provider webhook may automate this decision, but it is not required for the current workflow.
 
 ### 5.4 Physical book discovery and circulation
 
@@ -185,7 +185,7 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-014 | P1 | Members shall renew or return eligible digital access within the configured limits and receive a clear result. | Implemented in source/schema |
 | FR-015 | P0 | Protected digital files shall be retrievable only after current authorization, except for explicitly authorized admin/contributor cases. | Implemented in source; security test required |
 | FR-016 | P1 | The reader shall support reading progress and member-owned notes, highlights, and drawings without exposing another member's study data. | Implemented in source/schema |
-| FR-017 | P0 | Paid digital checkout shall remain disabled until payment is confirmed by a trusted provider integration; uploaded evidence or AI extraction alone shall never grant access. | Paused/required guardrail |
+| FR-017 | P0 | Premium digital checkout shall require a configured positive price, private payment evidence, and authorized staff verification; uploaded evidence or AI extraction alone shall never grant access. | Implemented in source/schema; staging payment and privacy test required |
 | FR-018 | P2 | After provider integration, verified paid digital payment shall create a single access grant and receipt automatically; duplicate webhook delivery shall not duplicate grants or charges. | Future |
 | FR-019 | P1 | Public physical-catalog views shall disclose title metadata, aggregate availability, and safe structured location data only, with no member, request, payment, or private QR-token data. | Implemented via public projection; privacy-test required |
 | FR-020 | P1 | Administrators shall manage an Excel-style physical book catalog with searchable/filterable/sortable/paginated book-level fields including title, author, ISBN, category, format, total/available/borrowed counts, and location summary. | Implemented in source/schema; verify usability and authorization |
@@ -441,7 +441,7 @@ The physical workflow is a focused Phase 1 delivery. Its existing copy, location
 
 ### Phase 2 — Trusted payment and communication (P2)
 
-- Integrate an approved payment provider for premium digital access using signed, idempotent webhooks.
+- Integrate an approved payment provider for premium digital access using signed, idempotent webhooks to optionally replace manual verification.
 - Add a transactional email worker with delivery/retry status.
 - Add configurable contribution award policy and explicitly documented exception handling.
 - Add table-of-contents capture/OCR as a reviewer-assisted optional physical catalog workflow.
@@ -455,7 +455,7 @@ The physical workflow is a focused Phase 1 delivery. Its existing copy, location
 
 - The initial deployment serves one school/library organization; multi-tenant institution support is out of scope unless later approved.
 - The school/librarian defines physical loan periods, fees, grace periods, fines, lost-item policy, contribution points, and retention schedules. The system must not invent those policies.
-- Free and points-based digital access is automatic when eligible and confirmed. Premium paid e-book access remains paused until a trustworthy provider integration is operational.
+- Free and points-based digital access is automatic when eligible and confirmed. Premium access requires staff verification of submitted payment evidence until a trustworthy provider integration is operational.
 - Physical-book checkout, payment verification, copy handover, return, and exception resolution remain staff-controlled.
 - AI processing is optional and advisory; human review remains authoritative.
 - The product may deter casual copying but cannot technically guarantee prevention of screenshots, photography, or redistribution.

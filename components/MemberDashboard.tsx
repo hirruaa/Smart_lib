@@ -130,6 +130,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [physicalWaitlist, setPhysicalWaitlist] = useState<PhysicalWaitlist[]>([])
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
+  const [premiumReference, setPremiumReference] = useState('')
+  const [premiumProofFile, setPremiumProofFile] = useState<File | null>(null)
+  const [premiumPurchaseSaving, setPremiumPurchaseSaving] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [physicalBook, setPhysicalBook] = useState<PhysicalBookSelection | null>(null)
@@ -717,8 +720,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         ? `Access unlocked for ${book.title} for ${durationDays} days. You can start reading now.`
         : `Access requested for ${book.title} for ${durationDays} days.`)
       const pointsCost = book.access_mode === 'points' ? Number(data.pointsCost ?? getDigitalAccessCost(book.access_costs, Number(durationDays), book.access_points)) : 0
-      setProfile((current) => current ? { ...current, points_balance: current.points_balance - pointsCost } : current)
       const supabase = getSupabase()
+      const { data: refreshedProfile } = await supabase.from('profiles').select('points_balance').eq('id', userId).maybeSingle()
+      setProfile((current) => current ? { ...current, points_balance: Number(refreshedProfile?.points_balance ?? current.points_balance - pointsCost) } : current)
       const { data: requestsResult } = await supabase
         .from('borrow_requests')
         .select('id, student_id, book_id, status, request_date, due_date, returned_date, notes, duration_days, renewal_count')
@@ -732,6 +736,43 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
     setRequestingBookId(null)
     setSelectedBook(null)
+  }
+
+  const submitPremiumPurchase = async () => {
+    if (!selectedBook || selectedBook.access_mode !== 'premium' || !userId) return
+    if (!premiumReference.trim() || !premiumProofFile) {
+      setRequestStatus('Enter the payment reference and upload the payment proof.')
+      return
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(premiumProofFile.type) || premiumProofFile.size > 5 * 1024 * 1024) {
+      setRequestStatus('Payment proof must be JPG, PNG, or WebP and no larger than 5 MB.')
+      return
+    }
+    setPremiumPurchaseSaving(true)
+    setRequestStatus(null)
+    let proofPath: string | null = null
+    const supabase = getSupabase()
+    try {
+      const extension = premiumProofFile.type === 'image/jpeg' ? 'jpg' : premiumProofFile.type.split('/')[1]
+      proofPath = `${userId}/${crypto.randomUUID()}.${extension}`
+      const { error: uploadError } = await supabase.storage.from('ebook-payment-proofs').upload(proofPath, premiumProofFile, { contentType: premiumProofFile.type, upsert: false })
+      if (uploadError) throw new Error(`Payment proof upload failed: ${uploadError.message}`)
+      const { error: purchaseError } = await supabase.rpc('request_premium_ebook_purchase', {
+        p_book_id: selectedBook.id,
+        p_transaction_reference: premiumReference.trim(),
+        p_payment_proof_path: proofPath,
+      })
+      if (purchaseError) throw new Error(purchaseError.message)
+      setRequestStatus(`Payment submitted for ${selectedBook.title}. Staff will verify it before permanent access is granted.`)
+      setPremiumReference('')
+      setPremiumProofFile(null)
+      setSelectedBook(null)
+    } catch (cause) {
+      if (proofPath) await supabase.storage.from('ebook-payment-proofs').remove([proofPath])
+      setRequestStatus(cause instanceof Error ? cause.message : 'Unable to submit the premium e-book payment.')
+    } finally {
+      setPremiumPurchaseSaving(false)
+    }
   }
 
   const executeRenewLoan = async (loanId: number) => {
@@ -1313,7 +1354,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div>
                 <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Unlock access</p>
                 <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Automatic paid checkout is not available yet. Free and points-based e-books unlock immediately.' : 'Choose how long you need this digital resource. Access unlocks immediately.'}</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Submit payment evidence for staff verification. Permanent access is granted after approval.' : 'Choose how long you need this digital resource. Access unlocks immediately.'}</p>
               </div>
               <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
             </div>
@@ -1332,21 +1373,21 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               ))}
             </div> : null}
 
-            <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
+            {selectedBook.access_mode === 'premium' ? <div className="mt-5 space-y-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70"><div className="flex items-center justify-between gap-4 text-sm"><span className="font-semibold text-slate-800 dark:text-slate-100">Premium price</span><span className="font-semibold text-pine-700 dark:text-pine-200">₱{Number(selectedBook.premium_price).toFixed(2)}</span></div><label className="block text-sm font-medium">Payment reference<input value={premiumReference} onChange={(event) => setPremiumReference(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><label className="block text-sm font-medium">Payment proof<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPremiumProofFile(event.target.files?.[0] ?? null)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Use the configured payment channel and upload a clear receipt image. A screenshot is evidence for review, not automatic confirmation.</p></div> : <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {selectedBook.access_mode === 'free' ? 'Free access' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : `${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points`}
+                  {selectedBook.access_mode === 'free' ? 'Free access' : `${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points`}
                 </span>
               </div>
-              {selectedBook.access_mode === 'premium' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Choose another free or points-based e-book for automatic access. Paid checkout will return when secure payment confirmation is available.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>}
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>
               {selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
-            </div>
+            </div>}
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || selectedBook.access_mode === 'premium' || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Unlocking...' : selectedBook.access_mode === 'premium' ? 'Paid checkout unavailable' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
+              <button type="button" onClick={() => void (selectedBook.access_mode === 'premium' ? submitPremiumPurchase() : submitAccessRequest())} disabled={requestingBookId !== null || premiumPurchaseSaving || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id || premiumPurchaseSaving ? 'Submitting...' : selectedBook.access_mode === 'premium' ? `Submit payment · ₱${Number(selectedBook.premium_price).toFixed(2)}` : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
