@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import dynamicImport from 'next/dynamic'
@@ -32,6 +32,10 @@ type Book = {
   pdf_url?: string | null
   catalog_type: 'digital' | 'physical' | 'hybrid'
   isOwner?: boolean
+  physical_registered_copies?: number
+  physical_available_copies?: number
+  physical_borrowed_copies?: number
+  physical_locations?: string[] | null
 }
 
 type PhysicalBookSelection = {
@@ -40,6 +44,14 @@ type PhysicalBookSelection = {
   author: string
   category: string
   catalog_type: 'physical' | 'hybrid'
+}
+
+type PhysicalCatalogEntry = {
+  id: number
+  registered_copies: number
+  available_copies: number
+  borrowed_copies: number
+  locations: string[] | null
 }
 
 type BorrowRequest = {
@@ -74,12 +86,13 @@ type PhysicalLoan = {
   fee_amount: number
   payment_method: 'cash' | 'gcash'
   payment_status: 'unpaid' | 'pending_verification' | 'paid'
-  status: 'pending' | 'checked_out' | 'returned' | 'rejected' | 'cancelled' | 'lost' | 'expired'
+  status: 'pending' | 'checked_out' | 'return_pending' | 'returned' | 'rejected' | 'cancelled' | 'lost' | 'expired'
   requested_at: string
   checked_out_at: string | null
   due_date: string | null
   returned_at: string | null
   receipt_number: string | null
+  transaction_reference?: string | null
   title?: string
 }
 function LineIcon({ children }: { children: React.ReactNode }) {
@@ -126,6 +139,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [requestsOpen, setRequestsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [physicalHistoryOpen, setPhysicalHistoryOpen] = useState(false)
+  const [physicalReceipt, setPhysicalReceipt] = useState<PhysicalLoan | null>(null)
+  const [physicalReturnPickerOpen, setPhysicalReturnPickerOpen] = useState(false)
+  const [physicalReturnActionId, setPhysicalReturnActionId] = useState<number | null>(null)
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scannerError, setScannerError] = useState('')
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
   const [continueReadingOpen, setContinueReadingOpen] = useState(false)
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
@@ -183,6 +202,67 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [sidebarOpen])
+
+  useEffect(() => {
+    if (!userId) return
+    const channel = getSupabase()
+      .channel('member-physical-catalog')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_copies' }, () => setDataReloadToken((token) => token + 1))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_requests', filter: `student_id=eq.${userId}` }, () => setDataReloadToken((token) => token + 1))
+      .subscribe()
+    return () => { void getSupabase().removeChannel(channel) }
+  }, [userId])
+
+  useEffect(() => {
+    if (!scannerOpen) return
+    let active = true
+    let stream: MediaStream | null = null
+    let timer: number | null = null
+    const startScanner = async () => {
+      type Detector = { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>> }
+      type DetectorConstructor = new (options?: { formats?: string[] }) => Detector
+      const BarcodeDetectorApi = (window as Window & { BarcodeDetector?: DetectorConstructor }).BarcodeDetector
+      if (!BarcodeDetectorApi) {
+        setScannerError('QR scanning is not supported by this browser. Use the QR sticker link or open the catalog manually.')
+        return
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setScannerError('Camera access is not available in this browser.')
+        return
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+        if (!active || !scannerVideoRef.current) return
+        scannerVideoRef.current.srcObject = stream
+        await scannerVideoRef.current.play()
+        const detector = new BarcodeDetectorApi({ formats: ['qr_code'] })
+        const scan = async () => {
+          if (!active || !scannerVideoRef.current) return
+          try {
+            const results = await detector.detect(scannerVideoRef.current)
+            const rawValue = results[0]?.rawValue
+            if (rawValue) {
+              const url = new URL(rawValue, window.location.origin)
+              if (url.searchParams.has('copy')) {
+                window.location.href = `${url.pathname}${url.search}${url.hash || '#explore'}`
+                return
+              }
+            }
+          } catch { /* The camera may not have a frame ready yet. */ }
+          timer = window.setTimeout(() => void scan(), 500)
+        }
+        void scan()
+      } catch (cause) {
+        setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access to scan a physical-copy QR code.' : 'Unable to open the camera for QR scanning.')
+      }
+    }
+    void startScanner()
+    return () => {
+      active = false
+      if (timer !== null) window.clearTimeout(timer)
+      stream?.getTracks().forEach((track) => track.stop())
+    }
+  }, [scannerOpen])
 
   useEffect(() => {
     if (!userId) return
@@ -260,7 +340,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const fullName = profileData?.full_name ?? ''
 
       if (role !== memberType) {
-        if (role === 'admin') {
+        if (role === 'admin' || role === 'librarian') {
           router.replace('/dashboard/admin')
         } else if (role === 'faculty') {
           router.replace('/dashboard/faculty')
@@ -275,7 +355,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0, department: profileData?.department ?? null })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, physicalLoansResult, contributionResult] = await Promise.all([
+      const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult] = await Promise.all([
         supabase
           .from('books')
           .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type')
@@ -287,10 +367,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           .order('request_date', { ascending: false }),
         supabase
           .from('physical_book_requests')
-          .select('id, book_id, copy_id, duration_days, fee_amount, payment_method, payment_status, status, requested_at, checked_out_at, due_date, returned_at, receipt_number')
+          .select('id, book_id, copy_id, duration_days, fee_amount, payment_method, payment_status, status, requested_at, checked_out_at, due_date, returned_at, receipt_number, transaction_reference')
           .eq('student_id', currentUser.id)
           .order('requested_at', { ascending: false }),
         supabase.from('book_contributions').select('approved_book_id').eq('user_id', currentUser.id).eq('status', 'approved'),
+        supabase.rpc('get_public_physical_catalog'),
       ])
 
       const isMissingTableError = (result: { error?: { code?: string; message?: string } | null }) =>
@@ -308,6 +389,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const ownedContributionBookIds = new Set((contributionResult.data ?? [])
         .map((item: { approved_book_id: number | null }) => item.approved_book_id)
         .filter((bookId): bookId is number => Number.isInteger(bookId)))
+      const physicalCatalog = new Map<number, PhysicalCatalogEntry>((physicalCatalogResult.data ?? []).map((entry: PhysicalCatalogEntry) => [entry.id, entry]))
       const fetchedBooks: Book[] = (booksResult.data ?? []).map((book: any) => ({
         ...book,
         title: book.title ?? '',
@@ -326,6 +408,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         pdf_url: book.pdf_url ?? null,
         catalog_type: book.catalog_type ?? 'digital',
         isOwner: ownedContributionBookIds.has(book.id),
+        physical_registered_copies: physicalCatalog.get(book.id)?.registered_copies ?? 0,
+        physical_available_copies: physicalCatalog.get(book.id)?.available_copies ?? 0,
+        physical_borrowed_copies: physicalCatalog.get(book.id)?.borrowed_copies ?? 0,
+        physical_locations: physicalCatalog.get(book.id)?.locations ?? null,
       }))
 
       setBooks(fetchedBooks)
@@ -683,6 +769,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
   const handleLoanAction = (loanId: number) => setConfirmAction({ type: 'renew', id: loanId })
   const handleReturnLoan = (loanId: number) => setConfirmAction({ type: 'return', id: loanId })
+  const requestPhysicalReturn = async (loanId: number) => {
+    setPhysicalReturnActionId(loanId)
+    const { error } = await getSupabase().rpc('request_physical_return', { p_request_id: loanId })
+    if (error) setLoadError(`Unable to request the physical-book return. (${error.message})`)
+    setPhysicalReturnActionId(null)
+    if (!error) setDataReloadToken((token) => token + 1)
+  }
 
   async function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -781,7 +874,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-celadon">{memberType === 'faculty' ? 'Faculty Dashboard' : 'Student Dashboard'}</p>
-              <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name || profile?.email || (memberType === 'faculty' ? 'faculty member' : 'student')}</h1>
+              <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name?.trim() || (memberType === 'faculty' ? 'faculty member' : 'student')}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{memberType === 'faculty' ? 'Browse, borrow, and read learning materials with the same library access and points features available to students.' : 'Browse the library, track active access, and manage your requests in one place.'}</p>
               {memberType === 'faculty' && profile?.department ? <p className="mt-2 text-xs font-semibold text-pine-700 dark:text-pine-200">Department · {profile.department}</p> : null}
             </div>
@@ -846,8 +939,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
             <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{physicalLoans.filter((loan) => loan.status === 'checked_out').length}</span><span className="text-xs text-slate-500 dark:text-slate-400">active loans</span></div>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{physicalLoans.length} request{physicalLoans.length === 1 ? '' : 's'} and receipt record{physicalLoans.length === 1 ? '' : 's'}</p>
+            {physicalLoans.some((loan) => loan.status === 'pending') ? <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{physicalLoans.filter((loan) => loan.status === 'pending').length} request{physicalLoans.filter((loan) => loan.status === 'pending').length === 1 ? '' : 's'} waiting for librarian confirmation.</p> : null}
             {physicalLoans[0]?.receipt_number ? <p className="mt-2 truncate font-mono text-xs text-pine-700 dark:text-pine-200">Latest: {physicalLoans[0].receipt_number}</p> : null}
-            <button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action mt-3 rounded-xl border px-3 py-2 text-xs font-semibold">View lending history</button>
+            <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setPhysicalHistoryOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">View requests & receipts</button>{physicalLoans.some((loan) => loan.status === 'checked_out') ? <button type="button" onClick={() => setPhysicalReturnPickerOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">Request return</button> : null}</div>
           </div>
 
           <div className="student-stat-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
@@ -876,6 +970,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Search digital and physical library materials in one catalog.</p>
                   <div className="catalog-heading-actions mt-4">
                   <button type="button" onClick={() => { setContributionStatus(null); setContributionOpen(true) }} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><BookIcon /><span>Contribute material</span></button>
+                  <button type="button" onClick={() => { setScannerError(''); setScannerOpen(true) }} className="secondary-action inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"><span aria-hidden="true">▣</span><span>Scan book QR</span></button>
                   <button type="button" className="catalog-filter-toggle catalog-filter-toggle-heading" onClick={() => setCatalogControlsOpen((current) => !current)} aria-expanded={catalogControlsOpen} aria-controls="catalog-controls"><FilterIcon /><span>{catalogControlsOpen ? 'Hide filters' : 'Show filters'}</span></button>
                   </div>
                 </div>
@@ -990,6 +1085,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? 'Paid access temporarily unavailable' : book.access_mode === 'points' ? 'Automatic points access' : 'Automatic access'}</p>
                         </div>
                       </div>
+                      {book.catalog_type !== 'digital' ? <div className="mt-4 rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm dark:border-forest-700 dark:bg-forest-800/60"><div className="flex flex-wrap gap-x-4 gap-y-1"><span><strong>{book.physical_available_copies ?? 0}</strong> available</span><span><strong>{book.physical_borrowed_copies ?? 0}</strong> borrowed</span><span><strong>{book.physical_registered_copies ?? 0}</strong> total copies</span></div>{book.physical_locations?.length ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">Location: {book.physical_locations.join(', ')}</p> : <p className="mt-2 text-xs text-slate-500 dark:text-slate-300">Location has not been assigned yet.</p>}</div> : null}
 
                       <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                         <span>{book.catalog_type === 'physical' ? 'Library copy · availability shown in physical collection' : 'Online resource · no stock limit'}</span>
@@ -1272,6 +1368,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           </section>
         </div>
       ) : null}
+      {scannerOpen ? (
+        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-modal-title">
+            <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical collection</p><h2 id="scanner-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Scan book QR</h2></div><button type="button" className="notification-modal-close" onClick={() => setScannerOpen(false)} aria-label="Close QR scanner">×</button></div>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Point your camera at a Smart Lib copy sticker. The matching book will open in the catalog.</p>
+            <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" muted playsInline />
+            {scannerError ? <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{scannerError}</p> : null}
+          </section>
+        </div>
+      ) : null}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       <WalletModal open={walletOpen} balance={profile?.points_balance ?? 0} onClose={() => setWalletOpen(false)} onOpenDetails={() => router.push('/points')} />
       <ActionModal
@@ -1347,11 +1453,18 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library activity</p><h2 id="history-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Reading history</h2></div><button type="button" className="notification-modal-close" onClick={() => setHistoryOpen(false)} aria-label="Close reading history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Returned, expired, revoked, and rejected digital access.</p><div className="modal-record-list">{readingHistory.length > 0 ? readingHistory.map((event) => <div key={event.id} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{event.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{event.action} · {event.date}</p></div></div>) : <div className="modal-empty-state">No reading history to show yet.</div>}</div></section>
         </div>
       ) : null}
+      {physicalReturnPickerOpen ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReturnPickerOpen(false) }}>
+        <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-return-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-return-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Request a return</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalReturnPickerOpen(false)} aria-label="Close return request">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Choose the book you are bringing to the library desk. A librarian will inspect and complete the return.</p><div className="modal-record-list">{physicalLoans.filter((loan) => loan.status === 'checked_out').map((loan) => <div key={`physical-return-${loan.id}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{loan.due_date ? `Due ${new Date(loan.due_date).toLocaleDateString()}` : 'Active loan'}{loan.receipt_number ? ` · Receipt ${loan.receipt_number}` : ''}</p></div><button type="button" disabled={physicalReturnActionId === loan.id} onClick={() => { void requestPhysicalReturn(loan.id); setPhysicalReturnPickerOpen(false) }} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{physicalReturnActionId === loan.id ? 'Requesting...' : 'Request return'}</button></div>)}{physicalLoans.filter((loan) => loan.status === 'checked_out').length === 0 ? <div className="modal-empty-state">No active physical loans need a return request.</div> : null}</div></section>
+      </div> : null}
       {physicalHistoryOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalHistoryOpen(false) }}>
-          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical loans and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track your request, payment, checkout, due date, and receipt.</p><div className="modal-record-list">{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div></div>)}{physicalLoans.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track your request, payment, checkout, due date, and receipt.</p><div className="modal-record-list">{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
         </div>
       ) : null}
+      {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>
+        <section className="notification-modal receipt-printable" role="dialog" aria-modal="true" aria-labelledby="physical-receipt-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library receipt</p><h2 id="physical-receipt-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical-book receipt</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalReceipt(null)} aria-label="Close physical receipt">×</button></div><div className="mt-5 grid gap-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 text-sm dark:border-forest-700 dark:bg-forest-900/60"><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Receipt number</span><strong className="font-mono text-pine-700 dark:text-pine-200">{physicalReceipt.receipt_number}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Book</span><strong className="text-right text-slate-900 dark:text-slate-100">{physicalReceipt.title}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Amount paid</span><strong>₱{Number(physicalReceipt.fee_amount).toFixed(2)}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Payment</span><span className="capitalize">{physicalReceipt.payment_method} · {physicalReceipt.payment_status.replace('_', ' ')}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Checked out</span><span>{physicalReceipt.checked_out_at ? new Date(physicalReceipt.checked_out_at).toLocaleString() : 'Pending checkout'}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Return date</span><span>{physicalReceipt.due_date ? new Date(physicalReceipt.due_date).toLocaleDateString() : 'Not assigned'}</span></div>{physicalReceipt.transaction_reference ? <div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Transaction reference</span><span className="break-all text-right">{physicalReceipt.transaction_reference}</span></div> : null}</div><button type="button" onClick={() => window.print()} className="pine-action mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold">Print receipt</button></section>
+      </div> : null}
+      {physicalHistoryOpen ? <div className="sr-only" aria-live="polite">{physicalLoans.filter((loan) => loan.status === 'return_pending').length} return requests are waiting for librarian confirmation.</div> : null}
       {notificationsOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNotificationsOpen(false) }}>
           <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">

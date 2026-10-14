@@ -4,6 +4,7 @@ import { EBOOKS_BUCKET, MAX_FILE_SIZE } from '@/utils/storage'
 import { canDeleteGoogleDriveFile, deleteGoogleDriveFile, isGoogleDriveConfigured, uploadGoogleDrivePdf } from '@/utils/googleDrive'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
+import { isStaffRole } from '@/utils/roles'
 
 export const runtime = 'nodejs'
 
@@ -67,7 +68,7 @@ export async function DELETE(request: Request) {
   if (!user || !fileId || !isGoogleDriveConfigured()) return NextResponse.json({ error: 'Invalid cleanup request.' }, { status: 400 })
   try {
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
-    if (!(await canDeleteGoogleDriveFile(fileId, user.id, profile?.role === 'admin'))) return NextResponse.json({ error: 'Not allowed.' }, { status: 403 })
+    if (!(await canDeleteGoogleDriveFile(fileId, user.id, isStaffRole(profile?.role)))) return NextResponse.json({ error: 'Not allowed.' }, { status: 403 })
     await deleteGoogleDriveFile(fileId)
     return NextResponse.json({ ok: true })
   } catch { return NextResponse.json({ error: 'Unable to clean up uploaded file.' }, { status: 500 }) }

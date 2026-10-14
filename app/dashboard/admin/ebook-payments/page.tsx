@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import { EbookPaymentsSkeleton } from '@/components/skeletons/AdminDashboardSkeleton'
+import { isStaffRole } from '@/utils/roles'
 
 type Purchase = {
   id: number
@@ -38,7 +39,7 @@ export default function EbookPaymentsPage() {
     if (!user) { router.replace('/login'); return }
     const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
     if (profileError) { setError(profileError.message); setLoading(false); return }
-    if (profile?.role !== 'admin') { router.replace('/dashboard'); return }
+    if (!isStaffRole(profile?.role)) { router.replace('/dashboard'); return }
 
     const { data, error: purchasesError } = await supabase.from('ebook_purchase_requests')
       .select('id,student_id,book_id,fee_amount,transaction_reference,payment_proof_path,status,receipt_number,requested_at')
@@ -136,7 +137,7 @@ export default function EbookPaymentsPage() {
       </section>
       <section className="surface-card p-6">
         <h2 className="text-xl font-semibold">Payment history</h2>
-        <div className="mt-4 space-y-2">{purchases.filter((purchase) => purchase.status !== 'pending').map((purchase) => <article key={purchase.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-paper-300 p-4 text-sm dark:border-forest-700"><div><strong>{books.find((item) => item.id === purchase.book_id)?.title ?? `Book #${purchase.book_id}`}</strong><p className="mt-1 text-xs text-slate-500">{members.find((item) => item.id === purchase.student_id)?.email ?? purchase.student_id} · {purchase.receipt_number ?? 'No receipt issued'}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize dark:bg-slate-800">{purchase.status}</span></article>)}</div>
+        <div className="mt-4 space-y-2">{purchases.filter((purchase) => purchase.status !== 'pending').map((purchase) => { const member = members.find((item) => item.id === purchase.student_id); return <article key={purchase.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-paper-300 p-4 text-sm dark:border-forest-700"><div><strong>{books.find((item) => item.id === purchase.book_id)?.title ?? `Book #${purchase.book_id}`}</strong><p className="mt-1 text-xs text-slate-500">{member?.full_name?.trim() || 'Unknown member'} · {purchase.receipt_number ?? 'No receipt issued'}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize dark:bg-slate-800">{purchase.status}</span></article> })}</div>
         {purchases.every((purchase) => purchase.status === 'pending') ? <p className="mt-4 text-sm text-slate-500">No completed payment decisions yet.</p> : null}
       </section>
     </div>

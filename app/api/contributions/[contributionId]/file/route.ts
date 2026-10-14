@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
 import { apiError } from '@/utils/api'
+import { isStaffRole } from '@/utils/roles'
 
 export const runtime = 'nodejs'
 
@@ -28,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   if (profileError) return apiError('Unable to verify your library role.', 500, profileError)
   if (contributionError) return apiError('Unable to retrieve this contribution.', 500, contributionError)
   if (!contribution) return NextResponse.json({ error: 'Contribution not found.' }, { status: 404 })
-  if (profile?.role !== 'admin' && contribution.user_id !== user.id) {
+  if (!isStaffRole(profile?.role) && contribution.user_id !== user.id) {
     return NextResponse.json({ error: 'You are not allowed to open this contribution.' }, { status: 403 })
   }
 

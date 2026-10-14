@@ -6,10 +6,11 @@ import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 import { Skeleton } from '@/components/skeletons'
 
-function normalizeRole(value: unknown): 'admin' | 'student' | 'faculty' | null {
+function normalizeRole(value: unknown): 'admin' | 'librarian' | 'student' | 'faculty' | null {
   const raw = String(value ?? '').trim().toLowerCase()
   if (!raw) return null
   if (raw === 'admin' || raw === 'administrator') return 'admin'
+  if (raw === 'librarian') return 'librarian'
   if (raw === 'student' || raw === 'learner') return 'student'
   if (raw === 'faculty') return 'faculty'
   return null
@@ -47,7 +48,7 @@ export default function DashboardPage() {
         }
 
         const section = window.location.hash
-        const dashboardPath = role === 'admin' ? '/dashboard/admin' : role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student'
+        const dashboardPath = role === 'admin' || role === 'librarian' ? '/dashboard/admin' : role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student'
         router.replace(`${dashboardPath}${section}`)
       } catch (error) {
         if (active) {

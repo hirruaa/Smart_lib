@@ -2,7 +2,7 @@
 
 **Version:** 2.0
 **Status:** Product baseline and release requirements
-**Last updated:** 2026-10-09
+**Last updated:** 2026-10-14
 **Product owner:** Smart Lib project team
 **Audience:** School stakeholders, library staff, product/design, and engineering
 
@@ -72,8 +72,8 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 | P0 | Automatic eligible free/points digital access; protected PDF authorization | Implemented in source/schema; verify database functions, grants, and storage privacy in staging |
 | P0 | Error reporting, operational monitoring, backup/restore, and scheduled reminder setup | Not fully verified/configured by the QA pass; release gate |
 | P1 | Student and faculty dashboards, profile details, member self-service | Present; profile role and data policies require validation |
-| P1 | Digital catalog, access requests, reader, reading progress, notes, highlights, and drawings | Present; verify end-to-end with protected files and test accounts |
-| P1 | Physical catalog, copy records, printable QR labels, requests, payment evidence, FIFO waitlist, receipts, return/lost-item handling | Present in source/schema; public privacy, job scheduling, and full circulation test required |
+| P1 | Unified digital/e-book catalog with PDF attachment management, access requests, reader, reading progress, notes, highlights, and drawings | Present; the admin workflow uses one digital catalog with attach/replace PDF actions; verify end-to-end with protected files and test accounts |
+| P1 | Excel-style physical catalog, copy records, printable QR labels, requests, payment evidence, notification waitlist, receipts, return/lost-item handling | Present in source/schema; public privacy, job scheduling, realtime delivery, and full circulation test required |
 | P1 | Contribution upload, revision, AI screening, administrator decision, and post-approval points | Present in source; AI remains advisory and points are tied to human approval |
 | P1 | Member points wallet, transaction history, recognition and achievement surfaces | Present in source/schema; confirm policy, transaction integrity, and optional-table behavior |
 | P1 | Admin member management, academic rank/course lists, library operations, dashboard access-grant quick action, and audit surfaces | Present in source; validate staff-only authorization and data integrity |
@@ -115,13 +115,35 @@ Paid e-book checkout is paused. A user-uploaded receipt, OCR extraction, or type
 ### 5.4 Physical book discovery and circulation
 
 1. A visitor/member browses the physical catalog and sees title details and aggregate availability, not borrower identities.
-2. A member chooses an available loan option, requests a copy, and submits the configured payment details/evidence if required.
-3. The request is pending, not checked out. A librarian validates member eligibility, copy availability, payment status, and loan terms.
-4. The librarian confirms checkout at handover. The system associates one copy with one active loan and creates a due date and receipt.
-5. The member can view request/loan status and receipt. When no copy is available, the member can join the FIFO waitlist.
-6. When a copy is returned, at most one eligible member receives an expiring offer; expiry or decline advances the queue.
-7. The librarian records return, damage, loss, or a justified resolution. Fines or replacement charges require an approved school policy and must not be invented or silently charged.
-8. Each physical copy has an individual identifier and QR token. Scanning identifies a copy or public availability, but does not itself authorize checkout or reveal a borrower.
+2. A member can open a title from the catalog, scan its QR code with the in-app scanner, or follow a QR URL. The system shows the title, copy status, and structured location such as “Science section · Shelf 2 · Row 3.”
+3. A member may read the item in the library without creating a request. This is an informational/read-in-library use case, not a circulation record.
+4. If borrowing, the member chooses an available loan option and submits the configured payment details/evidence if required. The request is pending and does not reserve or lock a copy.
+5. The librarian sees new requests through the admin circulation view and validates member eligibility, payment status, loan terms, and current availability.
+6. At confirmation, the database atomically selects and locks an available copy, assigns it to the request, marks it borrowed, and creates the due date and receipt. If no copy is available, confirmation fails safely and the request remains pending.
+7. The completed checkout is written to physical loan history. The member can view request/loan status and receipt.
+8. When no copy is available, the member may join the FIFO waitlist. A waitlist entry is a notification queue; it does not reserve a copy. When availability changes, the next eligible member is notified and must submit a normal pending request.
+9. The librarian records return, damage, loss, or a justified resolution. Fines or replacement charges require an approved school policy and must not be invented or silently charged.
+10. Each physical copy has an individual identifier, QR token, circulation status, and structured location. Scanning identifies a copy or safe public information, but does not authorize checkout or reveal a borrower.
+
+The librarian queue is organized around operational states rather than a single generic approval list:
+
+- **Pending request:** the member has submitted a borrowing request and no copy has been assigned.
+- **Awaiting payment:** payment evidence or payment verification is still incomplete.
+- **Ready for checkout:** payment is verified and staff can confirm handover if a copy is available.
+- **Checked out:** a copy has been assigned, the due date and receipt exist, and the loan is active.
+- **Overdue:** an active loan has passed its due date and requires follow-up.
+- **Return pending:** the member has begun or requested a return, but staff has not completed the return record.
+
+Read-in-library use remains a separate discovery action. It does not create a physical request, assign a copy, change availability, or enter loan history.
+
+### 5.5 Unified digital catalog and PDF management
+
+1. Digital titles and their optional PDF files are managed through one admin catalog; “PDF materials” is not a second catalog or duplicate book list.
+2. Administrators can search, filter, sort, paginate, create, edit, delete, and inspect digital/hybrid titles from the catalog.
+3. Each catalog row can show title, author, ISBN, category, format, access mode, access duration, PDF status, and available actions.
+4. Administrators can attach or replace a protected PDF on an existing digital/hybrid title without creating a duplicate title record.
+5. Students see only eligible digital/hybrid resources in the digital catalog; physical-only titles are excluded from digital/e-book lists.
+6. A PDF file is readable only through the applicable digital access/grant rules. File attachment does not itself grant access.
 
 ### 5.5 Contribution review and recognition
 
@@ -134,11 +156,11 @@ Paid e-book checkout is paused. A user-uploaded receipt, OCR extraction, or type
 
 ### 5.6 Administrator operations
 
-Administrators sign in and manage member profiles/roles, faculty rank and course catalogs, digital records/materials, physical titles/copies/QR labels, borrow requests, contributions, payment evidence, access grants and points through dashboard quick actions, and operational reports. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
+Administrators sign in and manage member profiles/roles, faculty rank and course catalogs, the unified digital/PDF catalog, physical titles/copies/QR labels, borrow requests, contributions, payment evidence, access grants and points through dashboard quick actions, and operational reports. Physical requests and checked-out copies are presented as compact sections/cards with details available in modals. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
 
 ### 5.7 Notifications and reminders
 
-Members see in-app notifications for relevant account and circulation events. A scheduled process must invoke the physical reminder/offer expiry workflow at its configured interval. An email queue alone is not an email delivery service; email notifications are not considered delivered until a worker/provider reports success.
+Members see in-app notifications for relevant account and circulation events. A scheduled process must expire stale pending physical requests, advance waitlist notifications where applicable, and create due-soon/overdue reminders at its configured interval. An email queue alone is not an email delivery service; email notifications are not considered delivered until a worker/provider reports success.
 
 ## 6. Functional requirements
 
@@ -153,8 +175,9 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-005 | P1 | Members shall view and update only permitted profile fields; role and privileged academic assignments shall not be self-editable. | Implemented in parts; verify all paths |
 | FR-006 | P1 | Member profiles shall support full name, school, department, student course/program and year; faculty may have an academic rank and multiple assigned courses. | Implemented in source/schema; check data policy |
 | FR-007 | P1 | Administrators shall be able to manage available faculty ranks and academic courses and edit eligible member profiles. | Implemented in source/schema |
-| FR-008 | P1 | Members shall browse and search the digital library and view each resource's access mode and duration terms. | Implemented; verify catalog/schema alignment |
-| FR-009 | P1 | Administrators shall create and maintain digital resource metadata and protected file references. | Implemented; verify file access and storage rules |
+| FR-008 | P1 | Members shall browse and search the digital library and view each resource's access mode and duration terms. Physical-only titles shall not appear in the digital/e-book catalog. | Implemented; verify catalog/schema alignment |
+| FR-009 | P1 | Administrators shall manage digital/e-book metadata and protected PDF references in one searchable catalog; attaching or replacing a PDF shall update the existing title rather than create a duplicate catalog entry. | Implemented; verify file access and storage rules |
+| FR-009A | P1 | The admin digital catalog shall provide an Excel-style table with search, filtering, sorting, pagination, format/PDF status, and per-row create/edit/delete/read/attach-PDF actions. | Implemented in source; verify usability and authorization |
 | FR-010 | P0 | A valid free digital-access request shall grant access without administrator approval. | Implemented in source/schema; staging test required |
 | FR-011 | P0 | A valid points-based digital-access request shall atomically verify and deduct the required points and create access; failure shall not partially charge the member. | Implemented in source/schema; concurrency test required |
 | FR-012 | P0 | Eligible free/points digital access shall not depend on physical stock or a librarian decision. | Implemented as product flow |
@@ -164,15 +187,18 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-016 | P1 | The reader shall support reading progress and member-owned notes, highlights, and drawings without exposing another member's study data. | Implemented in source/schema |
 | FR-017 | P0 | Paid digital checkout shall remain disabled until payment is confirmed by a trusted provider integration; uploaded evidence or AI extraction alone shall never grant access. | Paused/required guardrail |
 | FR-018 | P2 | After provider integration, verified paid digital payment shall create a single access grant and receipt automatically; duplicate webhook delivery shall not duplicate grants or charges. | Future |
-| FR-019 | P1 | Public physical-catalog views shall disclose title metadata and aggregate availability only, with no member, request, payment, or private QR-token data. | Implemented via public projection; privacy-test required |
-| FR-020 | P1 | Administrators shall create/update physical titles and register individual copies with distinct copy codes and QR tokens. | Implemented in source/schema |
-| FR-021 | P1 | A member shall request a physical copy or join the waitlist when no eligible copy is available. | Implemented in source/schema |
-| FR-022 | P0 | Checkout shall require authorized staff confirmation and shall atomically associate no more than one active loan with a copy. | Implemented in source/schema; concurrency-test required |
-| FR-023 | P1 | Physical payment evidence shall remain pending until verified by authorized staff; AI/OCR extraction may assist entry but shall not confirm payment. | Implemented in source; verify policy |
+| FR-019 | P1 | Public physical-catalog views shall disclose title metadata, aggregate availability, and safe structured location data only, with no member, request, payment, or private QR-token data. | Implemented via public projection; privacy-test required |
+| FR-020 | P1 | Administrators shall manage an Excel-style physical book catalog with searchable/filterable/sortable/paginated book-level fields including title, author, ISBN, category, format, total/available/borrowed counts, and location summary. | Implemented in source/schema; verify usability and authorization |
+| FR-020A | P1 | Administrators shall create/update physical titles, register individual copies with distinct copy codes and QR tokens, view copies, add copies, edit copy locations, and manage physical loan fees/options. | Implemented in source/schema |
+| FR-021 | P1 | A member shall open a physical title from the web catalog or QR scan, view copy status/location, choose read-in-library use without a request, submit a pending borrow request, or join the waitlist when no copy is available. | Implemented in source/schema; verify QR/browser coverage |
+| FR-021A | P1 | The system shall support an in-app QR scanner where the browser provides `BarcodeDetector`, while retaining safe direct QR-link resolution as a fallback. | Implemented in source; browser compatibility test required |
+| FR-022 | P0 | Checkout shall require authorized staff confirmation and shall atomically select and associate one currently available copy with the request only at confirmation; a pending request shall not reserve or lock a copy. | Implemented in source/schema; concurrency-test required |
+| FR-023 | P1 | Physical payment evidence shall remain pending until verified by authorized staff; AI/OCR extraction may assist entry but shall not confirm payment. The librarian queue shall distinguish pending, awaiting-payment, ready-for-checkout, checked-out, overdue, and return-pending work. | Partially implemented; verify queue states and payment policy |
 | FR-024 | P1 | The system shall issue a receipt and due date after successful physical checkout and record return, renewal where allowed, and closure outcomes. | Implemented in source/schema |
-| FR-025 | P1 | Physical waitlist offers shall be FIFO, exclusive to one eligible member/copy at a time, and expire under a configured rule. | Implemented in schema; scheduled processing required |
+| FR-025 | P1 | The physical waitlist shall be FIFO and notify the next eligible member when availability changes; it shall not reserve a copy before staff checkout, and scheduled processing shall clean up expired pending requests/offers where applicable. | Implemented in schema; scheduled processing required |
 | FR-026 | P1 | Administrators shall record physical-copy damage/loss and resolve the associated hold through an explicit staff action. | Implemented in source/schema |
-| FR-027 | P1 | QR scanning shall resolve the identified physical copy or safe public information without granting checkout rights or revealing borrower identity. | Implemented in source/schema |
+| FR-027 | P1 | QR scanning shall resolve the identified physical copy or safe public information, show title/status/location, and never grant checkout rights or reveal borrower identity. | Implemented in source/schema |
+| FR-027A | P1 | When an authorized librarian confirms checkout, the system shall create/update detailed physical loan history with request, student, book, copy, payment, due date, receipt, return condition, and status fields. | Implemented in source/schema; history trigger and live-data test required |
 | FR-028 | P2 | Physical title registration shall support optional table-of-contents text; image capture/OCR assistance shall be added only with human review and privacy controls. | Proposed; not currently delivered |
 | FR-029 | P1 | Members shall submit new academic contributions and revise eligible submissions, receiving a visible status and review feedback. | Implemented in source/schema |
 | FR-030 | P1 | AI contribution screening shall provide advisory relevance/usefulness/concern signals to reviewers and shall not make the final approval decision. | Implemented in source; verify Gemini config and failure path |
@@ -180,10 +206,11 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-032 | P1 | Members shall view their point balance and transaction history; mutations shall be auditable and resistant to duplicate awards/deductions. | Implemented in source/schema; verify integrity |
 | FR-033 | P2 | Administrators shall configure contribution/reward point policies and any bonus award; published policies shall be clear to members. | Partially supported; configuration policy not complete |
 | FR-035 | P1 | Members shall view and update in-app notifications; unauthenticated requests shall receive an authentication response rather than an internal-server error. | API exists; unauthenticated path failed QA |
-| FR-036 | P0 | Scheduled reminders and expiring physical offers shall be processed at the configured interval with authenticated, observable job execution. | Endpoint/schema present; scheduler not verified |
+| FR-036 | P0 | Scheduled physical maintenance shall expire stale pending requests, advance waitlist notifications where applicable, and create reminders at the configured interval with authenticated, observable job execution. | Endpoint/schema present; scheduler not verified |
 | FR-037 | P1 | The assistant shall answer supported catalog, policy, or member-loan questions using only data the caller is authorized to access. | Implemented foundation; response fidelity and scope require testing |
 | FR-038 | P1 | Assistant sessions and messages shall be private to their owner, with authorized session deletion. | Implemented in source/schema; RLS test required |
-| FR-039 | P1 | Administrators shall see actionable metrics and manage requests, members, resources, contributions, access grants, points, and audit information permitted by their role. | Implemented in source; verify each surface |
+| FR-039 | P1 | Administrators shall see actionable metrics and manage requests, members, resources, contributions, access grants, points, and audit information permitted by their role. Physical request and copy changes shall update the circulation view through Supabase Realtime when the deployment publication is enabled. The physical queue shall prioritize pending operational work and expose payment, checkout, overdue, and return states. | Partially implemented; verify each surface, queue state, and realtime delivery |
+| FR-039A | P1 | Admin request pages shall provide fast search, status filtering, and pagination. E-book requests shall be searchable by member, book, status, notes, and request ID; physical requests shall be searchable by member, book, payment details, and request ID, with pending/waitlisted filters. | Implemented in source; verify usability with larger request sets |
 | FR-040 | P0 | Errors, empty states, loading states, and validation failures shall be understandable and shall not present a failed operation as successful. | Partially implemented; test and fix before launch |
 | FR-041 | P1 | Users shall be able to reach privacy, terms, cookie, authentication recovery, and branded error/not-found experiences. | Pages present; deployed links/configuration require verification |
 
@@ -198,7 +225,7 @@ The system's core entities and responsibilities are:
 | Book | Digital or physical/hybrid title metadata; digital entitlement is independent of copy inventory |
 | Physical book copy | One individually identified item, QR token, location/status, and due-date state |
 | Digital borrow request / access grant | Time-limited or other eligible digital entitlement, points paid, status, and expiry |
-| Physical request / waitlist entry | Member's request, loan terms/payment state, offer, checkout/return, due date, and receipt |
+| Physical request / waitlist entry | Member's pending request, loan terms/payment state, optional checkout assignment, checkout/return, due date, receipt, or FIFO notification-queue position |
 | Contribution | Member-submitted academic material, private file reference, AI advisory result, review status/feedback, and points outcome |
 | Point transaction, recognition award, reward, achievement | Immutable/accountable point ledger and member reward/recognition state |
 | Study note, highlight, drawing, reading progress | Member-owned study artifacts associated with a digital resource |
@@ -213,6 +240,8 @@ Data retention periods, account deletion rules, consent language, and school-spe
 - Provide clear role-specific navigation and preserve context when returning from a detail or workflow screen.
 - Show skeleton/loading states only while loading; display a distinct error state when data cannot be retrieved.
 - Explain access price/points, access duration, physical loan period/fee, waitlist status, due date, and next steps before the member commits.
+- In catalog tables, keep book-level availability separate from copy-level status. Make title, author, ISBN, category, format, total/available/borrowed counts, and location easy to scan on desktop and usable on mobile.
+- Keep high-detail admin operations such as copy lists, QR status, location editing, request details, and checkout confirmation inside focused modals without duplicating the catalog or request data.
 - Distinguish “requested,” “payment submitted,” “payment verified,” “checked out,” “returned,” and “access granted”; never use ambiguous “approved” labels where they imply something else.
 - Give each destructive or money-related action an explicit confirmation, actor, result, and recovery/support path.
 - Ensure keyboard operation, visible focus, form labels, meaningful headings, status announcements, usable touch targets, and readable color contrast. Target WCAG 2.2 AA review.
@@ -227,7 +256,7 @@ Targets below are release objectives, not measured claims. Record actual test ev
 | ID | Area | Requirement / target |
 |---|---|---|
 | NFR-001 | Availability | Target at least 99.5% monthly service availability after launch, excluding announced maintenance, subject to hosting/database SLAs and a monitored incident response plan. |
-| NFR-002 | Performance | On a typical school connection, primary catalog content should be usable within 2 seconds at p95; catalog search results should return within 1 second at p95 for the agreed initial collection size. Measure from the deployed environment. |
+| NFR-002 | Performance | On a typical school connection, primary catalog content should be usable within 2 seconds at p95; catalog search/filter/sort results should return within 1 second at p95 for the agreed initial collection size; realtime circulation updates should normally appear without a manual refresh. Measure from the deployed environment. |
 | NFR-003 | Integrity | Points deduction/grant, physical copy allocation, payment decision, checkout, return, and receipt issuance must be transactional/idempotent where applicable. |
 | NFR-004 | Security | Enforce server-side authentication and authorization, row-level data ownership, least privilege, input validation, private file storage, and protected secret handling. |
 | NFR-005 | Privacy | Public endpoints expose only approved catalog fields and aggregate counts. Minimize personal data sent to third-party AI services and document purpose, retention, and consent. |
@@ -273,7 +302,7 @@ The current application is a Next.js web application using React/TypeScript and 
 
 - At least 95% of test members complete registration/sign-in and reach the correct role workspace without staff intervention.
 - At least 95% of eligible points-based access tests either grant access and debit the exact amount once, or fail without a debit.
-- 100% of physical test checkouts require authorized staff confirmation and associate exactly one available copy.
+- 100% of physical test checkouts require authorized staff confirmation, leave pending requests unassigned, and associate exactly one available copy only at successful checkout.
 - 100% of public physical-catalog test responses omit borrower identity, private requests, payment evidence, and private QR tokens.
 - At least 95% of contribution submissions can be followed from submission through decision, feedback, and correct points outcome.
 - At least 95% of representative members complete core tasks on mobile without horizontal overflow or blocked controls.
@@ -287,7 +316,7 @@ Production launch is eligible for sign-off only when:
 - Authentication, password recovery, role routing, and unauthorized requests have automated coverage.
 - Student, faculty, and admin permissions pass positive and negative access-control tests.
 - Digital free/points grant, point deduction, protected file access, renew/return, and duplicate/concurrent request behavior pass.
-- Physical request, payment verification, checkout, receipt, return, lost/damaged resolution, FIFO offer/expiry, and QR lookup pass with isolated test data.
+- Physical request, payment verification, checkout, receipt, return, lost/damaged resolution, FIFO waitlist notification, maintenance expiry, and QR lookup pass with isolated test data.
 - Contribution upload, AI-unavailable fallback, human decision, resubmission, and post-approval points pass.
 - No critical/high security finding remains unresolved; secrets, RLS, storage privacy, and API error handling have been reviewed.
 - The Supabase production schema is reconciled with the exact release version; migration and rollback/restore are rehearsed in staging.
@@ -326,6 +355,45 @@ Full evidence is recorded in [`runtime-validation-report.md`](./runtime-validati
 - Operate the public-safe physical catalog and staff-confirmed physical circulation.
 - Offer automatic free/points digital access and protected reading.
 - Enable member study tools, contributions with human review, and points history.
+
+#### Physical circulation delivery plan
+
+The physical workflow is a focused Phase 1 delivery. Its existing copy, location, request, checkout, history, and realtime foundations should be retained; the work below reconciles their contracts and makes the member and librarian journeys consistent.
+
+**Step 1 — Reconcile the circulation contract (P0 gate)**
+
+- Treat a pending physical request as an intent to borrow, not a reservation. It has no assigned copy and does not change any copy's availability.
+- Reconcile the student UI, RPCs, consolidated schema, migrations, and database tests with checkout-time copy assignment. Remove user-facing “reserve/reserved copy” language and obsolete reserved-copy expectations where they contradict the active workflow.
+- Keep waitlist membership as a FIFO notification queue. A notification means availability may have changed; it does not guarantee or hold a copy. The member submits a normal request, and staff confirms checkout against current inventory.
+- Preserve the existing rule that only authorized staff confirmation atomically assigns and marks a copy borrowed.
+
+**Acceptance checks:** a pending request has `copy_id = null`; creating or cancelling it does not alter an available copy; a second member can still submit a request while stock is available; concurrent staff checkouts cannot assign the same copy; a checkout with no available copy fails without falsely completing the request.
+
+**Step 2 — Make physical discovery location-first (P1)**
+
+- In the member catalog and QR-resolved title view, make aggregate availability and structured location easy to scan: section, shelf, row, and position, with the legacy location shown only as a fallback.
+- For a scanned copy, identify its title and copy status. If it is unavailable, show other currently available locations when known and explain that a scan does not reserve or authorize handover.
+- Keep read-in-library as an immediate informational path: show the title/location and let the visitor proceed without creating a borrow request, waitlist entry, payment, or loan-history row.
+- Keep borrowing and joining the availability queue as distinct, explicit actions. Explain that a pending request does not hold a copy and that staff completes checkout at the desk.
+
+**Acceptance checks:** public/catalog data reveals no borrower identity, private request/payment fields, or QR token; location labels handle missing metadata without displaying blank separators; read-in-library creates no circulation mutation; QR lookup works for available and unavailable copies on supported browsers and by direct link.
+
+**Step 3 — Shape the librarian desk workflow (P1)**
+
+- Keep the live pending-request queue and checked-out/return view, but present each request's member, title, request time, payment state/evidence, requested loan term, and current aggregate availability together.
+- Make the primary staff action “Confirm checkout” (or payment verification plus checkout where applicable); state clearly that the database chooses an available copy at confirmation time.
+- If inventory changed before confirmation, keep the request pending, show a recoverable explanation, and do not mark payment/checkout complete or issue a receipt.
+- On success, show the assigned copy, due date, receipt, and borrower notification. On return, retain the existing condition/lost-item resolution flow and loan-history ledger.
+
+**Acceptance checks:** request and copy changes refresh the authorized staff view through Supabase Realtime; checkout records exactly one copy and one history entry; return updates the same history record and copy condition; failures do not produce success UI or duplicate receipts/history.
+
+**Step 4 — Verify the complete physical journey (P0 release gate)**
+
+- Update database workflow tests for checkout-time allocation, cancellation, waitlist notification semantics, concurrent requests/checkouts, payment verification, return conditions, lost-item holds, and loan-history synchronization.
+- Add or extend browser tests for guest QR sign-in gating, member catalog location/status, read-in-library non-mutation, pending borrow request wording/status, and librarian queue updates where the test environment supports realtime.
+- Run the focused database and browser checks against an isolated staging project; verify required migrations, realtime publication membership, RLS, and public-catalog privacy against the deployed schema before release.
+
+**Exit criteria:** the PRD's physical circulation requirements pass with evidence from both database-level behavior tests and browser-level journey tests. A UI-only pass is insufficient for copy allocation, privacy, payment, or history guarantees.
 
 ### Phase 2 — Trusted payment and communication (P2)
 

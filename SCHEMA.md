@@ -60,7 +60,8 @@ Workflow:
 - The physical catalog displays each registered title’s cover/details and live available-copy count, so visitors and signed-in members can check availability before visiting the library. A physical title can be reached from the public home/catalog link or the student dashboard’s “Physical books” link.
 - Available titles can be requested for a configured loan period. Cash is recorded by the librarian at checkout; GCash requests include an uploaded receipt image and transaction reference for librarian verification.
 - Only the librarian/admin checkout action marks a copy borrowed and marks the payment paid. It issues a receipt number; borrowers can view and print the digital receipt from their account.
-- Members can join a FIFO waitlist for titles with no available copies. On return, cancellation, rejection, reservation expiry, or copy addition, the database reserves an eligible copy for only the next member for 24 hours. The member accepts the offer by selecting an active loan option and submitting the normal request; otherwise the scheduled job expires the offer and advances the queue. Copy assignment and offer creation occur transactionally.
+- Members can join a FIFO notification queue when no copy is available. A waitlist notification does not reserve a copy. The member must submit a normal borrow request, and a copy is assigned only when library staff confirms checkout. If availability changes before checkout, the request remains pending and staff must retry after checking inventory.
+- Pending physical requests have no `copy_id` and do not change copy availability. At checkout, the database selects and locks one available copy transactionally; concurrent checkouts cannot assign the same copy.
 - Overdue and lost items prevent new physical requests until resolved. This is a library-only hold and does not affect enrollment, grades, or transcripts.
 - GCash references may be entered manually or optionally extracted from a receipt image with browser-side OCR. OCR is only a convenience and does not verify payment. Uploaded proof is private and is only available to its owner and library administrators.
 - A scheduler should call `/api/cron/physical-reminders` at least every 15 minutes with `Authorization: Bearer <CRON_SECRET>` to create due-soon/overdue in-app notifications. Configure `CRON_SECRET` and `SUPABASE_SERVICE_ROLE_KEY` only in the server environment. Actual email sending requires a separate worker/provider; the endpoint does not claim an email has been sent.
@@ -104,7 +105,7 @@ Main catalog table.
 
 Notes:
 - Admins create books from the admin dashboard.
-- Student dashboard queries books and shows `available_copies`.
+- The student dashboard queries book metadata. Physical availability and locations come from the public physical-catalog projection, not the legacy `books.available_copies` field.
 - `pdf_url` is used by `/reader/[bookId]`.
 - `search_vector` is used for the recommendation / full-text search flow.
 
@@ -116,7 +117,7 @@ Represents a member's digital access request.
 | `id` | `bigint` | Primary key |
 | `student_id` | `uuid` | References `profiles.id` |
 | `book_id` | `bigint` | References `books.id` |
-| `status` | `text` | `approved` immediately for free/point-eligible access, or `pending` for admin-reviewed requests |
+| `status` | `text` | `approved` immediately for eligible free/points access; `pending` is retained for legacy records and is not a routine approval workflow |
 | `request_date` | `timestamptz` | Created when student requests |
 | `due_date` | `timestamptz` | Set when digital access is unlocked; reader access expires automatically at this time |
 | `returned_date` | `timestamptz` | Historical closure field; members do not manually return digital loans |
@@ -130,9 +131,12 @@ Behavior:
 - The selected lending duration sets the due date; a confirmation appears in the member notification list.
 
 ### `public.digital_book_loan_history`
-One audit row per digital borrowing request. It preserves the request timestamp, borrowed/approved timestamp, due date, return timestamp, renewal count, points paid, and final status for administrator review.
+One synchronized history row per digital borrowing request. A trigger copies request, due-date, return, renewal, points, and status fields from `borrow_requests`; it is a mutable per-loan projection, not an append-only event log.
 
-Unlike the active-access view, this history is retained after access expires or a loan is returned.
+Unlike the active-access view, this row is retained after access expires or a loan is returned. `borrow_requests` remains the source of truth for current access state.
+
+### `public.physical_book_loan_history`
+One synchronized history row per completed physical checkout. A trigger copies checkout and return state from `physical_book_requests`; the request/copy transaction remains authoritative for current circulation state.
 
 ## 3. Student features
 

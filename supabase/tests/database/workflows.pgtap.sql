@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
 -- Apply COMPLETE_SCHEMA.sql to a disposable local/staging database first.
 begin;
-select plan(47);
+select plan(53);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -187,22 +187,52 @@ select is(
 );
 select is(
   (select status from public.physical_book_copies where id = 910004),
-  'reserved',
-  'Physical request creation reserves one available copy'
+  'available',
+  'A pending physical request does not reserve an available copy'
+);
+select is(
+  (select copy_id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+  null,
+  'A pending physical request has no assigned copy'
 );
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000002', true);
-select throws_ok(
-  $$ select public.request_physical_book(910004, 910004, 7, 'cash', null, null) $$,
-  'P0001',
-  'That physical copy is not available; join the waitlist instead',
-  'A second borrower cannot reserve the already-reserved last copy'
+select is(
+  (public.request_physical_book(910004, 910004, 7, 'cash', null, null)).status,
+  'pending',
+  'A second borrower can submit a request while an available copy remains unreserved'
+);
+select is(
+  (select copy_id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
+  null,
+  'The second pending request also has no assigned copy'
 );
 
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
 select is((public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004))).status, 'checked_out', 'An administrator checks out the requested physical copy');
 select is((select status from public.physical_book_copies where id = 910004), 'borrowed', 'Checkout updates the physical copy state');
+select is(
+  (select count(*)::integer from public.physical_book_loan_history where request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+  1,
+  'Checkout creates one physical loan history record'
+);
+select throws_ok(
+  $$ select public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004)) $$,
+  'P0001',
+  'No physical copy is currently available',
+  'A second checkout fails after the last copy is assigned'
+);
+select is(
+  (select status from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
+  'pending',
+  'A failed checkout leaves the second request pending'
+);
 select is((public.admin_close_physical_loan((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004), 'available')).status, 'returned', 'An administrator records a physical-book return');
 select is((select status from public.physical_book_copies where id = 910004), 'available', 'Returning a physical book makes its copy available');
+select is(
+  (select status from public.physical_book_loan_history where request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+  'returned',
+  'Return updates the existing physical loan history record'
+);
 select is(
   (public.admin_review_book_contribution(910020, 'approved', 4, 0)).status,
   'approved',

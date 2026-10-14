@@ -3,6 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
+import { isStaffRole } from '@/utils/roles'
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
     .maybeSingle()
 
   if (profileError) return apiError('Unable to verify administrator access.', 500, profileError)
-  if (profile?.role !== 'admin') return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
+  if (!isStaffRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const password = typeof body.password === 'string' ? body.password : ''
-  const role = body.role === 'faculty' ? 'faculty' : body.role === 'student' || body.role === undefined ? 'student' : null
+  const role = body.role === 'faculty' || body.role === 'librarian' ? body.role : body.role === 'student' || body.role === undefined ? 'student' : null
   const fullName = boundedText(body.fullName ?? '', 120)
   const school = boundedText(body.school ?? '', 120)
   const department = boundedText(body.department ?? '', 120)

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { streamGoogleDrivePdf } from '@/utils/googleDrive'
 import { apiError } from '@/utils/api'
+import { isStaffRole } from '@/utils/roles'
 
 function parseRange(value: string | null, size: number | null) {
   if (!value) return null
@@ -58,7 +59,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
   if (book?.catalog_type === 'physical') return NextResponse.json({ error: 'This title is only available as a physical library book.' }, { status: 409 })
   if (!book || (!book.pdf_url && !book.storage_file_id && !book.storage_path)) return NextResponse.json({ error: 'Resource unavailable.' }, { status: 404 })
 
-  const isAdmin = profile?.role === 'admin'
+  const isAdmin = isStaffRole(profile?.role)
   const isContributor = Boolean(ownedContribution)
   if (!isAdmin && !isContributor) {
     const [loanResult, grantResult] = await Promise.all([

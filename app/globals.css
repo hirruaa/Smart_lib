@@ -96,6 +96,24 @@ textarea {
 .physical-receipt {
   display: none;
 }
+.receipt-printable { display: block; }
+
+/* Physical catalog command bar and queue navigation. */
+.physical-catalog-toolbar > input,
+.physical-catalog-toolbar > select,
+.physical-catalog-toolbar > button { min-height: 42px; }
+.physical-catalog-actions { min-width: 0; }
+.physical-catalog-actions > div { max-width: 100%; }
+.physical-queue-nav { box-shadow: 0 5px 14px rgba(61, 52, 39, .04); }
+html.dark .physical-queue-nav { border-color: #52645a; background: #263f3a; }
+@media (max-width: 720px) {
+  .physical-catalog-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .physical-catalog-toolbar > input { grid-column: 1 / -1; }
+  .physical-catalog-toolbar > button { width: 100%; }
+  .physical-catalog-actions > div { align-items: stretch; }
+  .physical-catalog-actions button { flex: 1 1 auto; }
+  .physical-queue-nav > div:first-child { flex-basis: 100%; margin-bottom: 4px; }
+}
 
 @media print {
   body * {
@@ -103,11 +121,14 @@ textarea {
   }
 
   .physical-receipt,
-  .physical-receipt * {
+  .physical-receipt *,
+  .receipt-printable,
+  .receipt-printable * {
     visibility: visible !important;
   }
 
-  .physical-receipt {
+  .physical-receipt,
+  .receipt-printable {
     position: fixed;
     inset: 0;
     display: block !important;
@@ -1824,6 +1845,105 @@ html:has(.reader-page), body:has(.reader-page) { height: auto !important; min-he
   color: rgb(15 23 42);
 }
 
+.physical-copies-dialog .overflow-x-auto {
+  overflow-x: hidden;
+}
+
+.physical-requests-only > *:not(.physical-requests-modal) {
+  display: none !important;
+}
+
+.physical-copies-dialog table {
+  width: 100%;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.physical-copies-dialog th,
+.physical-copies-dialog td {
+  overflow-wrap: anywhere;
+}
+
+.physical-copies-dialog td:last-child .min-w-32 {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .physical-copies-dialog thead {
+    display: none;
+  }
+
+  .physical-copies-dialog tbody {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .physical-copies-dialog tr {
+    display: grid;
+    grid-template-columns: 4rem minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid rgb(226 232 240);
+    border-radius: 0.5rem;
+  }
+
+  .dark .physical-copies-dialog tr {
+    border-color: rgb(51 65 85);
+  }
+
+  .physical-copies-dialog td {
+    min-width: 0;
+    padding: 0.5rem !important;
+  }
+
+  .physical-copies-dialog td:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .physical-copies-dialog td:nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .physical-copies-dialog td:nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .physical-copies-dialog td:nth-child(3)::before {
+    content: 'Location';
+    display: block;
+    margin-bottom: 0.35rem;
+    color: rgb(100 116 139);
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  .physical-copies-dialog td:nth-child(4) {
+    grid-column: 1;
+    grid-row: 3;
+    align-self: center;
+  }
+
+  .physical-copies-dialog td:nth-child(4)::before {
+    content: 'Status';
+    display: block;
+    margin-bottom: 0.25rem;
+    color: rgb(100 116 139);
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  .physical-copies-dialog td:nth-child(5) {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .physical-copies-dialog td:nth-child(5) > div {
+    min-width: 0;
+  }
+}
+
 .password-visibility-toggle:focus-visible {
   outline: 2px solid rgb(20 184 166 / 0.7);
   outline-offset: 2px;
@@ -2534,3 +2654,144 @@ canvas { max-width: 100%; }
     box-shadow: 0 6px 16px rgba(31, 45, 42, .08);
   }
 }
+
+/* ========================================================================
+   Global interaction and readability contract
+   ======================================================================== */
+:root {
+  --ds-text-primary: #0f172a;
+  --ds-text-secondary: #475569;
+  --ds-text-muted: #64748b;
+  --ds-surface: #ffffff;
+  --ds-surface-raised: #f8fafc;
+  --ds-border: #cbd5e1;
+  --ds-accent: #2563eb;
+  --ds-accent-soft: #dbeafe;
+  --ds-focus: #1d4ed8;
+  --ds-focus-offset: #ffffff;
+}
+
+html.dark {
+  --ds-text-primary: #f8f9fa;
+  --ds-text-secondary: #e2e8f0;
+  --ds-text-muted: #cbd5e1;
+  --ds-surface: #1e293b;
+  --ds-surface-raised: #334155;
+  --ds-border: #64748b;
+  --ds-accent: #93c5fd;
+  --ds-accent-soft: #1e3a8a;
+  --ds-focus: #bfdbfe;
+  --ds-focus-offset: #0f172a;
+}
+
+/* Theme palettes feed the same contrast contract without changing the
+   required readable text hierarchy. */
+html[data-theme] {
+  --ds-text-primary: var(--theme-text, #0f172a);
+  --ds-text-secondary: #475569;
+  --ds-text-muted: #475569;
+  --ds-surface: var(--theme-panel, #ffffff);
+  --ds-surface-raised: var(--theme-panel-soft, #f8fafc);
+  --ds-border: var(--theme-border, #cbd5e1);
+  --ds-accent: var(--theme-accent-strong, #1d4ed8);
+  --ds-accent-soft: var(--theme-accent-pale, #dbeafe);
+}
+html.dark[data-theme] {
+  --ds-text-primary: #f8f9fa;
+  --ds-text-secondary: #e2e8f0;
+  --ds-text-muted: #e2e8f0;
+  --ds-surface: var(--theme-panel, #1e293b);
+  --ds-surface-raised: var(--theme-panel-soft, #334155);
+  --ds-border: var(--theme-border, #64748b);
+  --ds-accent: var(--theme-accent, #93c5fd);
+  --ds-accent-soft: var(--theme-accent-soft, #1e3a8a);
+}
+
+/* Use these semantic classes for new surfaces instead of choosing text colors
+   independently. They keep primary and secondary copy readable in both themes. */
+.ds-surface {
+  background: var(--ds-surface);
+  color: var(--ds-text-primary);
+}
+.ds-surface-raised {
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-primary);
+}
+.ds-secondary-text { color: var(--ds-text-secondary); }
+.ds-muted-text { color: var(--ds-text-muted); }
+
+/* A single high-contrast keyboard treatment for every interactive element. */
+:where(button, a, input, select, textarea, [role='button'], [tabindex]):focus-visible {
+  outline: 2px solid var(--ds-focus) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px var(--ds-focus-offset) !important;
+}
+
+:where(button, [role='button']) {
+  cursor: pointer;
+  transition: filter .16s ease, background-color .16s ease, border-color .16s ease,
+    color .16s ease, box-shadow .16s ease, transform .08s ease;
+}
+:where(button, [role='button']):not(:disabled):not([aria-disabled='true']):hover {
+  filter: brightness(.9);
+}
+:where(button, [role='button']):not(:disabled):not([aria-disabled='true']):active {
+  transform: scale(.98);
+}
+:where(button, [role='button']):disabled,
+:where(button, [role='button'])[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: .5;
+  filter: none;
+}
+
+/* Solid utility buttons must keep their text/icons inverted against the fill. */
+:where(button, [role='button']).bg-slate-900,
+:where(button, [role='button']).bg-forest-900,
+:where(button, [role='button']).bg-forest-950,
+:where(button, [role='button']).pine-action {
+  color: #ffffff;
+}
+:where(button, [role='button']).bg-white,
+:where(button, [role='button']).bg-slate-50,
+:where(button, [role='button']).bg-slate-100,
+:where(button, [role='button']).secondary-action {
+  color: var(--ds-text-primary);
+}
+
+/* Selection must not depend on color alone. Existing controls can opt in with
+   aria-selected, aria-current, data-selected, is-selected, or ds-selected. */
+:where([aria-selected='true'], [aria-current='page'], [data-selected='true'], .is-selected, .ds-selected) {
+  border: 2px solid var(--ds-accent) !important;
+  background: var(--ds-accent-soft) !important;
+  color: var(--ds-text-primary) !important;
+  box-shadow: inset 4px 0 0 var(--ds-accent), 0 0 0 1px color-mix(in srgb, var(--ds-accent) 20%, transparent);
+}
+:where(.admin-nav-button.bg-slate-100, .student-nav a.active, .student-nav button.active) {
+  border: 2px solid var(--ds-accent) !important;
+  background: var(--ds-accent-soft) !important;
+  color: var(--ds-text-primary) !important;
+  box-shadow: inset 4px 0 0 var(--ds-accent);
+}
+:where([aria-selected='true'], [aria-current='page'], [data-selected='true'], .is-selected, .ds-selected)::before {
+  color: var(--ds-accent);
+}
+
+/* Dynamic/image surfaces need a scrim behind overlaid copy. */
+.ds-media-surface,
+.surface-media {
+  position: relative;
+  isolation: isolate;
+}
+.ds-media-surface::before,
+.surface-media::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(15, 23, 42, .22), rgba(15, 23, 42, .58));
+  content: '';
+  pointer-events: none;
+}
+.ds-media-surface > *,
+.surface-media > * { position: relative; z-index: 1; }

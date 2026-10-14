@@ -3,6 +3,7 @@ import EReader from '@/components/EReader'
 import ReaderContentProtection from '@/components/ReaderContentProtection'
 import ReaderSessionGuard from '@/components/ReaderSessionGuard'
 import { createClient } from '@/utils/supabase/server'
+import { isStaffRole } from '@/utils/roles'
 
 type Props = { params: Promise<{ bookId: string }> }
 
@@ -23,7 +24,7 @@ export default async function Page({ params }: Props) {
     supabase.from('profiles').select('role,full_name').eq('id', user.id).maybeSingle(),
     supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
-  const isAdmin = profile?.role === 'admin'
+  const isAdmin = isStaffRole(profile?.role)
   const isContributor = Boolean(ownedContribution)
   const [loanResult, grantResult] = await Promise.all([
     supabase

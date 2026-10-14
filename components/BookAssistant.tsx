@@ -241,8 +241,8 @@ export default function BookAssistant() {
             <div className="assistant-avatar">{message.role === 'assistant' ? 'S' : 'You'}</div>
             <div className="assistant-message-body">
               <p>{message.text}</p>
-              {message.loans?.length ? <div className="assistant-inline-results">{message.loans.map((loan) => <div key={loan.id} className="assistant-result"><strong>{loan.books?.title || 'Book'}</strong><span>{loan.status}{loan.due_date ? ` · expires ${new Date(loan.due_date).toLocaleDateString()}` : ''}</span></div>)}</div> : null}
-              {message.results?.length ? <div className="assistant-inline-results">{message.results.map((book) => <div key={book.id} className="assistant-result"><div><span className="assistant-result-category">{book.category}</span><h3>{book.title}</h3><span>{book.author}</span></div>{book.has_document ? <a href={`/reader/${book.id}`}>Open in reader</a> : null}</div>)}</div> : null}
+              {message.loans?.length ? <div className="assistant-inline-results">{message.loans.map((loan, index) => <div key={`${message.id}-loan-${loan.id ?? index}`} className="assistant-result"><strong>{loan.books?.title || 'Book'}</strong><span>{loan.status}{loan.due_date ? ` · expires ${new Date(loan.due_date).toLocaleDateString()}` : ''}</span></div>)}</div> : null}
+              {message.results?.length ? <div className="assistant-inline-results">{message.results.map((book, index) => <div key={`${message.id}-book-${book.id ?? index}`} className="assistant-result"><div><span className="assistant-result-category">{book.category}</span><h3>{book.title}</h3><span>{book.author}</span></div>{book.has_document ? <a href={`/reader/${book.id}`}>Open in reader</a> : null}</div>)}</div> : null}
             </div>
           </div>
         ))}

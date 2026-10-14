@@ -3,6 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { createGoogleDriveBackup } from '@/utils/googleDriveBackup'
 import { rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
+import { isStaffRole } from '@/utils/roles'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     console.error('Unable to verify administrator role for backup.', profileError)
     return NextResponse.json({ error: 'Unable to verify administrator access.' }, { status: 500 })
   }
-  if (profile?.role !== 'admin') return NextResponse.json({ error: 'Administrator access required.' }, { status: 403 })
+  if (!isStaffRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required.' }, { status: 403 })
 
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
