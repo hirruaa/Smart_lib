@@ -132,7 +132,9 @@ export async function DELETE(request: Request) {
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const { data: targetProfile, error: targetProfileError } = await adminClient
+  // Use the authenticated admin session for the profile lookup. The service
+  // client is intentionally reserved for Auth Admin API operations.
+  const { data: targetProfile, error: targetProfileError } = await sessionClient
     .from('profiles')
     .select('role')
     .eq('id', targetUserId)
