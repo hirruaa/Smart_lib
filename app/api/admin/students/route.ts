@@ -134,14 +134,23 @@ export async function DELETE(request: Request) {
   })
   const { data: targetProfile, error: targetProfileError } = await adminClient
     .from('profiles')
-    .select('role, email')
+    .select('role')
     .eq('id', targetUserId)
     .maybeSingle()
 
-  if (targetProfileError) return apiError('Unable to find the member account.', 500, targetProfileError)
+  if (targetProfileError) {
+    console.error('Unable to load the member profile before deletion.', targetProfileError)
+    return apiError('Unable to find the member account.', 500, targetProfileError)
+  }
   if (!targetProfile) return NextResponse.json({ error: 'Member account not found.' }, { status: 404 })
   if (targetProfile.role === 'admin' || targetProfile.role === 'librarian') {
     return NextResponse.json({ error: 'Staff accounts cannot be deleted from member management.' }, { status: 403 })
+  }
+
+  const { data: targetAuthUser, error: targetAuthUserError } = await adminClient.auth.admin.getUserById(targetUserId)
+  if (targetAuthUserError || !targetAuthUser.user) {
+    if (targetAuthUserError) console.error('Unable to load the member auth account before deletion.', targetAuthUserError)
+    return NextResponse.json({ error: 'The member authentication account could not be found.' }, { status: 404 })
   }
 
   const { error: deleteError } = await adminClient.auth.admin.deleteUser(targetUserId)
@@ -149,5 +158,5 @@ export async function DELETE(request: Request) {
     return apiError('Unable to delete this account. Existing borrowing or audit records may require the account to be retained.', 409, deleteError)
   }
 
-  return NextResponse.json({ success: true, email: targetProfile.email ?? null })
+  return NextResponse.json({ success: true, email: targetAuthUser.user.email ?? null })
 }
