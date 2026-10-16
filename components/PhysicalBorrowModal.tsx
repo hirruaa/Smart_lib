@@ -3,14 +3,12 @@
 import { ChangeEvent, useEffect, useState } from 'react'
 import BaseModal from '@/components/BaseModal'
 import ActionModal from '@/components/ActionModal'
-import ResultModal from '@/components/ResultModal'
 import { getSupabase } from '@/utils/supabase/client'
 
 type PhysicalBook = { id: number; title: string; author: string; category: string; catalog_type: 'physical' | 'hybrid' }
 type LoanOption = { id: number; duration_days: number; fee_amount: number; is_active: boolean }
 type PhysicalRequest = { id: number; status: string; payment_status: string; duration_days: number; fee_amount: number; requested_at: string }
 type PhysicalCopyLocation = { id: number; section: string | null; shelf_number: string | null; row_number: string | null; position_number: string | null; location: string | null }
-type ActionResult = { status: 'success' | 'error'; title: string; message: string }
 
 type Props = {
   open: boolean
@@ -35,16 +33,16 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
   const [waitlisted, setWaitlisted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [result, setResult] = useState<ActionResult | null>(null)
   const [confirmAction, setConfirmAction] = useState<'submit' | 'cancel' | 'join' | 'leave' | null>(null)
 
   useEffect(() => {
     if (!open || !book || !userId) return
     let active = true
     setLoading(true)
+    setMessage('')
     setError('')
-    setResult(null)
     void (async () => {
       const supabase = getSupabase()
       const [optionsResult, copiesResult, requestResult, waitlistResult] = await Promise.all([
@@ -103,28 +101,12 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
       if (requestError) throw new Error(requestError.message)
       setRequest(data as PhysicalRequest)
       setWaitlisted(false)
+      setMessage('Borrow request submitted. The librarian assigns a copy when checkout is confirmed; this request does not hold a copy.')
       setProofFile(null)
       onComplete()
-      setResult({
-        status: 'success',
-        title: 'Borrow request submitted',
-        message: `Your request for ${book.title} (${option.duration_days} days) was submitted successfully. Library staff will confirm checkout and assign a copy; this request does not reserve a copy.`,
-      })
     } catch (cause) {
-      let failureMessage = cause instanceof Error ? cause.message : 'Unable to submit the physical-book request.'
-      if (proofPath) {
-        try {
-          const { error: cleanupError } = await supabase.storage.from('physical-payment-proofs').remove([proofPath])
-          if (cleanupError) failureMessage += ` Payment proof cleanup also failed: ${cleanupError.message}`
-        } catch (cleanupCause) {
-          failureMessage += ` Payment proof cleanup also failed: ${cleanupCause instanceof Error ? cleanupCause.message : 'unknown error'}`
-        }
-      }
-      setResult({
-        status: 'error',
-        title: 'Borrow request not submitted',
-        message: failureMessage,
-      })
+      if (proofPath) await supabase.storage.from('physical-payment-proofs').remove([proofPath])
+      setError(cause instanceof Error ? cause.message : 'Unable to submit the physical-book request.')
     } finally {
       setSaving(false)
     }
@@ -135,18 +117,10 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
   const cancelRequest = async () => {
     if (!request) return
     setSaving(true)
-    setError('')
-    try {
-      const { error: cancelError } = await getSupabase().rpc('cancel_physical_book_request', { p_request_id: request.id })
-      if (cancelError) throw new Error(cancelError.message)
-      setRequest(null)
-      onComplete()
-      setResult({ status: 'success', title: 'Borrow request cancelled', message: 'Your pending borrow request was cancelled. It did not hold a copy.' })
-    } catch (cause) {
-      setResult({ status: 'error', title: 'Request not cancelled', message: cause instanceof Error ? cause.message : 'Unable to cancel the borrow request.' })
-    } finally {
-      setSaving(false)
-    }
+    const { error: cancelError } = await getSupabase().rpc('cancel_physical_book_request', { p_request_id: request.id })
+    if (cancelError) setError(cancelError.message)
+    else { setRequest(null); setMessage('Your borrow request was cancelled. It did not hold a copy.'); onComplete() }
+    setSaving(false)
   }
 
   const confirmCancelRequest = () => setConfirmAction('cancel')
@@ -154,18 +128,10 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
   const joinWaitlist = async () => {
     if (!book) return
     setSaving(true)
-    setError('')
-    try {
-      const { error: waitlistError } = await getSupabase().rpc('join_physical_book_waitlist', { p_book_id: book.id })
-      if (waitlistError) throw new Error(waitlistError.message)
-      setWaitlisted(true)
-      onComplete()
-      setResult({ status: 'success', title: 'Added to availability queue', message: `You joined the queue for ${book.title}. We will notify you when a copy becomes available.` })
-    } catch (cause) {
-      setResult({ status: 'error', title: 'Could not join the queue', message: cause instanceof Error ? cause.message : 'Unable to join the availability queue.' })
-    } finally {
-      setSaving(false)
-    }
+    const { error: waitlistError } = await getSupabase().rpc('join_physical_book_waitlist', { p_book_id: book.id })
+    if (waitlistError) setError(waitlistError.message)
+    else { setWaitlisted(true); setMessage('You joined the availability queue. We will notify you when a copy is available.'); onComplete() }
+    setSaving(false)
   }
 
   const confirmJoinWaitlist = () => setConfirmAction('join')
@@ -173,18 +139,10 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
   const leaveWaitlist = async () => {
     if (!book) return
     setSaving(true)
-    setError('')
-    try {
-      const { error: leaveError } = await getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: book.id })
-      if (leaveError) throw new Error(leaveError.message)
-      setWaitlisted(false)
-      onComplete()
-      setResult({ status: 'success', title: 'Removed from availability queue', message: `You left the queue for ${book.title}.` })
-    } catch (cause) {
-      setResult({ status: 'error', title: 'Could not leave the queue', message: cause instanceof Error ? cause.message : 'Unable to leave the availability queue.' })
-    } finally {
-      setSaving(false)
-    }
+    const { error: leaveError } = await getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: book.id })
+    if (leaveError) setError(leaveError.message)
+    else { setWaitlisted(false); setMessage('You left the availability queue.'); onComplete() }
+    setSaving(false)
   }
 
   const confirmLeaveWaitlist = () => setConfirmAction('leave')
@@ -198,6 +156,7 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
     <BaseModal open={open && Boolean(book)} title={book ? `${book.title} · Physical copy` : 'Physical copy'} description="Check copy locations and submit a borrow request. Library staff confirms checkout." onClose={onClose} size="lg">
       {loading ? <p className="text-sm text-slate-500">Checking availability...</p> : <div className="space-y-4">
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-900/60"><p className="font-semibold">{availabilityLabel}</p><p className="mt-1 text-xs text-slate-500">{copyId ? 'The QR code identifies a copy; it does not hold it. ' : ''}A copy is assigned only when library staff confirms checkout.</p>{availableCopyLocations.length ? <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">Available locations: {availableCopyLocations.map((copy) => [copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`].filter(Boolean).join(' · ') || copy.location || 'Location not set').join(', ')}</p> : null}</div>
+        {message ? <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">{message}</p> : null}
         {error ? <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{error}</p> : null}
         {request ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>Your request is <strong className="capitalize">{request.status.replace('_', ' ')}</strong>.</p>{request.status === 'pending' ? <button type="button" disabled={saving} onClick={confirmCancelRequest} className="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold disabled:opacity-50">Cancel request</button> : null}</div> : requestAvailable && options.length > 0 ? <>
           <label className="block text-sm font-medium">Loan period and fee<select value={selectedOption} onChange={(event) => setSelectedOption(event.target.value)} className={input}>{options.map((option) => <option key={option.id} value={option.id}>{option.duration_days} days · ₱{Number(option.fee_amount).toFixed(2)}</option>)}</select></label>
@@ -222,13 +181,6 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
           else if (action === 'join') void joinWaitlist()
           else if (action === 'leave') void leaveWaitlist()
         }}
-      />
-      <ResultModal
-        open={result !== null}
-        status={result?.status ?? 'success'}
-        successTitle={result?.title}
-        message={result?.message ?? ''}
-        onClose={() => setResult(null)}
       />
     </BaseModal>
   )
