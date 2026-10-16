@@ -1,6 +1,6 @@
 'use client'
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
 import { getSupabase } from '@/utils/supabase/client'
@@ -8,7 +8,7 @@ import { AdminPhysicalSkeleton } from '@/components/skeletons/AdminDashboardSkel
 import ResultModal from '@/components/ResultModal'
 import ActionModal from '@/components/ActionModal'
 import BaseModal from '@/components/BaseModal'
-import { DIGITAL_ACCESS_DURATION_OPTIONS } from '@/utils/libraryContracts'
+import { PHYSICAL_LOAN_DURATION_OPTIONS } from '@/utils/libraryContracts'
 import { isStaffRole } from '@/utils/roles'
 
 type Book = { id: number; title: string; author: string; category: string; isbn: string | null; description?: string | null; catalog_type: string; cover_image_url: string | null; is_archived: boolean }
@@ -28,15 +28,17 @@ type LoanHistory = {
   return_condition: string | null; receipt_number: string | null
 }
 type Profile = { id: string; email: string; full_name: string | null }
-type WaitlistEntry = { student_id: string; book_id: number; created_at: string }
-type RequestQueueFilter = 'all' | 'pending' | 'awaiting_payment' | 'ready' | 'checked_out' | 'overdue' | 'return_pending' | 'waitlisted'
+type AvailabilityAlertEntry = { student_id: string; book_id: number; created_at: string }
+type PhysicalFine = { id: number; physical_book_request_id: number; student_id: string; amount: number; status: string; created_at: string }
+type LibraryHoliday = { holiday_date: string; name: string }
+type RequestQueueFilter = 'all' | 'pending' | 'awaiting_payment' | 'ready' | 'checked_out' | 'overdue' | 'return_pending' | 'availability_alerts'
 
 const panel = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900'
 const input = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950'
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
 
 
-export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnly = false, onClose }: { initialPanel?: 'requests' | 'checkedOut' | 'history' | 'lost'; requestsOnly?: boolean; onClose?: () => void }) {
+export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnly = false, active = true, onClose }: { initialPanel?: 'requests' | 'checkedOut' | 'history' | 'lost'; requestsOnly?: boolean; active?: boolean; onClose?: () => void }) {
   const router = useRouter()
   const [books, setBooks] = useState<Book[]>([])
   const [copies, setCopies] = useState<Copy[]>([])
@@ -44,14 +46,17 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [loans, setLoans] = useState<Loan[]>([])
   const [loanHistory, setLoanHistory] = useState<LoanHistory[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
-  const [waitlists, setWaitlists] = useState<WaitlistEntry[]>([])
+  const [availabilityAlerts, setAvailabilityAlerts] = useState<AvailabilityAlertEntry[]>([])
+  const [physicalFines, setPhysicalFines] = useState<PhysicalFine[]>([])
+  const [holidays, setHolidays] = useState<LibraryHoliday[]>([])
   const [qrImages, setQrImages] = useState<Record<string, string>>({})
   const [copyForm, setCopyForm] = useState({ bookId: '', quantity: '1', prefix: '', location: '' })
   const [newPhysicalBook, setNewPhysicalBook] = useState({
     title: '', author: '', category: '', isbn: '', description: '', quantity: '1', prefix: '', location: '',
   })
   const [coverFile, setCoverFile] = useState<File | null>(null)
-  const [optionForm, setOptionForm] = useState({ bookId: '', fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
+  const [optionForm, setOptionForm] = useState({ bookId: '', fees: Object.fromEntries(PHYSICAL_LOAN_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
+  const [holidayForm, setHolidayForm] = useState({ date: '', name: '' })
   const [returnConditions, setReturnConditions] = useState<Record<number, 'available' | 'damaged' | 'lost'>>({})
   const [lostResolution, setLostResolution] = useState<Record<number, 'available' | 'damaged' | 'withdrawn'>>({})
   const [historyBookId, setHistoryBookId] = useState('')
@@ -62,6 +67,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [openPanel, setOpenPanel] = useState<'requests' | 'checkedOut' | 'history' | 'lost' | null>(null)
+  const [policyModalOpen, setPolicyModalOpen] = useState(false)
   const [newPhysicalBookOpen, setNewPhysicalBookOpen] = useState(false)
   const [copyFormOpen, setCopyFormOpen] = useState(false)
   const [optionFormOpen, setOptionFormOpen] = useState(false)
@@ -83,6 +89,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [checkoutLoan, setCheckoutLoan] = useState<Loan | null>(null)
   const [checkoutPaidAmount, setCheckoutPaidAmount] = useState('')
   const [checkoutNotes, setCheckoutNotes] = useState('')
+  const lastLoadedAt = useRef<number | null>(null)
 
   const load = async () => {
     const supabase = getSupabase()
@@ -90,6 +97,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     if (!user) { router.replace('/login'); return }
     const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
     if (profileError || !isStaffRole(profile?.role)) { router.replace('/unauthorized'); return }
+    const { error: fineRefreshError } = await supabase.rpc('calculate_overdue_fines')
+    if (fineRefreshError) {
+      setError(`Unable to refresh overdue fines: ${fineRefreshError.message}`)
+      setLoading(false)
+      return
+    }
     const copyResultPromise = (async () => {
       const structured = await supabase.from('physical_book_copies').select('id,book_id,copy_code,qr_token,status,location,section,shelf_number,row_number,position_number').order('copy_code')
       if (!structured.error) return structured
@@ -101,7 +114,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         error: null,
       }
     })()
-    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, waitlistResult] = await Promise.all([
+    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult] = await Promise.all([
       supabase.from('books').select('id,title,author,category,isbn,description,catalog_type,cover_image_url,is_archived').order('title'),
       copyResultPromise,
       supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').order('book_id').order('duration_days'),
@@ -109,8 +122,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       supabase.from('physical_book_loan_history').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,status,checked_out_at,due_date,returned_at,return_condition,receipt_number').order('checked_out_at', { ascending: false }),
       supabase.from('profiles').select('id,email,full_name').in('role', ['student', 'faculty', 'librarian']),
       supabase.from('physical_book_waitlist').select('student_id,book_id,created_at').order('created_at', { ascending: true }),
+      supabase.from('fines').select('id,physical_book_request_id,student_id,amount,status,created_at').not('physical_book_request_id', 'is', null).order('created_at', { ascending: false }),
+      supabase.from('library_holidays').select('holiday_date,name').order('holiday_date', { ascending: true }),
     ])
-    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, waitlistResult].find((result) => result.error)
+    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult].find((result) => result.error)
     if (failed?.error) setError(`Unable to load physical circulation: ${failed.error.message}`)
     setBooks((bookResult.data ?? []) as Book[])
     setCopies((copyResult.data ?? []) as Copy[])
@@ -118,11 +133,17 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setLoans((loanResult.data ?? []) as Loan[])
     setLoanHistory((historyResult.data ?? []) as LoanHistory[])
     setProfiles((memberResult.data ?? []) as Profile[])
-    setWaitlists((waitlistResult.data ?? []) as WaitlistEntry[])
+    setAvailabilityAlerts((availabilityAlertsResult.data ?? []) as AvailabilityAlertEntry[])
+    setPhysicalFines((fineResult.data ?? []) as PhysicalFine[])
+    setHolidays((holidayResult.data ?? []) as LibraryHoliday[])
+    lastLoadedAt.current = Date.now()
     setLoading(false)
   }
 
-  useEffect(() => { void load() }, [router])
+  useEffect(() => {
+    if (!active) return
+    if (lastLoadedAt.current === null || Date.now() - lastLoadedAt.current >= 60_000) void load()
+  }, [active, router])
 
   useEffect(() => {
     const supabase = getSupabase()
@@ -159,10 +180,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       }
       setCopies((legacy.data ?? []).map((copy) => ({ ...copy, section: null, shelf_number: null, row_number: null, position_number: null })) as Copy[])
     }
-    const refreshWaitlists = async () => {
+    const refreshAvailabilityAlerts = async () => {
       const { data, error: refreshError } = await supabase.from('physical_book_waitlist').select('student_id,book_id,created_at').order('created_at', { ascending: true })
-      if (refreshError) setError(`Unable to refresh availability queue: ${refreshError.message}`)
-      else setWaitlists((data ?? []) as WaitlistEntry[])
+      if (refreshError) setError(`Unable to refresh availability alerts: ${refreshError.message}`)
+      else setAvailabilityAlerts((data ?? []) as AvailabilityAlertEntry[])
     }
 
     const setupChannel = async () => {
@@ -177,7 +198,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       // Register every postgres_changes callback before starting the channel.
       channel.on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_requests' }, () => { void refreshRequests(); void refreshHistory() })
       channel.on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_copies' }, () => { void refreshCopies() })
-      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_waitlist' }, () => { void refreshWaitlists() })
+      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_waitlist' }, () => { void refreshAvailabilityAlerts() })
       channel.subscribe()
     }
     void setupChannel()
@@ -201,19 +222,20 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }, [copies])
 
   useEffect(() => {
-    if (!openPanel) return
+    if (!openPanel && !policyModalOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (historyDetailBookId !== null) setHistoryDetailBookId(null)
+      if (policyModalOpen && !busy) setPolicyModalOpen(false)
+      else if (historyDetailBookId !== null) setHistoryDetailBookId(null)
       else setOpenPanel(null)
     }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [openPanel, historyDetailBookId])
+  }, [openPanel, policyModalOpen, historyDetailBookId, busy])
 
   useEffect(() => {
-    if (initialPanel) setOpenPanel(initialPanel)
-  }, [initialPanel])
+    if (active) setOpenPanel(initialPanel ?? null)
+  }, [active, initialPanel])
 
   const submitCopyForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -231,6 +253,52 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
     setBusy(false)
   }
+
+  const submitHoliday = async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      setBusy(true); setError(''); setMessage('')
+      const { data: { user } } = await getSupabase().auth.getUser()
+      if (!user) {
+        setError('Sign in again before adding a library holiday.')
+        setBusy(false)
+        return
+      }
+      const { error: saveError } = await getSupabase().from('library_holidays').insert({
+        holiday_date: holidayForm.date,
+        name: holidayForm.name.trim(),
+        created_by: user.id,
+      })
+      if (saveError) setError(`Unable to add holiday: ${saveError.message}`)
+      else {
+        setHolidayForm({ date: '', name: '' })
+        await load()
+        setMessage('Public holiday added to the fine calendar.')
+      }
+      setBusy(false)
+    }
+
+  const deleteHoliday = async (holiday: LibraryHoliday) => {
+      setBusy(true); setError(''); setMessage('')
+      const { error: deleteError } = await getSupabase().from('library_holidays').delete().eq('holiday_date', holiday.holiday_date)
+      if (deleteError) setError(`Unable to remove holiday: ${deleteError.message}`)
+      else {
+        await load()
+        setMessage(`${holiday.name} removed from the fine calendar.`)
+      }
+      setBusy(false)
+    }
+
+  const recordFinePayment = async (fine: PhysicalFine) => {
+      if (!window.confirm(`Confirm that the cashier received ₱${Number(fine.amount).toFixed(2)} for this physical-book fine?`)) return
+      setBusy(true); setError(''); setMessage('')
+      const { error: paymentError } = await getSupabase().rpc('admin_record_physical_fine_payment', { p_fine_id: fine.id })
+      if (paymentError) setError(`Unable to record fine payment: ${paymentError.message}`)
+      else {
+        await load()
+        setMessage('Physical-book fine payment recorded.')
+      }
+      setBusy(false)
+    }
 
   const setBookArchived = async (bookId: number, title: string, archived: boolean) => {
     setBusy(true); setError(''); setMessage('')
@@ -312,19 +380,19 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const submitOptionForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy(true); setError(''); setMessage('')
-    const invalidFee = DIGITAL_ACCESS_DURATION_OPTIONS.some((days) => !Number.isFinite(Number(optionForm.fees[String(days)])) || Number(optionForm.fees[String(days)]) < 0)
+    const invalidFee = PHYSICAL_LOAN_DURATION_OPTIONS.some((days) => !Number.isFinite(Number(optionForm.fees[String(days)])) || Number(optionForm.fees[String(days)]) < 0)
     if (invalidFee) {
       setError('Each physical-book fee must be a valid non-negative amount.')
       setBusy(false)
       return
     }
-    const results = await Promise.all(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => getSupabase().rpc('admin_set_physical_loan_option', {
+    const results = await Promise.all(PHYSICAL_LOAN_DURATION_OPTIONS.map((days) => getSupabase().rpc('admin_set_physical_loan_option', {
       p_book_id: Number(optionForm.bookId), p_duration_days: days,
       p_fee_amount: Number(optionForm.fees[String(days)]), p_is_active: true,
     })))
     const saveError = results.find((result) => result.error)?.error
     if (saveError) setError(saveError.message)
-    else { await load(); setOptionFormOpen(false); setMessage('Physical-book fees for all access periods were saved.') }
+    else { await load(); setOptionFormOpen(false); setMessage('The 14-day physical-book checkout fee was saved.') }
     setBusy(false)
   }
 
@@ -443,10 +511,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
 
   const queueLoans = loans.filter((loan) => ['pending', 'waitlisted', 'checked_out', 'return_pending', 'lost'].includes(loan.status))
   const waitingLoans = loans.filter((loan) => loan.status === 'pending')
-  const visibleWaitlists = waitlists.filter((entry) => {
+  const visibleAvailabilityAlerts = availabilityAlerts.filter((entry) => {
     const query = requestSearch.trim().toLowerCase()
     const searchable = [bookName(entry.book_id), memberName(entry.student_id), String(entry.book_id)].join(' ').toLowerCase()
-    return (!query || searchable.includes(query)) && (requestStatus === 'all' || requestStatus === 'waitlisted')
+    return (!query || searchable.includes(query)) && (requestStatus === 'all' || requestStatus === 'availability_alerts')
   })
   const bookName = (bookId: number) => books.find((book) => book.id === bookId)?.title ?? `Book #${bookId}`
   const copyCode = (copyId: number | null) => copies.find((copy) => copy.id === copyId)?.copy_code ?? 'Copy unavailable'
@@ -541,7 +609,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const existing = options.filter((option) => option.book_id === bookId)
     setOptionForm({
       bookId: String(bookId),
-      fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])),
+      fees: Object.fromEntries(PHYSICAL_LOAN_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])),
     })
     setOptionFormOpen(true)
   }
@@ -590,14 +658,68 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <label className="block text-sm font-medium">Book<select required value={optionForm.bookId} onChange={(event) => {
             const bookId = event.target.value
             const existing = options.filter((option) => option.book_id === Number(bookId))
-            setOptionForm({ bookId, fees: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])) })
+            setOptionForm({ bookId, fees: Object.fromEntries(PHYSICAL_LOAN_DURATION_OPTIONS.map((days) => [days, String(existing.find((option) => option.duration_days === days)?.fee_amount ?? 0)])) })
           }} className={`${input} mt-1`}><option value="">Choose a book</option>{books.filter((book) => !book.is_archived).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select></label>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-sm">{days} {days === 1 ? 'day' : 'days'} fee (₱)<input required type="number" min="0" step="0.01" value={optionForm.fees[String(days)] ?? '0'} onChange={(event) => setOptionForm({ ...optionForm, fees: { ...optionForm.fees, [days]: event.target.value } })} className={`${input} mt-1`} /></label>)}
-          </div>
-          <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save fees'}</button>
+          <label className="block max-w-xs text-sm">14-day checkout fee (₱)<input required type="number" min="0" step="0.01" value={optionForm.fees['14'] ?? '0'} onChange={(event) => setOptionForm({ ...optionForm, fees: { ...optionForm.fees, 14: event.target.value } })} className={`${input} mt-1`} /></label>
+          <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save fee'}</button>
         </form>
       </div> : null}
+
+      {!requestsOnly ? <>
+        <section className={`${panel} flex flex-wrap items-center justify-between gap-4`}>
+          <div>
+            <h2 className="text-xl font-semibold">Borrowing policy &amp; fine calendar</h2>
+            <p className="mt-1 text-sm text-slate-500">Review the physical borrowing rules, maintain holiday dates, and record fine payments.</p>
+          </div>
+          <button type="button" onClick={() => setPolicyModalOpen(true)} className="shrink-0 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+            Manage policy
+          </button>
+        </section>
+        {policyModalOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setPolicyModalOpen(false) }}>
+          <section className={`${panel} max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="borrowing-policy-title">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 id="borrowing-policy-title" className="text-xl font-semibold">Borrowing policy &amp; fine calendar</h2>
+                <p className="mt-1 max-w-3xl text-sm text-slate-500">General books: 14 days, 2-day grace period, ₱5 per chargeable overdue day, capped at ₱500 per item. Sundays and dates listed here are excluded. Items overdue for 30 consecutive days are marked lost and stop accruing fines.</p>
+              </div>
+              <button type="button" disabled={busy} onClick={() => setPolicyModalOpen(false)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-slate-700">Close</button>
+            </div>
+            <div className="mt-5 grid gap-6 lg:grid-cols-2">
+              <div>
+                <h3 className="font-semibold">Official public holidays</h3>
+                <form onSubmit={(event) => void submitHoliday(event)} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <label className="text-xs font-medium">Date<input required type="date" value={holidayForm.date} onChange={(event) => setHolidayForm({ ...holidayForm, date: event.target.value })} className={`${input} mt-1`} /></label>
+                  <label className="text-xs font-medium">Holiday name<input required maxLength={120} value={holidayForm.name} onChange={(event) => setHolidayForm({ ...holidayForm, name: event.target.value })} className={`${input} mt-1`} /></label>
+                  <button disabled={busy} className="self-end rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold disabled:opacity-50 dark:border-slate-700">{busy ? 'Adding...' : 'Add date'}</button>
+                </form>
+                <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                  {holidays.map((holiday) => <li key={holiday.holiday_date} className="flex items-center justify-between gap-3 py-2 text-sm">
+                    <span>{new Date(`${holiday.holiday_date}T12:00:00`).toLocaleDateString()} · {holiday.name}</span>
+                    <button type="button" disabled={busy} onClick={() => void deleteHoliday(holiday)} className="text-xs font-semibold text-rose-700 disabled:opacity-50 dark:text-rose-300">Remove</button>
+                  </li>)}
+                  {holidays.length === 0 ? <li className="py-3 text-sm text-slate-500">No public holidays entered yet.</li> : null}
+                </ul>
+              </div>
+              <div>
+                <h3 className="font-semibold">Physical fines awaiting cashier settlement</h3>
+                <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                  {physicalFines.filter((fine) => fine.status === 'unpaid').map((fine) => {
+                    const loan = loans.find((item) => item.id === fine.physical_book_request_id)
+                    const book = loan ? books.find((item) => item.id === loan.book_id) : null
+                    const member = profiles.find((item) => item.id === fine.student_id)
+                    const settledLoan = loan?.status === 'returned' || loan?.status === 'lost'
+                    return <li key={fine.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+                      <span><strong>{book?.title ?? 'Physical book'}</strong><span className="block text-xs text-slate-500">{member?.full_name || member?.email || 'Member'} · ₱{Number(fine.amount).toFixed(2)}</span></span>
+                      <button type="button" disabled={busy || !settledLoan} title={settledLoan ? 'Record cashier payment' : 'Book must be returned or classified lost first'} onClick={() => void recordFinePayment(fine)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-40 dark:border-slate-700">Record paid</button>
+                    </li>
+                  })}
+                  {physicalFines.filter((fine) => fine.status === 'unpaid').length === 0 ? <li className="py-3 text-sm text-slate-500">No unpaid physical fines.</li> : null}
+                </ul>
+              </div>
+            </div>
+          </section>
+        </div> : null}
+      </> : null}
 
       <section className={panel}>
         <div className="physical-catalog-heading flex flex-wrap items-start justify-between gap-3">
@@ -704,7 +826,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <div className="flex flex-col gap-2 sm:flex-row">
               <input type="search" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search member, book, or request ID..." aria-label="Search physical requests" className={`${input} sm:min-w-80`} />
               <select value={requestStatus} onChange={(event) => setRequestStatus(event.target.value as RequestQueueFilter)} aria-label="Filter physical requests by operational state" className={input}>
-                <option value="all">All queue items</option><option value="pending">Pending requests</option><option value="awaiting_payment">Awaiting payment</option><option value="ready">Ready for checkout</option><option value="checked_out">Checked out</option><option value="overdue">Overdue</option><option value="return_pending">Return requests</option><option value="waitlisted">Waitlisted</option>
+                <option value="all">All queue items</option><option value="pending">Pending requests</option><option value="awaiting_payment">Awaiting payment</option><option value="ready">Ready for checkout</option><option value="checked_out">Checked out</option><option value="overdue">Overdue</option><option value="return_pending">Return requests</option><option value="availability_alerts">Availability alerts</option>
               </select>
             </div>
           </div>
@@ -714,8 +836,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
               {loan.status === 'pending' ? <div className="flex flex-wrap gap-2"><button disabled={processingRequestId !== null} type="button" onClick={() => checkout(loan.id)} className="physical-review-action rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50">{processingRequestId === loan.id ? 'Processing...' : 'Review & approve'}</button><button disabled={processingRequestId !== null} type="button" onClick={() => void rejectRequest(loan.id)} className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">Reject request</button></div> : loan.status === 'checked_out' || loan.status === 'return_pending' ? <button type="button" onClick={() => setOpenPanel('checkedOut')} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">{loan.status === 'return_pending' ? 'Review return request' : 'Manage return'}</button> : <span className="text-xs text-amber-700 dark:text-amber-300">No checkout action</span>}
             </div>
           </article>)}
-          {visibleWaitlists.map((entry) => <article key={`waitlist-${entry.student_id}-${entry.book_id}`} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(entry.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(entry.student_id)}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleString()}</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">Waitlisted</span></div></article>)}
-          {filteredWaitingLoans.length === 0 && visibleWaitlists.length === 0 ? <p className="text-sm text-slate-500">{queueLoans.length === 0 && waitlists.length === 0 ? 'No physical queue items.' : 'No physical requests match the current search or filter.'}</p> : null}
+          {visibleAvailabilityAlerts.map((entry) => <article key={`availability-alert-${entry.student_id}-${entry.book_id}`} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(entry.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(entry.student_id)}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability alert · enabled {new Date(entry.created_at).toLocaleString()}</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">Alerts on</span></div></article>)}
+          {filteredWaitingLoans.length === 0 && visibleAvailabilityAlerts.length === 0 ? <p className="text-sm text-slate-500">{queueLoans.length === 0 && availabilityAlerts.length === 0 ? 'No physical requests or availability alerts.' : 'No physical requests match the current search or filter.'}</p> : null}
           {filteredWaitingLoans.length > requestPageSize ? <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-sm"><span className="text-slate-500">Page {Math.min(requestPage, requestPageCount)} of {requestPageCount}</span><div className="flex gap-2"><button type="button" disabled={requestPage <= 1} onClick={() => setRequestPage((page) => Math.max(1, page - 1))} className="rounded-xl border border-slate-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700">Previous</button><button type="button" disabled={requestPage >= requestPageCount} onClick={() => setRequestPage((page) => Math.min(requestPageCount, page + 1))} className="rounded-xl border border-slate-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700">Next</button></div></div> : null}
         </div>
         </section>

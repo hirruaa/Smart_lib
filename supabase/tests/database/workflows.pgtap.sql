@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
--- Apply COMPLETE_SCHEMA.sql to a disposable local/staging database first.
+-- Apply COMPLETE_SCHEMA.sql, then the physical borrowing policy and availability alert migrations, to a disposable local database first.
 begin;
-select plan(53);
+select plan(63);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -47,7 +47,7 @@ insert into public.physical_book_copies (id, book_id, copy_code, status)
 values (910004, 910004, 'QA-WORKFLOW-001', 'available')
 on conflict (id) do nothing;
 insert into public.physical_loan_options (id, book_id, duration_days, fee_amount, is_active)
-values (910004, 910004, 7, 0, true)
+values (910004, 910004, 14, 0, true)
 on conflict (id) do nothing;
 insert into public.book_contributions (
   id, user_id, title, author, description, pdf_url, status,
@@ -181,7 +181,7 @@ select throws_ok(
 );
 
 select is(
-  (public.request_physical_book(910004, null, 7, 'cash', null, null)).status,
+  (public.request_physical_book(910004, null, 14, 'cash', null, null)).status,
   'pending',
   'A student can create a physical-book request'
 );
@@ -197,7 +197,7 @@ select is(
 );
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000002', true);
 select is(
-  (public.request_physical_book(910004, 910004, 7, 'cash', null, null)).status,
+  (public.request_physical_book(910004, 910004, 14, 'cash', null, null)).status,
   'pending',
   'A second borrower can submit a request while an available copy remains unreserved'
 );
@@ -226,12 +226,83 @@ select is(
   'pending',
   'A failed checkout leaves the second request pending'
 );
+insert into public.physical_book_waitlist(student_id, book_id)
+values
+  ('d3600000-0000-4000-8000-000000000001', 910004),
+  ('d3600000-0000-4000-8000-000000000002', 910004)
+on conflict (student_id, book_id) do nothing;
 select is((public.admin_close_physical_loan((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004), 'available')).status, 'returned', 'An administrator records a physical-book return');
 select is((select status from public.physical_book_copies where id = 910004), 'available', 'Returning a physical book makes its copy available');
+select is(
+  (select count(*)::integer from public.notifications
+   where event_type = 'physical_book_available'
+     and reference_id = 910004
+     and user_id in ('d3600000-0000-4000-8000-000000000001', 'd3600000-0000-4000-8000-000000000002')),
+  2,
+  'A newly available copy alerts all subscribed members at once'
+);
+select is(
+  (select count(*)::integer from public.physical_book_waitlist where book_id = 910004),
+  2,
+  'Availability alerts do not remove subscriptions or reserve a copy'
+);
 select is(
   (select status from public.physical_book_loan_history where request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
   'returned',
   'Return updates the existing physical loan history record'
+);
+update public.physical_book_requests
+set due_date = '2025-10-01 12:00:00+08'::timestamptz,
+    returned_at = '2025-10-08 12:00:00+08'::timestamptz
+where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004;
+insert into public.library_holidays (holiday_date, name)
+values ('2025-10-06', 'QA policy holiday')
+on conflict (holiday_date) do nothing;
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000001', true);
+select lives_ok(
+  $$ select public.calculate_overdue_fines() $$,
+  'A member can refresh overdue fines without a scheduled job'
+);
+select is(
+  (select amount from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = auth.uid() and book_id = 910004)),
+  15.00::numeric,
+  'Fine calculation excludes the two grace days, Sunday, and a configured holiday'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
+select is(
+  (public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004))).status,
+  'checked_out',
+  'A returned copy can be checked out to the second borrower'
+);
+update public.physical_book_requests
+set due_date = '2025-01-01 12:00:00+08'::timestamptz
+where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004;
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000002', true);
+select lives_ok(
+  $$ select public.calculate_overdue_fines() $$,
+  'A member refresh classifies an item overdue for 30 days'
+);
+select is(
+  (select status from public.physical_book_requests where student_id = auth.uid() and book_id = 910004),
+  'lost',
+  'An active loan is classified lost after 30 consecutive overdue days'
+);
+select is(
+  (select amount from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = auth.uid() and book_id = 910004)),
+  120.00::numeric,
+  'Late-fine accrual stops after 30 overdue days and remains within the ₱500 cap'
+);
+select throws_ok(
+  $$ select public.request_digital_loan(910001, 7) $$,
+  'P0001',
+  'New digital access is unavailable while an overdue physical item or unpaid physical fine remains.',
+  'An overdue lost physical item blocks new digital access'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
+select is(
+  (public.admin_record_physical_fine_payment((select id from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004)))).status,
+  'paid',
+  'A librarian can record cashier settlement for a closed or lost item'
 );
 select is(
   (public.admin_review_book_contribution(910020, 'approved', 4, 0)).status,

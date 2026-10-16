@@ -177,6 +177,7 @@ function AdminNavIcon({ section }: { section: string }) {
 export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
+  const [physicalSectionVisited, setPhysicalSectionVisited] = useState(false)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
@@ -253,6 +254,11 @@ export default function AdminPage() {
   const [rankDraft, setRankDraft] = useState('')
   const [courseDraft, setCourseDraft] = useState('')
   const [departmentDraft, setDepartmentDraft] = useState('')
+
+  const navigateToSection = (nextSection: string) => {
+    setSection(nextSection)
+    if (nextSection === 'physical' || nextSection === 'physical-requests') setPhysicalSectionVisited(true)
+  }
 
   useEffect(() => {
     if (!sidebarOpen) return
@@ -1162,7 +1168,7 @@ export default function AdminPage() {
             {navGroups.map((group) => <div key={group.label} className="admin-nav-group">
               <p className="admin-nav-group-label">{group.label}</p>
               <div className="space-y-1">
-                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { setSection(item.section); setSidebarOpen(false) }} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
+                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { navigateToSection(item.section); setSidebarOpen(false) }} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
               </div>
             </div>)}
           </nav>
@@ -1205,13 +1211,6 @@ export default function AdminPage() {
 
           {section === 'overview' && (
             <section className="admin-overview">
-              <div className="admin-overview-heading">
-                <div>
-                  <p className="admin-overview-kicker">Admin workspace</p>
-                  <h2>Today at a glance</h2>
-                  <p>Monitor requests, check activity, and get to common tasks quickly.</p>
-                </div>
-              </div>
               <div className="admin-overview-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
                 <div className="admin-overview-column space-y-5">
                   <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="library-operations-title">
@@ -1219,7 +1218,7 @@ export default function AdminPage() {
                       <div><h2 id="library-operations-title">Library operations</h2><p>Live counts and shortcuts to the work queue.</p></div>
                     </div>
                     <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                      <button type="button" onClick={() => setSection('physical-requests')} className="admin-action-tile admin-stat-tile admin-stat-emerald">
+                      <button type="button" onClick={() => navigateToSection('physical-requests')} className="admin-action-tile admin-stat-tile admin-stat-emerald">
                         <span>Physical requests</span><strong>{physicalRequestPreview.filter((request) => request.status === 'pending').length}</strong><small>Awaiting payment or review</small>
                       </button>
                       <button type="button" onClick={() => setSection('requests')} className="admin-action-tile admin-stat-tile admin-stat-blue">
@@ -1234,7 +1233,7 @@ export default function AdminPage() {
                   <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="physical-requests-title">
                     <div className="admin-overview-section-heading">
                       <div><h2 id="physical-requests-title">Recent physical requests</h2><p>Latest requests, payment status, and checkout progress.</p></div>
-                      <button type="button" onClick={() => setSection('physical-requests')} className="admin-overview-link">Open queue <span aria-hidden="true">→</span></button>
+                      <button type="button" onClick={() => navigateToSection('physical-requests')} className="admin-overview-link">Open queue <span aria-hidden="true">→</span></button>
                     </div>
                     <div className="admin-overview-table-wrap mt-4">
                       <table className="admin-overview-table">
@@ -1510,8 +1509,16 @@ export default function AdminPage() {
             </section>
           )}
 
-          {section === 'physical' && <PhysicalCirculationAdminPage />}
-          {section === 'physical-requests' && <PhysicalCirculationAdminPage initialPanel="requests" requestsOnly onClose={() => setSection('overview')} />}
+          {physicalSectionVisited ? (
+            <div hidden={section !== 'physical' && section !== 'physical-requests'}>
+              <PhysicalCirculationAdminPage
+                active={section === 'physical' || section === 'physical-requests'}
+                initialPanel={section === 'physical-requests' ? 'requests' : undefined}
+                requestsOnly={section === 'physical-requests'}
+                onClose={() => navigateToSection('overview')}
+              />
+            </div>
+          ) : null}
 
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">

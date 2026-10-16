@@ -2,6 +2,7 @@ export type CanonicalAccessMode = 'free' | 'points' | 'premium'
 export type StoredAccessMode = CanonicalAccessMode | 'loan' | 'restricted' | string | null | undefined
 
 export const DIGITAL_ACCESS_DURATION_OPTIONS = [1, 3, 7, 14, 30] as const
+export const PHYSICAL_LOAN_DURATION_OPTIONS = [14] as const
 export type DigitalAccessCosts = Partial<Record<`${typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]}`, number>>
 
 /**

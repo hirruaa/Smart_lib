@@ -30,7 +30,7 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
   const [reference, setReference] = useState('')
   const [proofFile, setProofFile] = useState<File | null>(null)
   const [request, setRequest] = useState<PhysicalRequest | null>(null)
-  const [waitlisted, setWaitlisted] = useState(false)
+  const [availabilityAlertEnabled, setAvailabilityAlertEnabled] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -45,14 +45,14 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
     setError('')
     void (async () => {
       const supabase = getSupabase()
-      const [optionsResult, copiesResult, requestResult, waitlistResult] = await Promise.all([
+      const [optionsResult, copiesResult, requestResult, alertSubscriptionResult] = await Promise.all([
         supabase.from('physical_loan_options').select('id,duration_days,fee_amount,is_active').eq('book_id', book.id).eq('is_active', true).order('duration_days'),
         supabase.from('physical_book_copies').select('id,section,shelf_number,row_number,position_number,location').eq('book_id', book.id).eq('status', 'available'),
         supabase.from('physical_book_requests').select('id,status,payment_status,duration_days,fee_amount,requested_at').eq('student_id', userId).eq('book_id', book.id).in('status', ['pending', 'checked_out']).order('requested_at', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('physical_book_waitlist').select('book_id').eq('student_id', userId).eq('book_id', book.id).maybeSingle(),
       ])
       if (!active) return
-      const failed = [optionsResult, copiesResult, requestResult, waitlistResult].find((result) => result.error)
+      const failed = [optionsResult, copiesResult, requestResult, alertSubscriptionResult].find((result) => result.error)
       if (failed?.error) setError(`Unable to load physical-book availability: ${failed.error.message}`)
       const nextOptions = (optionsResult.data ?? []) as LoanOption[]
       setOptions(nextOptions)
@@ -61,7 +61,7 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
       setAvailableCopyLocations(availableCopiesData)
       setAvailableCopies(availableCopiesData.length)
       setRequest((requestResult.data ?? null) as PhysicalRequest | null)
-      setWaitlisted(Boolean(waitlistResult.data))
+      setAvailabilityAlertEnabled(Boolean(alertSubscriptionResult.data))
       setAvailableCopies(availableCopiesData.length)
       setLoading(false)
     })()
@@ -100,13 +100,14 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
       })
       if (requestError) throw new Error(requestError.message)
       setRequest(data as PhysicalRequest)
-      setWaitlisted(false)
+      setAvailabilityAlertEnabled(false)
       setMessage('Borrow request submitted. The librarian assigns a copy when checkout is confirmed; this request does not hold a copy.')
       setProofFile(null)
       onComplete()
     } catch (cause) {
       if (proofPath) await supabase.storage.from('physical-payment-proofs').remove([proofPath])
-      setError(cause instanceof Error ? cause.message : 'Unable to submit the physical-book request.')
+      const message = cause instanceof Error ? cause.message : 'Unable to submit the physical-book request.'
+      setError(message.replace(/join (the )?(waitlist|availability queue) instead/i, 'turn on an availability alert from the book card instead'))
     } finally {
       setSaving(false)
     }
@@ -125,27 +126,49 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
 
   const confirmCancelRequest = () => setConfirmAction('cancel')
 
-  const joinWaitlist = async () => {
+  const enableAvailabilityAlert = async () => {
     if (!book) return
     setSaving(true)
-    const { error: waitlistError } = await getSupabase().rpc('join_physical_book_waitlist', { p_book_id: book.id })
-    if (waitlistError) setError(waitlistError.message)
-    else { setWaitlisted(true); setMessage('You joined the availability queue. We will notify you when a copy is available.'); onComplete() }
-    setSaving(false)
+    setError('')
+    setMessage('')
+    try {
+      const { error: alertError } = await getSupabase().rpc('join_physical_book_waitlist', { p_book_id: book.id })
+      if (alertError) setError(alertError.message.replace('availability queue', 'availability alerts'))
+      else {
+        setAvailabilityAlertEnabled(true)
+        setMessage('You will be notified when a copy is available. The alert does not reserve a copy; borrowing is first come, first served.')
+        onComplete()
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to turn on the availability alert.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const confirmJoinWaitlist = () => setConfirmAction('join')
+  const confirmEnableAvailabilityAlert = () => setConfirmAction('join')
 
-  const leaveWaitlist = async () => {
+  const disableAvailabilityAlert = async () => {
     if (!book) return
     setSaving(true)
-    const { error: leaveError } = await getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: book.id })
-    if (leaveError) setError(leaveError.message)
-    else { setWaitlisted(false); setMessage('You left the availability queue.'); onComplete() }
-    setSaving(false)
+    setError('')
+    setMessage('')
+    try {
+      const { error: alertError } = await getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: book.id })
+      if (alertError) setError(alertError.message)
+      else {
+        setAvailabilityAlertEnabled(false)
+        setMessage('Availability alert turned off.')
+        onComplete()
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to turn off the availability alert.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const confirmLeaveWaitlist = () => setConfirmAction('leave')
+  const confirmDisableAvailabilityAlert = () => setConfirmAction('leave')
 
   const requestAvailable = availableCopies > 0
   const availabilityLabel = availableCopies > 0
@@ -163,13 +186,13 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
           <label className="block text-sm font-medium">Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as 'cash' | 'gcash')} className={input}><option value="cash">Cash at library desk</option><option value="gcash">GCash</option></select></label>
           {paymentMethod === 'gcash' ? <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700"><label className="block text-sm font-medium">GCash reference<input value={reference} onChange={(event) => setReference(event.target.value)} maxLength={100} className={input} /></label><label className="block text-sm font-medium">Receipt image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => setProofFile(event.target.files?.[0] ?? null)} className={input} /></label></div> : null}
           <button type="button" disabled={saving} onClick={submitRequest} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Submitting...' : 'Submit borrow request'}</button>
-        </> : !requestAvailable ? <div>{waitlisted ? <div className="space-y-3"><p className="text-sm text-slate-600 dark:text-slate-300">You are already on the availability queue.</p><button type="button" disabled={saving} onClick={confirmLeaveWaitlist} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-600">{saving ? 'Leaving...' : 'Leave availability queue'}</button></div> : <button type="button" disabled={saving} onClick={confirmJoinWaitlist} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Joining...' : 'Join availability queue'}</button>}</div> : <p className="text-sm text-slate-500">Loan periods are not configured for this title yet.</p>}
+        </> : !requestAvailable ? <div>{availabilityAlertEnabled ? <div className="space-y-3"><p className="text-sm text-slate-600 dark:text-slate-300">You will be notified when a copy becomes available. The alert does not reserve a copy; borrowing is first come, first served.</p><button type="button" disabled={saving} onClick={confirmDisableAvailabilityAlert} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-600">{saving ? 'Saving...' : 'Turn off alerts'}</button></div> : <button type="button" disabled={saving} onClick={confirmEnableAvailabilityAlert} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Saving...' : 'Notify me when available'}</button>}</div> : <p className="text-sm text-slate-500">Loan periods are not configured for this title yet.</p>}
       </div>}
       <ActionModal
         open={confirmAction !== null}
-        title={confirmAction === 'cancel' ? 'Cancel borrow request?' : confirmAction === 'leave' ? 'Leave availability queue?' : confirmAction === 'join' ? 'Join availability queue?' : 'Submit borrow request?'}
+        title={confirmAction === 'cancel' ? 'Cancel borrow request?' : confirmAction === 'leave' ? 'Turn off availability alerts?' : confirmAction === 'join' ? 'Turn on availability alerts?' : 'Submit borrow request?'}
         description={confirmAction === 'cancel' ? 'Your pending request will be cancelled. It does not hold a copy.' : confirmAction === 'submit' && book ? `Submit a borrow request for “${book.title}”. Staff confirms checkout and assigns a copy at the library desk.` : undefined}
-        confirmLabel={confirmAction === 'cancel' ? 'Cancel request' : confirmAction === 'leave' ? 'Leave queue' : confirmAction === 'join' ? 'Join queue' : 'Submit request'}
+        confirmLabel={confirmAction === 'cancel' ? 'Cancel request' : confirmAction === 'leave' ? 'Turn off alerts' : confirmAction === 'join' ? 'Notify me' : 'Submit request'}
         tone={confirmAction === 'cancel' || confirmAction === 'leave' ? 'danger' : 'default'}
         busy={saving}
         onClose={() => setConfirmAction(null)}
@@ -178,8 +201,8 @@ export default function PhysicalBorrowModal({ open, book, userId, copyId = null,
           setConfirmAction(null)
           if (action === 'submit') void executeSubmitRequest()
           else if (action === 'cancel') void cancelRequest()
-          else if (action === 'join') void joinWaitlist()
-          else if (action === 'leave') void leaveWaitlist()
+          else if (action === 'join') void enableAvailabilityAlert()
+          else if (action === 'leave') void disableAvailabilityAlert()
         }}
       />
     </BaseModal>

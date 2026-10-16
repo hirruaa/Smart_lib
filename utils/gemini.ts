@@ -3,7 +3,7 @@ import 'server-only'
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
 type GeminiChatMessage = { role: 'user' | 'model'; text: string }
 const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
-const MAX_TRANSIENT_RETRIES = 2
+const MAX_TRANSIENT_RETRIES = 1
 
 function retryDelay(response: Response, retry: number) {
   const retryAfter = response.headers.get('retry-after')
@@ -33,9 +33,12 @@ async function callGemini(contents: Array<{ role: 'user' | 'model'; parts: Gemin
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('Gemini is not configured. Set GEMINI_API_KEY in the server environment.')
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
+  const deadline = Date.now() + 30_000
   const requestModel = async (modelName: string) => {
     let currentResponse: Response | undefined
     for (let retry = 0; retry <= MAX_TRANSIENT_RETRIES; retry++) {
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) throw new GeminiRequestError('Gemini request timed out.', undefined, 'timeout')
       currentResponse = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`,
         {
@@ -46,11 +49,11 @@ async function callGemini(contents: Array<{ role: 'user' | 'model'; parts: Gemin
             ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
             generationConfig: config,
           }),
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(Math.min(20_000, remainingMs)),
         },
       )
       if (currentResponse.status !== 503 || retry === MAX_TRANSIENT_RETRIES) return currentResponse
-      await wait(retryDelay(currentResponse, retry))
+      await wait(Math.min(retryDelay(currentResponse, retry), Math.max(0, deadline - Date.now())))
     }
     if (!currentResponse) throw new Error('Gemini request did not produce an HTTP response.')
     return currentResponse
@@ -134,7 +137,7 @@ export async function generateGeminiChatReply(messages: GeminiChatMessage[], sys
   }
   return callGemini(
     contents,
-    { maxOutputTokens: 700, thinkingConfig: { thinkingLevel: 'low' } },
+    { maxOutputTokens: 450, thinkingConfig: { thinkingLevel: 'low' } },
     systemInstruction,
   )
 }

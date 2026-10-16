@@ -97,7 +97,18 @@ type PhysicalLoan = {
   transaction_reference?: string | null
   title?: string
 }
-type PhysicalWaitlist = { book_id: number; created_at: string; title?: string }
+type PhysicalAvailabilityAlert = { book_id: number; created_at: string; title?: string }
+
+function getPhysicalCopyToken(qrData: string) {
+  try {
+    const token = new URL(qrData, window.location.origin).searchParams.get('copy')
+    return token && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)
+      ? token
+      : null
+  } catch {
+    return null
+  }
+}
 function LineIcon({ children }: { children: React.ReactNode }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
 }
@@ -128,8 +139,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [books, setBooks] = useState<Book[]>([])
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
   const [physicalLoans, setPhysicalLoans] = useState<PhysicalLoan[]>([])
-  const [physicalWaitlist, setPhysicalWaitlist] = useState<PhysicalWaitlist[]>([])
+  const [availabilityAlerts, setAvailabilityAlerts] = useState<PhysicalAvailabilityAlert[]>([])
   const [requestStatus, setRequestStatus] = useState<string | null>(null)
+  const [availabilityAlertSavingBookId, setAvailabilityAlertSavingBookId] = useState<number | null>(null)
   const [feedbackModal, setFeedbackModal] = useState<FeedbackModal | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [premiumReference, setPremiumReference] = useState('')
@@ -158,12 +170,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const initialDataLoaded = useRef(false)
   const [loanActionId, setLoanActionId] = useState<number | null>(null)
   const [confirmAction, setConfirmAction] = useState<{ type: 'renew' | 'return'; id: number } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [fines, setFines] = useState<Fine[]>([])
-  const [finesLoaded, setFinesLoaded] = useState(false)
   const [readingProgressLoaded, setReadingProgressLoaded] = useState(false)
   const [clock, setClock] = useState(0)
   const [systemNotifications, setSystemNotifications] = useState<SystemNotification[]>([])
@@ -179,6 +191,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [lastReadPages, setLastReadPages] = useState<Record<number, number>>({})
   const [readingProgress, setReadingProgress] = useState<Record<number, { current_page: number; total_pages: number | null }>>({})
   const [dataReloadToken, setDataReloadToken] = useState(0)
+
+  const reportDashboardLoadError = (message: string) => {
+    if (initialDataLoaded.current) {
+      console.error(`[SmartLib] Dashboard refresh failed: ${message}`)
+      return
+    }
+    setLoadError(message)
+  }
 
   useEffect(() => {
     setClock(Date.now())
@@ -229,13 +249,25 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     let active = true
     let stream: MediaStream | null = null
     let timer: number | null = null
+    let jsQR: typeof import('jsqr').default
+    let context: CanvasRenderingContext2D | null = null
+    let scanCount = 0
+    const canvas = document.createElement('canvas')
     const startScanner = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setScannerError('Camera access is unavailable. Open Smart Lib over HTTPS or use the QR sticker link.')
+        setScannerError('Camera access is unavailable here. Open Smart Lib over HTTPS or choose a QR image below.')
         return
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          })
+        } catch (cameraError) {
+          if (!(cameraError instanceof DOMException) || cameraError.name !== 'OverconstrainedError') throw cameraError
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        }
         if (!active) {
           stream.getTracks().forEach((track) => track.stop())
           return
@@ -245,47 +277,46 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         video.srcObject = stream
         await video.play()
         if (!active) return
-        setScannerStatus('Camera ready. Point it at a Smart Lib QR sticker.')
+        setScannerStatus('Camera ready. Center the Smart Lib QR sticker in view.')
 
-        const { default: jsQR } = await import('jsqr')
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d', { willReadFrequently: true })
+        const qrModule = await import('jsqr')
+        jsQR = qrModule.default
+        context = canvas.getContext('2d', { willReadFrequently: true })
         if (!context) throw new Error('QR scanning is unavailable in this browser.')
         const scan = () => {
-          if (!active || !scannerVideoRef.current) return
+          if (!active || !scannerVideoRef.current || !context) return
           const currentVideo = scannerVideoRef.current
           if (currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && currentVideo.videoWidth > 0) {
-            const scale = Math.min(1, 640 / currentVideo.videoWidth)
+            const scale = Math.min(1, 960 / currentVideo.videoWidth)
             canvas.width = Math.round(currentVideo.videoWidth * scale)
             canvas.height = Math.round(currentVideo.videoHeight * scale)
             context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height)
             const frame = context.getImageData(0, 0, canvas.width, canvas.height)
-            const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'attemptBoth' })
+            scanCount += 1
+            const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: scanCount % 4 === 0 ? 'attemptBoth' : 'dontInvert' })
             if (result?.data) {
-              try {
-                const url = new URL(result.data, window.location.origin)
-                const copyToken = url.searchParams.get('copy')
-                if (copyToken) {
-                  window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
-                  return
-                }
-              } catch {
-                setScannerError('That QR code is not a valid Smart Lib book sticker.')
-                setScannerStatus('')
+              const copyToken = getPhysicalCopyToken(result.data)
+              if (copyToken) {
+                window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
                 return
               }
+              setScannerError('This QR code is not a Smart Lib physical-book sticker. Try another code or image.')
+              setScannerStatus('')
+              return
             }
           }
-          timer = window.setTimeout(scan, 250)
+          timer = window.setTimeout(scan, 180)
         }
         scan()
       } catch (cause) {
         if (!active) return
         setScannerStatus('')
         setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError'
-          ? 'Camera permission was denied. Allow camera access in your browser settings and try again.'
+          ? 'Camera permission was denied. Allow camera access in your browser settings, or choose a QR image below.'
           : cause instanceof DOMException && cause.name === 'NotFoundError'
-            ? 'No camera was found on this device.'
+            ? 'No camera was found on this device. You can choose a QR image below instead.'
+            : cause instanceof DOMException && cause.name === 'SecurityError'
+              ? 'Camera access requires a secure HTTPS connection. Open Smart Lib over HTTPS or choose a QR image below.'
             : cause instanceof Error
               ? cause.message
               : 'Unable to open the camera for QR scanning.')
@@ -301,6 +332,38 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
     }
   }, [scannerOpen])
+
+  const scanQrImage = async (file: File) => {
+    setScannerError('')
+    setScannerStatus('Reading QR image…')
+    try {
+      const image = await createImageBitmap(file)
+      try {
+        const scale = Math.min(1, 1600 / Math.max(image.width, image.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (!context) throw new Error('QR scanning is unavailable in this browser.')
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+        const frame = context.getImageData(0, 0, canvas.width, canvas.height)
+        const { default: jsQR } = await import('jsqr')
+        const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'attemptBoth' })
+        const copyToken = result?.data ? getPhysicalCopyToken(result.data) : null
+        if (!copyToken) {
+          setScannerError('No Smart Lib book QR was found in that image. Try a clearer, well-lit photo.')
+          setScannerStatus('')
+          return
+        }
+        window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
+      } finally {
+        image.close()
+      }
+    } catch (cause) {
+      setScannerError(cause instanceof Error ? `Unable to read that image: ${cause.message}` : 'Unable to read that QR image.')
+      setScannerStatus('')
+    }
+  }
 
   useEffect(() => {
     if (!userId) return
@@ -325,12 +388,29 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   }, [userId, notificationReloadToken])
 
   useEffect(() => {
-    if (!userId || !notificationsOpen || finesLoaded) return
-    getSupabase().from('fines').select('id, amount, status, created_at').eq('student_id', userId).eq('status', 'unpaid').order('created_at', { ascending: false }).then(({ data }) => {
+    if (!userId || !notificationsOpen) return
+    const supabase = getSupabase()
+    void (async () => {
+      const { error: refreshError } = await supabase.rpc('calculate_overdue_fines')
+      if (refreshError) {
+        console.error('[SmartLib] Unable to refresh borrowing fines:', refreshError.message)
+        setNotificationError('Unable to refresh borrowing fines. Please try again.')
+        return
+      }
+      const { data, error } = await supabase
+        .from('fines')
+        .select('id, amount, status, created_at')
+        .eq('student_id', userId)
+        .eq('status', 'unpaid')
+        .order('created_at', { ascending: false })
+      if (error) {
+        console.error('[SmartLib] Unable to load borrowing fines:', error.message)
+        setNotificationError('Unable to load borrowing fines. Please try again.')
+        return
+      }
       setFines((data ?? []) as Fine[])
-      setFinesLoaded(true)
-    })
-  }, [userId, notificationsOpen, finesLoaded])
+    })()
+  }, [userId, notificationsOpen, notificationReloadToken])
 
   useEffect(() => {
     if (!notificationsOpen) return
@@ -369,7 +449,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         .maybeSingle()
 
       if (profileError) {
-        setLoadError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
+        reportDashboardLoadError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
         return
       }
 
@@ -393,7 +473,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       setProfile({ full_name: fullName, email: email ?? '', points_balance: profileData?.points_balance ?? 0, department: profileData?.department ?? null })
       setUserId(currentUser.id)
 
-      const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, physicalWaitlistResult] = await Promise.all([
+      const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, availabilityAlertsResult] = await Promise.all([
         supabase
           .from('books')
           .select('id, title, author, category, description, isbn, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
@@ -417,19 +497,19 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         Boolean(result.error && (result.error.code === '42P01' || /relation .* does not exist/i.test(result.error.message ?? '')))
       const requiredError = [booksResult, requestsResult].find((result) => result.error)?.error
       if (requiredError) {
-        setLoadError(`Unable to load your library data. Apply the required Supabase schema, then try again. (${requiredError.message})`)
+        reportDashboardLoadError(`Unable to load your library data. Apply the required Supabase schema, then try again. (${requiredError.message})`)
         return
       }
       if (contributionResult.error) {
-        setLoadError(`Unable to verify permanent contribution access. (${contributionResult.error.message})`)
+        reportDashboardLoadError(`Unable to verify permanent contribution access. (${contributionResult.error.message})`)
         return
       }
       if (physicalLoansResult.error && !isMissingTableError(physicalLoansResult)) {
-        setLoadError(`Unable to load physical lending data. (${physicalLoansResult.error.message})`)
+        reportDashboardLoadError(`Unable to load physical lending data. (${physicalLoansResult.error.message})`)
         return
       }
-      if (physicalWaitlistResult.error && !isMissingTableError(physicalWaitlistResult)) {
-        setLoadError(`Unable to load physical availability queue. (${physicalWaitlistResult.error.message})`)
+      if (availabilityAlertsResult.error && !isMissingTableError(availabilityAlertsResult)) {
+        reportDashboardLoadError(`Unable to load physical availability alerts. (${availabilityAlertsResult.error.message})`)
         return
       }
 
@@ -464,7 +544,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
       const bookLookup = new Map<number, Book>(fetchedBooks.map((b) => [b.id, b]))
       setBooks(fetchedBooks)
-      setPhysicalWaitlist((physicalWaitlistResult.data ?? []).map((entry: PhysicalWaitlist) => ({
+      setAvailabilityAlerts((availabilityAlertsResult.data ?? []).map((entry: PhysicalAvailabilityAlert) => ({
         ...entry,
         title: bookLookup.get(entry.book_id)?.title,
       })))
@@ -480,6 +560,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         ...loan,
         title: bookLookup.get(loan.book_id)?.title ?? `Book #${loan.book_id}`,
       })))
+      initialDataLoaded.current = true
+      setLoadError(null)
       setDataReady(true)
     }
 
@@ -723,6 +805,43 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     const supabase = getSupabase()
     await supabase.auth.signOut()
     router.replace('/login')
+  }
+
+  const togglePhysicalAvailabilityAlert = async (book: Book) => {
+    if (!userId) {
+      setRequestStatus('Sign in to manage physical-book availability alerts.')
+      return
+    }
+
+    const subscribed = availabilityAlerts.some((alert) => alert.book_id === book.id)
+    setAvailabilityAlertSavingBookId(book.id)
+    setRequestStatus(null)
+    try {
+      const { error: alertError } = await getSupabase().rpc(
+        subscribed ? 'leave_physical_book_waitlist' : 'join_physical_book_waitlist',
+        { p_book_id: book.id }
+      )
+
+      if (alertError) {
+        const message = alertError.message.replace('availability queue', 'availability alerts')
+        setRequestStatus(`Unable to ${subscribed ? 'turn off' : 'turn on'} the availability alert. (${message})`)
+      } else if (subscribed) {
+        setAvailabilityAlerts((current) => current.filter((alert) => alert.book_id !== book.id))
+        setRequestStatus(`Availability alert turned off for "${book.title}".`)
+      } else {
+        setAvailabilityAlerts((current) => [...current, {
+          book_id: book.id,
+          created_at: new Date().toISOString(),
+          title: book.title,
+        }])
+        setRequestStatus(`You'll be notified when "${book.title}" is available. Alerts do not reserve a copy; borrowing is first come, first served.`)
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Unexpected error'
+      setRequestStatus(`Unable to ${subscribed ? 'turn off' : 'turn on'} the availability alert. (${message})`)
+    } finally {
+      setAvailabilityAlertSavingBookId(null)
+    }
   }
 
   const markNotificationRead = async (notificationId: number) => {
@@ -1342,7 +1461,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                       >
                         {book.catalog_type === 'physical' ? 'Browse copies & request' : 'Request digital access'}
                       </button>
-                      <div className="mt-3 flex gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         {book.catalog_type === 'hybrid' ? <button type="button" onClick={() => setPhysicalBook({
                           id: book.id,
                           title: book.title,
@@ -1350,6 +1469,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           category: book.category,
                           catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
                         })} className="secondary-action flex-1 rounded-xl border px-3 py-2 text-xs font-semibold">Physical copies</button> : null}
+                        {book.catalog_type !== 'digital' &&
+                        (book.physical_available_copies ?? 0) === 0 ? (() => {
+                          const subscribed = availabilityAlerts.some((alert) => alert.book_id === book.id)
+                          return <button
+                            type="button"
+                            aria-pressed={subscribed}
+                            disabled={availabilityAlertSavingBookId === book.id}
+                            onClick={() => void togglePhysicalAvailabilityAlert(book)}
+                            className="secondary-action inline-flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                          >
+                            <BellIcon />
+                            {availabilityAlertSavingBookId === book.id ? 'Saving...' : subscribed ? 'Turn off alerts' : 'Notify me'}
+                          </button>
+                        })() : null}
                       </div>
                       </> : <p className="resource-card-hint">Select to view details and actions</p>}
                     </div>
@@ -1532,7 +1665,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         userId={userId}
         copyId={physicalCopyId}
         onClose={() => { setPhysicalBook(null); setPhysicalCopyId(null) }}
-        onComplete={() => { setPhysicalBook(null); setPhysicalCopyId(null); setDataReady(false); setDataReloadToken((value) => value + 1) }}
+        onComplete={() => { setPhysicalBook(null); setPhysicalCopyId(null); setDataReloadToken((value) => value + 1) }}
       />
       {selectedBook ? (
         <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedBook(null) }}>
@@ -1622,9 +1755,25 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-modal-title">
             <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical collection</p><h2 id="scanner-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Scan book QR</h2></div><button type="button" className="notification-modal-close" onClick={() => setScannerOpen(false)} aria-label="Close QR scanner">×</button></div>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Point your camera at a Smart Lib copy sticker. The matching book will open in the catalog.</p>
-            <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" muted playsInline />
+            <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" autoPlay muted playsInline />
             {scannerError ? <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{scannerError}</p> : null}
             {!scannerError && scannerStatus ? <p aria-live="polite" className="mt-4 text-sm text-slate-600 dark:text-slate-300">{scannerStatus}</p> : null}
+            <label className="mt-4 inline-flex cursor-pointer items-center rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+              Choose QR image
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="sr-only"
+                aria-label="Choose an image containing a Smart Lib QR code"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file) void scanQrImage(file)
+                }}
+              />
+            </label>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Camera access needs HTTPS. If scanning does not start, use a photo or screenshot of the QR sticker.</p>
           </section>
         </div>
       ) : null}
@@ -1728,7 +1877,35 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       </div> : null}
       {physicalHistoryOpen ? (
         <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalHistoryOpen(false) }}>
-          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p><h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button></div><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track requests, queue positions, payment, checkout, returns, and receipts.</p><div className="modal-record-list">{physicalWaitlist.map((entry) => <div key={`physical-waitlist-${entry.book_id}`} className="modal-record"><div><p className="font-semibold text-slate-900 dark:text-slate-100">{entry.title ?? `Book #${entry.book_id}`}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability queue · joined {new Date(entry.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Waitlisted</span></div>)}{physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p><p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status === 'pending' ? 'Awaiting librarian review' : loan.status === 'return_pending' ? 'Return request awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</div>)}{physicalLoans.length === 0 && physicalWaitlist.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}</div></section>
+          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-history-title">
+            <div className="notification-modal-header">
+              <div>
+                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical lending</p>
+                <h2 id="physical-history-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests and receipts</h2>
+              </div>
+              <button type="button" className="notification-modal-close" onClick={() => setPhysicalHistoryOpen(false)} aria-label="Close physical lending history">×</button>
+            </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track requests, availability alerts, payment, checkout, returns, and receipts.</p>
+            <div className="modal-record-list">
+              {availabilityAlerts.map((entry) => <div key={`availability-alert-${entry.book_id}`} className="modal-record">
+                <div>
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">{entry.title ?? `Book #${entry.book_id}`}</p>
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability alert · enabled {new Date(entry.created_at).toLocaleDateString()}</p>
+                </div>
+                <span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Alerts on</span>
+              </div>)}
+              {physicalLoans.map((loan) => <div key={`physical-history-${loan.id}`} className="modal-record">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">{loan.title}</p>
+                  <p className="mt-1 text-xs capitalize text-slate-500 dark:text-slate-400">{loan.status === 'pending' ? 'Awaiting librarian review' : loan.status === 'return_pending' ? 'Return request awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · PHP {Number(loan.fee_amount).toFixed(2)}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>
+                  {loan.receipt_number ? <p className="mt-2 font-mono text-xs font-semibold text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Bring this request to the librarian for payment confirmation and checkout.</p> : null}
+                </div>
+                {loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}
+              </div>)}
+              {physicalLoans.length === 0 && availabilityAlerts.length === 0 ? <div className="modal-empty-state">No physical lending records yet.</div> : null}
+            </div>
+          </section>
         </div>
       ) : null}
       {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>
@@ -1762,7 +1939,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 !(request.status === 'approved' && !request.returned_date && request.due_date && new Date(request.due_date).getTime() > clock && Math.ceil((new Date(request.due_date).getTime() - clock) / (1000 * 60 * 60 * 24)) <= 3)
               ) ? <li className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">Your borrowing notifications will appear here.</li> : null}
             </ul>
-            {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>${fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong></div> : null}
+            {fines.length > 0 ? <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">Unpaid fines: <strong>₱{fines.reduce((total, fine) => total + Number(fine.amount), 0).toFixed(2)}</strong><span className="mt-1 block">Settle physical-book fines with the library cashier. Digital loans do not accrue overdue fines.</span></div> : null}
           </section>
         </div>
       ) : null}
