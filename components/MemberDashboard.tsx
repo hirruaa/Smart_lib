@@ -109,8 +109,8 @@ function getPhysicalCopyToken(qrData: string) {
     return null
   }
 }
-function LineIcon({ children }: { children: React.ReactNode }) {
-  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+function LineIcon({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
 }
 
 function DashboardIcon() { return <LineIcon><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></LineIcon> }
@@ -122,7 +122,7 @@ function HistoryIcon() { return <LineIcon><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6
 function ProfileIcon() { return <LineIcon><circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0" /></LineIcon> }
 function LogoutIcon() { return <LineIcon><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" /></LineIcon> }
 function MenuIcon() { return <LineIcon><path d="M4 6h16M4 12h16M4 18h16" /></LineIcon> }
-function BellIcon() { return <LineIcon><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></LineIcon> }
+function BellIcon() { return <LineIcon className="h-4 w-4 shrink-0"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></LineIcon> }
 function SearchIcon() { return <LineIcon><circle cx="10.8" cy="10.8" r="6.2" /><path d="m16 16 4.2 4.2" /></LineIcon> }
 function FilterIcon() { return <LineIcon><path d="M4 6h16M7 12h10M10 18h4" /></LineIcon> }
 function SortIcon() { return <LineIcon><path d="M8 5v14M5 8l3-3 3 3M16 19V5M13 16l3 3 3-3" /></LineIcon> }
@@ -165,7 +165,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState('')
   const [scannerStatus, setScannerStatus] = useState('')
+  const [scannerStarting, setScannerStarting] = useState(false)
+  const [scannerStarted, setScannerStarted] = useState(false)
   const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
+  const scannerStreamRef = useRef<MediaStream | null>(null)
+  const scannerTimerRef = useRef<number | null>(null)
+  const scannerActiveRef = useRef(false)
   const [continueReadingOpen, setContinueReadingOpen] = useState(false)
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
@@ -246,92 +251,112 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
   useEffect(() => {
     if (!scannerOpen) return
-    let active = true
-    let stream: MediaStream | null = null
-    let timer: number | null = null
-    let jsQR: typeof import('jsqr').default
-    let context: CanvasRenderingContext2D | null = null
-    let scanCount = 0
-    const canvas = document.createElement('canvas')
-    const startScanner = async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setScannerError('Camera access is unavailable here. Open Smart Lib over HTTPS or choose a QR image below.')
-        return
-      }
-      try {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false,
-          })
-        } catch (cameraError) {
-          if (!(cameraError instanceof DOMException) || cameraError.name !== 'OverconstrainedError') throw cameraError
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        }
-        if (!active) {
-          stream.getTracks().forEach((track) => track.stop())
-          return
-        }
-        const video = scannerVideoRef.current
-        if (!video) throw new Error('The camera preview could not be initialized.')
-        video.srcObject = stream
-        await video.play()
-        if (!active) return
-        setScannerStatus('Camera ready. Center the Smart Lib QR sticker in view.')
-
-        const qrModule = await import('jsqr')
-        jsQR = qrModule.default
-        context = canvas.getContext('2d', { willReadFrequently: true })
-        if (!context) throw new Error('QR scanning is unavailable in this browser.')
-        const scan = () => {
-          if (!active || !scannerVideoRef.current || !context) return
-          const currentVideo = scannerVideoRef.current
-          if (currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && currentVideo.videoWidth > 0) {
-            const scale = Math.min(1, 960 / currentVideo.videoWidth)
-            canvas.width = Math.round(currentVideo.videoWidth * scale)
-            canvas.height = Math.round(currentVideo.videoHeight * scale)
-            context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height)
-            const frame = context.getImageData(0, 0, canvas.width, canvas.height)
-            scanCount += 1
-            const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: scanCount % 4 === 0 ? 'attemptBoth' : 'dontInvert' })
-            if (result?.data) {
-              const copyToken = getPhysicalCopyToken(result.data)
-              if (copyToken) {
-                window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
-                return
-              }
-              setScannerError('This QR code is not a Smart Lib physical-book sticker. Try another code or image.')
-              setScannerStatus('')
-              return
-            }
-          }
-          timer = window.setTimeout(scan, 180)
-        }
-        scan()
-      } catch (cause) {
-        if (!active) return
-        setScannerStatus('')
-        setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError'
-          ? 'Camera permission was denied. Allow camera access in your browser settings, or choose a QR image below.'
-          : cause instanceof DOMException && cause.name === 'NotFoundError'
-            ? 'No camera was found on this device. You can choose a QR image below instead.'
-            : cause instanceof DOMException && cause.name === 'SecurityError'
-              ? 'Camera access requires a secure HTTPS connection. Open Smart Lib over HTTPS or choose a QR image below.'
-            : cause instanceof Error
-              ? cause.message
-              : 'Unable to open the camera for QR scanning.')
-      }
-    }
     setScannerError('')
-    setScannerStatus('Requesting camera access…')
-    void startScanner()
+    setScannerStatus('')
     return () => {
-      active = false
-      if (timer !== null) window.clearTimeout(timer)
-      stream?.getTracks().forEach((track) => track.stop())
+      scannerActiveRef.current = false
+      setScannerStarting(false)
+      setScannerStarted(false)
+      if (scannerTimerRef.current !== null) window.clearTimeout(scannerTimerRef.current)
+      scannerTimerRef.current = null
+      scannerStreamRef.current?.getTracks().forEach((track) => track.stop())
+      scannerStreamRef.current = null
       if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
     }
   }, [scannerOpen])
+
+  const startPhysicalQrScanner = async () => {
+    setScannerError('')
+    setScannerStatus('Requesting camera access…')
+    setScannerStarting(true)
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setScannerStarting(false)
+      setScannerStatus('')
+      setScannerError(window.isSecureContext
+        ? 'Camera access is unavailable in this browser. Choose a QR image instead.'
+        : 'Camera access requires HTTPS or localhost. Open Smart Lib over a secure connection, or choose a QR image.')
+      return
+    }
+
+    scannerActiveRef.current = true
+    try {
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        })
+      } catch (cameraError) {
+        if (!(cameraError instanceof DOMException) || !['OverconstrainedError', 'NotFoundError'].includes(cameraError.name)) throw cameraError
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      }
+
+      if (!scannerActiveRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+
+      scannerStreamRef.current = stream
+      const video = scannerVideoRef.current
+      if (!video) throw new Error('The camera preview could not be initialized.')
+      video.srcObject = stream
+      await video.play()
+      setScannerStarting(false)
+      setScannerStarted(true)
+      setScannerStatus('Camera ready. Center the Smart Lib QR sticker in view.')
+
+      const { default: jsQR } = await import('jsqr')
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('QR scanning is unavailable in this browser.')
+      let scanCount = 0
+      const scan = () => {
+        if (!scannerActiveRef.current || !scannerVideoRef.current) return
+        const currentVideo = scannerVideoRef.current
+        if (currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && currentVideo.videoWidth > 0) {
+          const scale = Math.min(1, 960 / currentVideo.videoWidth)
+          canvas.width = Math.round(currentVideo.videoWidth * scale)
+          canvas.height = Math.round(currentVideo.videoHeight * scale)
+          context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height)
+          const frame = context.getImageData(0, 0, canvas.width, canvas.height)
+          scanCount += 1
+          const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: scanCount % 4 === 0 ? 'attemptBoth' : 'dontInvert' })
+          if (result?.data) {
+            const copyToken = getPhysicalCopyToken(result.data)
+            if (copyToken) {
+              window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
+              return
+            }
+            setScannerError('This QR code is not a Smart Lib physical-book sticker. Try another code or image.')
+            setScannerStatus('')
+            scannerActiveRef.current = false
+            return
+          }
+        }
+        scannerTimerRef.current = window.setTimeout(scan, 180)
+      }
+      scan()
+    } catch (cause) {
+      scannerActiveRef.current = false
+      setScannerStarting(false)
+      setScannerStarted(false)
+      scannerStreamRef.current?.getTracks().forEach((track) => track.stop())
+      scannerStreamRef.current = null
+      if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
+      setScannerStatus('')
+      setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError'
+        ? 'The browser blocked camera access. Click the camera/site icon in the address bar and allow Camera access for this site, then select Start camera again.'
+        : cause instanceof DOMException && cause.name === 'NotFoundError'
+          ? 'No camera was found. Check that your webcam is connected and enabled, or choose a QR image.'
+          : cause instanceof DOMException && cause.name === 'NotReadableError'
+            ? 'The webcam is busy or unavailable. Close other apps using it, then select Start camera again.'
+            : cause instanceof DOMException && cause.name === 'SecurityError'
+              ? 'Camera access requires a secure HTTPS connection. Open Smart Lib over HTTPS or localhost, or choose a QR image.'
+              : cause instanceof Error
+                ? `Unable to start the camera: ${cause.message}`
+                : 'Unable to start the camera. Check browser and operating-system camera permissions.')
+    }
+  }
 
   const scanQrImage = async (file: File) => {
     setScannerError('')
@@ -1758,22 +1783,32 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" autoPlay muted playsInline />
             {scannerError ? <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{scannerError}</p> : null}
             {!scannerError && scannerStatus ? <p aria-live="polite" className="mt-4 text-sm text-slate-600 dark:text-slate-300">{scannerStatus}</p> : null}
-            <label className="mt-4 inline-flex cursor-pointer items-center rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
-              Choose QR image
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="sr-only"
-                aria-label="Choose an image containing a Smart Lib QR code"
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  event.target.value = ''
-                  if (file) void scanQrImage(file)
-                }}
-              />
-            </label>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Camera access needs HTTPS. If scanning does not start, use a photo or screenshot of the QR sticker.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void startPhysicalQrScanner()}
+                disabled={scannerStarting || scannerStarted}
+                className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {scannerStarting ? 'Requesting camera...' : scannerStarted ? 'Camera active' : 'Start camera'}
+              </button>
+              <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                Choose QR image
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  aria-label="Choose an image containing a Smart Lib QR code"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    event.target.value = ''
+                    if (file) void scanQrImage(file)
+                  }}
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Select Start camera to request browser permission. If access was blocked earlier, allow Camera for this site from the browser’s address-bar controls, then try again. Camera access needs HTTPS or localhost.</p>
           </section>
         </div>
       ) : null}
