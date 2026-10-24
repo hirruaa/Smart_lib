@@ -586,8 +586,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const condition = returnConditions[loanId] ?? 'available'
     if (condition === 'lost' || condition === 'damaged') {
       const draft = lostFineDrafts[loanId] ?? { amount: '', reason: '' }
-      if (condition === 'damaged' && !draft.reason.trim()) {
-        setError('Record an inspection note describing the damage.')
+      if ((condition === 'damaged' || condition === 'lost') && !draft.reason.trim()) {
+        setError(condition === 'lost' ? 'Record an inspection note describing the lost item.' : 'Record an inspection note describing the damage.')
         setBusy(false)
         return
       }
@@ -595,7 +595,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         p_request_id: loanId,
         p_copy_condition: condition,
         p_assessed_amount: 0,
-        p_assessment_reason: condition === 'damaged' ? draft.reason.trim() : null,
+        p_assessment_reason: condition === 'damaged' || condition === 'lost' ? draft.reason.trim() : null,
       })
       if (actionError) setError(actionError.message)
       else {
@@ -718,8 +718,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }
   const closeLoan = (loanId: number) => {
     const condition = returnConditions[loanId] ?? 'available'
-    if (condition === 'damaged') {
+    if (condition === 'damaged' || condition === 'lost') {
       setLostFineDrafts((current) => ({ ...current, [loanId]: current[loanId] ?? { amount: '', reason: '' } }))
+    }
+    if (condition === 'damaged') {
       setLostFineLoanId(loanId)
       return
     }
@@ -1421,6 +1423,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         title={pendingAction?.type === 'archiveMany' ? `Archive ${pendingAction.ids.length} catalog records?` : pendingAction?.type === 'deleteMany' ? `Delete ${pendingAction.ids.length} archived records?` : pendingAction?.type === 'checkout' ? 'Confirm physical checkout?' : pendingAction?.type === 'close' ? returnConditions[pendingAction.id] === 'lost' ? 'Open lost-item case?' : confirmingReturnRequest ? 'Confirm requested return?' : 'Record physical-book return?' : pendingAction?.type === 'reject' ? 'Reject physical-book request?' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Archive this book?' : 'Restore this book?' : pendingAction?.type === 'deleteBook' ? 'Permanently delete this archived title?' : 'Resolve lost-book hold?'}
         description={pendingAction?.type === 'archiveMany' ? 'These titles will be hidden from members. Existing copies and circulation records remain available.' : pendingAction?.type === 'deleteMany' ? 'Deletion is permanent. The database will keep any selected record with loans, payments, member activity, or attached files and report why it could not be removed.' : pendingAction?.type === 'close' ? `${confirmingReturnRequest ? 'The borrower return request will be completed. ' : ''}The selected condition (${returnConditions[pendingAction.id] ?? 'available'}) will be recorded.` : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? `This title will be hidden from members. Loan history and existing records will be preserved.` : `This title will become available in the active catalog again.` : pendingAction?.type === 'deleteBook' ? `This is permanent. Deletion is allowed only when the database finds no loan, payment, member activity, or attached file.` : undefined}
         confirmLabel={pendingAction?.type === 'archiveMany' ? 'Archive selected' : pendingAction?.type === 'deleteMany' ? 'Delete eligible titles' : pendingAction?.type === 'checkout' ? 'Confirm checkout' : pendingAction?.type === 'close' ? returnConditions[pendingAction.id] === 'lost' ? 'Mark lost' : confirmingReturnRequest ? 'Confirm return' : 'Record return' : pendingAction?.type === 'reject' ? 'Reject request' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Archive book' : 'Restore book' : pendingAction?.type === 'deleteBook' ? 'Permanently delete' : 'Resolve hold'}
+        confirmDisabled={pendingAction?.type === 'close' && returnConditions[pendingAction.id] === 'lost' && !lostFineDrafts[pendingAction.id]?.reason.trim()}
         tone={pendingAction?.type === 'archiveMany' || pendingAction?.type === 'checkout' || pendingAction?.type === 'close' || (pendingAction?.type === 'archiveBook' && !pendingAction.archived) ? 'default' : 'danger'}
         busy={pendingAction?.type === 'archiveBook' || pendingAction?.type === 'deleteBook' || pendingAction?.type === 'archiveMany' || pendingAction?.type === 'deleteMany' ? busy : pendingAction !== null && (pendingAction.type === 'close' || pendingAction.type === 'checkout' || pendingAction.type === 'reject') && processingRequestId === pendingAction.id}
         onClose={() => setPendingAction(null)}
@@ -1435,7 +1438,11 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           else if (action?.type === 'close') void executeCloseLoan(action.id)
           else if (action?.type === 'reject') void executeRejectRequest(action.id)
         }}
-      />
+      >
+        {pendingAction?.type === 'close' && returnConditions[pendingAction.id] === 'lost' ? <label className="mt-4 block text-sm font-medium">Inspection note
+          <textarea required maxLength={500} rows={3} value={lostFineDrafts[pendingAction.id]?.reason ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [pendingAction.id]: { ...(current[pendingAction.id] ?? { amount: '', reason: '' }), reason: event.target.value } }))} placeholder="Describe how the item was reported lost" className={`${input} mt-1`} />
+        </label> : null}
+      </ActionModal>
     <ActionModal
       open={fineWaiver !== null}
       title="Waive physical fine?"
