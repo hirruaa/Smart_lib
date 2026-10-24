@@ -1,7 +1,8 @@
 -- Smart Lib consolidated Supabase schema.
--- Fresh project: run this file once in the Supabase SQL Editor. It includes the
--- current contribution-file, digital-access, faculty/department, and duration
--- updates in dependency order. Do not run the individual migrations afterward.
+-- Fresh project: run this baseline once in the Supabase SQL Editor, then apply
+-- migration files 20261038 through the latest numbered migration in filename
+-- order. Those migrations contain the current closed-registration, role,
+-- finance, physical circulation, and member activity ledger policies.
 -- Existing project with data: use only reviewed, applicable migrations after
 -- testing against a backup in staging. The pgTAP tests remain separate.
 

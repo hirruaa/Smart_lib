@@ -1,8 +1,8 @@
 import Link from 'next/link'
 
 export const metadata = {
-  title: 'Unauthorized - Smart Lib',
-  description: 'Access denied page for Smart Lib',
+  title: 'Access denied',
+  description: 'This account does not have access to the requested college library page.',
 }
 
 export default function UnauthorizedPage() {

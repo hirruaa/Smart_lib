@@ -10,7 +10,7 @@ export default function NotFound() {
           The link may be outdated, or the page may have moved.
         </p>
         <Link href="/" className="mt-7 inline-flex rounded-xl bg-forest-700 px-5 py-3 font-semibold text-white hover:bg-forest-800">
-          Return to Smart Lib
+          Return to the college library
         </Link>
       </section>
     </main>

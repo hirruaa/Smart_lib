@@ -15,7 +15,7 @@ export default function EbookUploader({
   onUrlEntered,
   currentValue,
   disabled = false,
-  allowExternalUrl = true,
+  allowExternalUrl = false,
 }: EbookUploaderProps) {
   const [mode, setMode] = useState<'upload' | 'url'>('upload')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -25,8 +25,11 @@ export default function EbookUploader({
 
   const handleFile = (file: File) => {
     setFileError(null)
-    if (file.type !== 'application/pdf') {
-      setFileError('Please select a valid PDF file.')
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    const isPdf = extension === 'pdf' && file.type === 'application/pdf'
+    const isEpub = extension === 'epub' && file.type === 'application/epub+zip'
+    if (!isPdf && !isEpub) {
+      setFileError('Choose a valid PDF or EPUB book file.')
       return
     }
     // 50MB check
@@ -78,7 +81,7 @@ export default function EbookUploader({
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
             }`}
           >
-            Upload PDF
+            Upload PDF / EPUB
           </button>
           {allowExternalUrl ? <button
             type="button"
@@ -92,7 +95,7 @@ export default function EbookUploader({
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
             }`}
           >
-            External URL / Google Drive
+            External file URL
           </button> : null}
         </div>
       </div>
@@ -114,7 +117,7 @@ export default function EbookUploader({
             <input
               ref={fileInputRef}
               type="file"
-              accept="application/pdf"
+              accept=".pdf,.epub,application/pdf,application/epub+zip"
               className="hidden"
               disabled={disabled}
               onChange={(e) => {
@@ -162,7 +165,7 @@ export default function EbookUploader({
             ) : (
               <div className="mt-2">
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Click to select or drag & drop PDF here
+                  Click to select or drag & drop a PDF or EPUB book here
                 </p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Protected library storage &bull; Up to 50 MB
@@ -186,11 +189,11 @@ export default function EbookUploader({
             value={currentValue ?? ''}
             onChange={(e) => onUrlEntered && onUrlEntered(e.target.value)}
             disabled={disabled}
-            placeholder="https://drive.google.com/... or https://..."
+            placeholder="https://example.edu/book.pdf"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              Paste a public PDF URL or Google Drive share link.
+              Paste a direct link to a public PDF file.
           </p>
         </div>
       )}

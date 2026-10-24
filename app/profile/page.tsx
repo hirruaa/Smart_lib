@@ -76,7 +76,7 @@ export default function ProfilePage() {
       .update({
         full_name: fullName.trim() || null,
         school: school.trim() || null,
-        department: department.trim() || null,
+        department: profile?.role === 'faculty' ? department.trim() || null : null,
         course: course.trim() || null,
         student_year: studentYear.trim() || null,
       })
@@ -136,18 +136,18 @@ export default function ProfilePage() {
                 className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none"
               />
             </label>
-            <label className="block">
+            <div className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">School</span>
-              <input value={school} maxLength={120} onChange={(event) => setSchool(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="School or college" />
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Department</span>
-              <input value={department} maxLength={120} onChange={(event) => setDepartment(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="Department" />
-            </label>
+              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">Mary the Queen College of Quezon City</p>
+            </div>
+            {profile?.role === 'faculty' ? <label className="block">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Faculty</span>
+              <input value={department} maxLength={120} onChange={(event) => setDepartment(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="Faculty" />
+            </label> : null}
             {profile?.role === 'student' ? <>
               <label className="block">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Course / program</span>
-                <input value={course} maxLength={120} onChange={(event) => setCourse(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="Course or program" />
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Course</span>
+                <input value={course} maxLength={120} onChange={(event) => setCourse(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="Course" />
               </label>
               <label className="block">
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Year level</span>

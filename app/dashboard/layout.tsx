@@ -1,6 +1,6 @@
 export const metadata = {
-  title: 'Smart Lib Dashboard',
-  description: 'Admin or Student dashboard area',
+  title: 'College Library Dashboard',
+  description: 'Secure workspace for students, faculty, librarians, and administrators.',
 }
 
 export default function DashboardLayout({

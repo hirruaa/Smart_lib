@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
 
   if (!siteUrl) {
-    console.error('NEXT_PUBLIC_SITE_URL is required to publish the Smart Lib sitemap URL in robots.txt.')
+    console.error('NEXT_PUBLIC_SITE_URL is required to publish the Mary the Queen College sitemap URL in robots.txt.')
   }
 
   return {

@@ -51,14 +51,15 @@ Make useful academic resources easier to discover and access while preserving pr
 
 | Persona / role | Primary needs | Expected capabilities |
 |---|---|---|
-| Student | Find resources, read, borrow, study, and understand points/access status | Member dashboard, digital access, physical requests and availability alerts, reader and study tools, profile, contributions, points, notifications, assistant |
-| Faculty | Locate course-relevant materials and borrow/access library resources | Member workspace and eligible student-like access; faculty rank and taught-course details |
-| Administrator / librarian (`admin`) | Maintain the collection and member records; decide staff-controlled workflows | Admin dashboard, catalog/material management, account and academic-catalog management, request/contribution review, physical circulation, fee/payment verification, access grants, points/recognition quick actions, analytics and audit surfaces |
+| Student | Find resources, read, borrow, study, and understand account activity and charges | Member dashboard, digital access, physical requests and availability alerts, reader and study tools, course/year profile, points, receipts, notifications, assistant |
+| Faculty | Find course resources, read, borrow, and contribute teaching materials | Member workspace and student-like borrowing/access; assigned faculty and courses; supplementary course-material contributions |
+| Librarian | Run daily library and circulation operations | Separate library-desk workspace; physical requests, checkout, returns and inspections, lost/damaged cases, fines, cashier receipts, existing-resource circulation, and Library AI. Cannot create accounts or upload catalog books/files. |
+| Admin | Govern accounts, catalog, platform settings, and system-wide records | Exclusive account provisioning and role assignment; digital catalog uploads; academic catalog; global settings/storage; analytics, audit, and oversight across all workspaces |
 | Public visitor | Check the physical collection before visiting | Read-only public physical-catalog information and aggregate availability; no account data or borrower identities |
 
-Application roles are `student`, `faculty`, and `admin`; librarian is represented by `admin`, not a separate role. New self-registered accounts default to student. Role changes are privileged administrative actions and must not be available through ordinary member profile editing.
+Smart Lib uses four distinct application roles: `admin`, `librarian`, `faculty`, and `student`. Registration is closed: there is no public sign-up page, self-registration endpoint, or public account-creation path. Only an authenticated administrator may provision accounts, delete accounts, or assign/change roles. Authentication, API routes, database functions, and row-level security must enforce the same boundary; hiding a sign-up button is not sufficient.
 
-Student profile attributes include name, school, department, course/program, and year level. Faculty profiles can include school, department, academic rank, and multiple taught courses. School and department are currently free-text profile fields; faculty ranks and academic courses have administrator-managed lists. A member may update permitted personal fields, but cannot self-promote or alter protected role/rank assignments.
+The school is Mary the Queen College of Quezon City and is not a member account choice. Student academic details are course and year level. Faculty accounts use the administrator-managed faculty choice and assigned courses; faculty titles and ranks are not part of the current account model. Members may update only permitted personal fields and cannot change their role or controlled academic assignments.
 
 ## 4. Scope, priority, and implementation status
 
@@ -66,9 +67,9 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 
 | Priority | Capability | Status at PRD update |
 |---|---|---|
-| P0 | Authentication, role authorization, private member data, and production secrets | Present in source; authorization, Supabase RLS, environment configuration, and recovery flows require release verification |
+| P0 | Closed registration, four-role authorization, private member data, and production secrets | Present in source/migrations; deployed Auth settings, Supabase RLS, environment configuration, and recovery flows require release verification |
 | P0 | Reliable schema/deployment setup against the target Supabase project | Consolidated schema exists for a fresh project; existing populated projects require a reviewed, staged upgrade path and backup |
-| P0 | Reliable physical checkout/return and no duplicate copy allocation | Transactional functions and UI exist; live database, concurrency, and recovery tests still required |
+| P0 | Reliable physical checkout/return, three-active-loan cap, and no duplicate copy allocation | Database locking/checks and UI limit are implemented; the default cap remains pending Head Librarian confirmation and concurrency tests are required |
 | P0 | Automatic eligible free/points digital access; protected PDF authorization | Implemented in source/schema; verify database functions, grants, and storage privacy in staging |
 | P0 | Error reporting, operational monitoring, backup/restore, and scheduled reminder setup | Not fully verified/configured by the QA pass; release gate |
 | P1 | Student and faculty dashboards, profile details, member self-service | Present; profile role and data policies require validation |
@@ -76,7 +77,8 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 | P1 | Excel-style physical catalog, copy records, printable QR labels, requests, payment evidence, availability alerts, receipts, return/lost-item handling | Present in source/schema; public privacy, realtime delivery, and full circulation test required |
 | P1 | Contribution upload, revision, AI screening, administrator decision, and post-approval points | Present in source; AI remains advisory and points are tied to human approval |
 | P1 | Member points wallet, transaction history, recognition and achievement surfaces | Present in source/schema; confirm policy, transaction integrity, and optional-table behavior |
-| P1 | Admin member management, academic rank/course lists, library operations, dashboard access-grant quick action, and audit surfaces | Present in source; validate staff-only authorization and data integrity |
+| P1 | Admin member provisioning, academic faculty/course lists, library operations, dashboard access-grant quick action, and audit surfaces | Present in source; validate staff-only authorization and data integrity |
+| P1 | Read-only chronological member activity ledger | Database trigger ledger and member/admin profile views are implemented; verify RLS, source events, and migration rollout |
 | P1 | Premium e-book pricing, payment-evidence submission, staff verification, permanent access, and digital receipts | Implemented in source/schema; verify payment policy, storage privacy, and staff reconciliation in staging |
 | P2 | OCR-assisted physical-book table-of-contents entry during registration | Proposed enhancement; not represented as a currently delivered workflow |
 | P2 | Admin-configurable contribution point bonuses and broader reward campaigns | Existing approval/points foundations; configurable award policy needs product definition and implementation |
@@ -88,12 +90,12 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 
 ### 5.1 Account creation and sign-in
 
-1. A member registers with email and password or receives an administrator-created account.
-2. A new self-registered account receives the student role by default.
-3. The member verifies/signs in as required by configured authentication policy.
-4. The application reads the trusted profile role and routes the member to the appropriate workspace.
+1. An administrator creates the account, assigns one of the four roles, and enters the required course/year or faculty/course assignments.
+2. No visitor or member can self-register or choose a privileged role.
+3. The provisioned member signs in with the credentials/policy configured by the administrator.
+4. The application reads the trusted profile role and routes the member to the appropriate workspace; librarian and administrator workspaces remain distinct.
 5. A missing profile, disabled account, expired session, or failed auth service produces a recoverable message; it must not grant broader access or create a redirect loop.
-6. Members can sign out and use configured password-recovery flows.
+6. Members can sign out and use configured password-recovery flows; recovery must never create a new account.
 
 ### 5.2 Digital browse, access, and reading
 
@@ -156,7 +158,7 @@ Read-in-library use remains a separate discovery action. It does not create a ph
 
 ### 5.6 Administrator operations
 
-Administrators sign in and manage member profiles/roles, faculty rank and course catalogs, the unified digital/PDF catalog, physical titles/copies/QR labels, borrow requests, contributions, payment evidence, access grants and points through dashboard quick actions, and operational reports. Physical requests and checked-out copies are presented as compact sections/cards with details available in modals. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
+Administrators provision all accounts and roles, manage the faculty/course catalogs, upload the unified digital/PDF catalog, set platform/storage options, and review system-wide activity. Librarians use a separate workspace for physical titles/copies/QR labels, borrowing, checkout, returns and inspections, lost/damaged cases, fines, receipts, and Library AI. Librarians cannot create accounts or upload books/files. Sensitive actions require server/database authorization, confirmation for destructive actions, clear success/failure messages, and an audit record where applicable.
 
 ### 5.7 Notifications and reminders
 
@@ -169,12 +171,12 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | ID | Priority | Requirement | Baseline |
 |---|---|---|---|
 | FR-001 | P0 | The system shall authenticate members and associate each session with a trusted member profile. | Implemented; verify provider configuration |
-| FR-002 | P0 | Self-registration shall assign the least-privileged member role by default. | Implemented in source/schema |
-| FR-003 | P0 | Role checks shall be enforced by the server/database for every privileged read or mutation, not only by hiding UI controls. | Implemented in parts; full policy audit required |
-| FR-004 | P1 | Student and faculty members shall have member workspaces; administrators shall have separate administrative tools. | Implemented |
+| FR-002 | P0 | Public self-registration shall be disabled in the UI, Auth configuration, API, and database; visitors can sign in only with an account provisioned by an administrator. | Closed-registration migration and admin provisioning route present; verify deployed Auth configuration |
+| FR-003 | P0 | Only an administrator may create/delete accounts or assign/change the four roles (`admin`, `librarian`, `faculty`, `student`); every privileged read or mutation shall be enforced by the server/database. | Implemented in source/migrations; full policy audit and negative access tests required |
+| FR-004 | P1 | Student, faculty, librarian, and administrator workspaces shall reflect their distinct permissions; the librarian workspace shall not expose administrator provisioning, global settings, or catalog upload. | Implemented in source; verify all direct routes and database functions |
 | FR-005 | P1 | Members shall view and update only permitted profile fields; role and privileged academic assignments shall not be self-editable. | Implemented in parts; verify all paths |
-| FR-006 | P1 | Member profiles shall support full name, school, department, student course/program and year; faculty may have an academic rank and multiple assigned courses. | Implemented in source/schema; check data policy |
-| FR-007 | P1 | Administrators shall be able to manage available faculty ranks and academic courses and edit eligible member profiles. | Implemented in source/schema |
+| FR-006 | P1 | Student profiles shall capture course and year level; faculty profiles shall capture the controlled faculty choice and assigned courses. The single-school identity and retired faculty-rank model shall not be presented as member choices. | Implemented in source/schema; verify deployed academic catalogs |
+| FR-007 | P1 | Administrators shall manage faculty and course choices and edit eligible member profiles; only administrators provision accounts and change roles. | Implemented in source/schema |
 | FR-008 | P1 | Members shall browse and search the digital library and view each resource's access mode and duration terms. Physical-only titles shall not appear in the digital/e-book catalog. | Implemented; verify catalog/schema alignment |
 | FR-009 | P1 | Administrators shall manage digital/e-book metadata and protected PDF references in one searchable catalog; attaching or replacing a PDF shall update the existing title rather than create a duplicate catalog entry. | Implemented; verify file access and storage rules |
 | FR-009A | P1 | The admin digital catalog shall provide an Excel-style table with search, filtering, sorting, pagination, format/PDF status, and per-row create/edit/delete/read/attach-PDF actions. | Implemented in source; verify usability and authorization |
@@ -182,7 +184,7 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-011 | P0 | A valid points-based digital-access request shall atomically verify and deduct the required points and create access; failure shall not partially charge the member. | Implemented in source/schema; concurrency test required |
 | FR-012 | P0 | Eligible free/points digital access shall not depend on physical stock or a librarian decision. | Implemented as product flow |
 | FR-013 | P1 | Members shall view their pending, active, expired, returned, or otherwise resolved digital access state. | Implemented in member workspace |
-| FR-014 | P1 | Members shall renew or return eligible digital access within the configured limits and receive a clear result. | Implemented in source/schema |
+| FR-014 | P1 | Members shall renew eligible digital access within configured limits and receive a clear result; member-initiated return controls remain unavailable where library policy requires staff to close access. | Implemented in source/schema |
 | FR-015 | P0 | Protected digital files shall be retrievable only after current authorization, except for explicitly authorized admin/contributor cases. | Implemented in source; security test required |
 | FR-016 | P1 | The reader shall support reading progress and member-owned notes, highlights, and drawings without exposing another member's study data. | Implemented in source/schema |
 | FR-017 | P0 | Premium digital checkout shall require a configured positive price, private payment evidence, and authorized staff verification; uploaded evidence or AI extraction alone shall never grant access. | Implemented in source/schema; staging payment and privacy test required |
@@ -193,6 +195,7 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-021 | P1 | A member shall open a physical title from the web catalog or QR scan, view copy status/location, choose read-in-library use without a request, submit a pending borrow request when a copy is available, or turn on/off an availability alert from the book card when no copy is available. | Implemented in source/schema; verify QR/browser coverage |
 | FR-021A | P1 | The system shall support an in-app QR scanner where the browser provides `BarcodeDetector`, while retaining safe direct QR-link resolution as a fallback. | Implemented in source; browser compatibility test required |
 | FR-022 | P0 | Checkout shall require authorized staff confirmation and shall atomically select and associate one currently available copy with the request only at confirmation; a pending request shall not reserve or lock a copy. | Implemented in source/schema; concurrency-test required |
+| FR-022A | P0 | A member shall have at most three active physical loans. The database shall serialize/check checkout transitions per member and reject a fourth active loan; the member interface shall disable new requests at the limit. A return remains active until staff completes inspection. | Implemented in migration/UI; default cap awaits Head Librarian confirmation and concurrency testing |
 | FR-023 | P1 | Physical payment evidence shall remain pending until verified by authorized staff; AI/OCR extraction may assist entry but shall not confirm payment. The librarian queue shall distinguish pending, awaiting-payment, ready-for-checkout, checked-out, overdue, and return-pending work. | Partially implemented; verify queue states and payment policy |
 | FR-024 | P1 | The system shall issue a receipt and due date after successful physical checkout and record return, renewal where allowed, and closure outcomes. | Implemented in source/schema |
 | FR-025 | P1 | When a physical title transitions from no available copies to at least one available copy, the system shall notify all eligible members who opted into an availability alert. Alerts shall not reserve copies; staff confirms checkout on a first-come, first-served basis. Members shall be able to turn alerts off. | Implemented in source/schema; database broadcast and member controls require isolated validation |
@@ -210,6 +213,7 @@ Every requirement is testable. Status reflects the current source baseline; prod
 | FR-037 | P1 | The assistant shall answer supported catalog, policy, or member-loan questions using only data the caller is authorized to access. | Implemented foundation; response fidelity and scope require testing |
 | FR-038 | P1 | Assistant sessions and messages shall be private to their owner, with authorized session deletion. | Implemented in source/schema; RLS test required |
 | FR-039 | P1 | Administrators shall see actionable metrics and manage requests, members, resources, contributions, access grants, points, and audit information permitted by their role. Physical request and copy changes shall update the circulation view through Supabase Realtime when the deployment publication is enabled. The physical queue shall prioritize pending operational work and expose payment, checkout, overdue, and return states. | Partially implemented; verify each surface, queue state, and realtime delivery |
+| FR-039B | P1 | Members and authorized staff shall be able to view a read-only chronological activity ledger for account lifecycle events, access and physical circulation, fine assessments/resolutions, receipts/payments, contributions, and points. Events shall link to source request/receipt identifiers; source tables remain authoritative. | Implemented in migration/UI; verify trigger coverage, RLS, and migration rollout |
 | FR-039A | P1 | Admin request pages shall provide fast search, status filtering, and pagination. E-book requests shall be searchable by member, book, status, notes, and request ID; physical requests and availability-alert subscriptions shall be searchable by member, book, payment details, and request ID, with pending and alert-subscription filters. | Implemented in source; verify usability with larger request sets |
 | FR-040 | P0 | Errors, empty states, loading states, and validation failures shall be understandable and shall not present a failed operation as successful. | Partially implemented; test and fix before launch |
 | FR-041 | P1 | Users shall be able to reach privacy, terms, cookie, authentication recovery, and branded error/not-found experiences. | Pages present; deployed links/configuration require verification |
@@ -220,8 +224,8 @@ The system's core entities and responsibilities are:
 
 | Entity | Purpose and key relationships |
 |---|---|
-| Profile | Member identity, role, contact, school/department, student course/year, points, and optional faculty rank |
-| Faculty rank, academic course, faculty-course assignment | Controlled academic attributes and many-to-many faculty course associations |
+| Profile | Member identity, one of four roles, course/year or faculty choice, points, and account status |
+| Faculty, academic course, faculty-course assignment | Controlled faculty and course choices and many-to-many faculty course associations |
 | Book | Digital or physical/hybrid title metadata; digital entitlement is independent of copy inventory |
 | Physical book copy | One individually identified item, QR token, location/status, and due-date state |
 | Digital borrow request / access grant | Time-limited or other eligible digital entitlement, points paid, status, and expiry |
@@ -231,7 +235,7 @@ The system's core entities and responsibilities are:
 | Study note, highlight, drawing, reading progress | Member-owned study artifacts associated with a digital resource |
 | Notification, email queue, reminder event | In-app event and queued/scheduled communication state |
 | Assistant session/message | Member-owned conversation and stored assistant exchange |
-| Fine, audit log | Policy-based amounts and administrative action history |
+| Fine, audit log, member activity ledger | Policy-based amounts and administrative history; the append-only ledger is a read-only chronological index linked to source records, not a replacement for financial or loan tables |
 
 Data retention periods, account deletion rules, consent language, and school-specific records obligations must be decided and documented before real member data is used. Private PDFs, payment proofs, study records, assistant content, and account details must not be exposed through public catalog responses.
 
@@ -344,9 +348,12 @@ The checkout transaction has these required invariants: the caller is an authori
 
 ### Product success metrics
 
-- At least 95% of test members complete registration/sign-in and reach the correct role workspace without staff intervention.
+- 100% of public sign-up attempts are rejected; 100% of account creation and role assignment succeeds only through administrator authorization.
+- At least 95% of administrator-provisioned test accounts sign in and reach the correct role workspace without staff intervention.
 - At least 95% of eligible points-based access tests either grant access and debit the exact amount once, or fail without a debit.
 - 100% of physical test checkouts require authorized staff confirmation, leave pending requests unassigned, and associate exactly one available copy only at successful checkout.
+- 100% of concurrent checkout attempts preserve the three-active-physical-loan cap per member.
+- Member profile ledger events are read-only, ordered by event time, linked to request/receipt IDs where available, and visible only to the member and authorized staff.
 - 100% of public physical-catalog test responses omit borrower identity, private requests, payment evidence, and private QR tokens.
 - At least 95% of contribution submissions can be followed from submission through decision, feedback, and correct points outcome.
 - At least 95% of representative members complete core tasks on mobile without horizontal overflow or blocked controls.

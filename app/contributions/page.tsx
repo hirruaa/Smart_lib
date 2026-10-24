@@ -34,6 +34,8 @@ export default function ContributionsPage() {
     async function start() {
       const { data: { user } } = await getSupabase().auth.getUser()
       if (!user) { router.replace('/login'); return }
+      const { data: profile, error: profileError } = await getSupabase().from('profiles').select('role').eq('id', user.id).maybeSingle()
+      if (profileError || profile?.role !== 'faculty') { router.replace('/unauthorized'); return }
       setUserId(user.id)
       await load(user.id)
     }

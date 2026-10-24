@@ -6,7 +6,7 @@ export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * Modern, theme-aware Skeleton primitive for Smart Lib.
+ * Modern, theme-aware Skeleton primitive for Mary the Queen College.
  * Seamlessly blends with the library's warm paper & pine forest design system.
  */
 export function Skeleton({

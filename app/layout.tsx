@@ -4,23 +4,23 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: {
-    default: 'Smart Lib | Academic Digital Library & Study Workspace',
-    template: '%s | Smart Lib',
+    default: 'Mary the Queen College of Quezon City | Digital Library',
+    template: '%s | Mary the Queen College',
   },
-  description: 'Smart Lib - Role-based academic digital library, e-book lending, study notes, and research assistant.',
+  description: 'The digital library of Mary the Queen College of Quezon City. Discover learning resources, manage your reading, and access academic support.',
   openGraph: {
     type: 'website',
-    siteName: 'Smart Lib',
-    title: 'Smart Lib | Academic Digital Library & Study Workspace',
-    description: 'Explore library resources, read, and keep your study work together in Smart Lib.',
+    siteName: 'Mary the Queen College of Quezon City',
+    title: 'Mary the Queen College of Quezon City | Digital Library',
+    description: 'Discover learning resources and academic support from the Mary the Queen College digital library.',
   },
   twitter: {
     card: 'summary',
-    title: 'Smart Lib | Academic Digital Library & Study Workspace',
-    description: 'Explore library resources, read, and keep your study work together in Smart Lib.',
+    title: 'Mary the Queen College of Quezon City | Digital Library',
+    description: 'Discover learning resources and academic support from the Mary the Queen College digital library.',
   },
   icons: {
-    icon: '/icon.svg',
+    icon: '/icon.png',
   },
 }
 
@@ -34,7 +34,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(() => { try { const palette = localStorage.getItem('smartlib-palette'); const mode = localStorage.getItem('smartlib-theme'); if (palette) document.documentElement.dataset.theme = palette; if (mode === 'dark' || (!mode && window.matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (error) {} })()`,
+            __html: `(() => { try { document.documentElement.dataset.theme = 'school'; const mode = localStorage.getItem('smartlib-theme'); if (mode === 'dark' || (!mode && window.matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark'); } catch (error) { document.documentElement.dataset.theme = 'school'; } })()`,
           }}
         />
       </head>

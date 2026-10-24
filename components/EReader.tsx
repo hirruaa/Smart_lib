@@ -42,6 +42,9 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const [highlightPalette, setHighlightPalette] = useState(highlightColors)
   const [highlightNames, setHighlightNames] = useState(highlightLabels)
   const [highlightColor, setHighlightColor] = useState(highlightColors[0])
+  const [customizeHighlightIndex, setCustomizeHighlightIndex] = useState<number | null>(null)
+  const [customHighlightName, setCustomHighlightName] = useState('')
+  const [customHighlightColor, setCustomHighlightColor] = useState('#f0c94b')
   const [confirmDeleteNoteId, setConfirmDeleteNoteId] = useState<number | null>(null)
   const [confirmClearDrawings, setConfirmClearDrawings] = useState(false)
   const [readerTheme, setReaderTheme] = useState<'paper' | 'sepia' | 'dark'>('paper')
@@ -281,12 +284,9 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     customize.textContent = 'Customize'
     customize.addEventListener('click', () => {
       const index = Math.max(0, highlightPalette.indexOf(highlightColor))
-      const name = window.prompt('Highlight label', highlightNames[index])?.trim()
-      const color = window.prompt('Highlight color', highlightPalette[index])?.trim()
-      if (!name || !color) return
-      setHighlightNames((items) => items.map((item, itemIndex) => itemIndex === index ? name : item))
-      setHighlightPalette((items) => items.map((item, itemIndex) => itemIndex === index ? color : item))
-      setHighlightColor(color)
+      setCustomHighlightName(highlightNames[index])
+      setCustomHighlightColor(highlightPalette[index])
+      setCustomizeHighlightIndex(index)
     })
     palette.appendChild(customize)
     const custom = document.createElement('input')
@@ -581,5 +581,27 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">x</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to remember..." /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: "{noteDraft.selection_text}"</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Saving...' : 'Save note'}</button></div></section></div> : null}
     <ActionModal open={confirmDeleteNoteId !== null} title="Delete study note?" description="This note will be permanently removed." confirmLabel="Delete note" tone="danger" onClose={() => setConfirmDeleteNoteId(null)} onConfirm={() => { const id = confirmDeleteNoteId; setConfirmDeleteNoteId(null); if (id !== null) void deleteNote(id) }} />
   <ActionModal open={confirmClearDrawings} title="Clear drawings?" description="All drawings on this page will be permanently removed." confirmLabel="Clear drawings" tone="danger" onClose={() => setConfirmClearDrawings(false)} onConfirm={() => { setConfirmClearDrawings(false); persistStrokes([]) }} />
+  <ActionModal
+    open={customizeHighlightIndex !== null}
+    title="Customize highlight"
+    description="Choose a label and color for this highlight preset."
+    confirmLabel="Save preset"
+    confirmDisabled={!customHighlightName.trim() || !/^#[\da-f]{6}$/i.test(customHighlightColor)}
+    onClose={() => setCustomizeHighlightIndex(null)}
+    onConfirm={() => {
+      if (customizeHighlightIndex === null) return
+      const index = customizeHighlightIndex
+      const name = customHighlightName.trim()
+      setHighlightNames((items) => items.map((item, itemIndex) => itemIndex === index ? name : item))
+      setHighlightPalette((items) => items.map((item, itemIndex) => itemIndex === index ? customHighlightColor : item))
+      setHighlightColor(customHighlightColor)
+      setCustomizeHighlightIndex(null)
+    }}
+  >
+    <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <label className="text-sm font-medium">Highlight label<input autoFocus maxLength={40} value={customHighlightName} onChange={(event) => setCustomHighlightName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" /></label>
+      <label className="text-sm font-medium">Color<input type="color" value={customHighlightColor} onChange={(event) => setCustomHighlightColor(event.target.value)} className="mt-1.5 block h-11 w-16 cursor-pointer rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900" /></label>
+    </div>
+  </ActionModal>
   </div>
 }

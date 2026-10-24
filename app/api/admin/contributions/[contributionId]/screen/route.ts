@@ -3,7 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
 import { askGemini } from '@/utils/gemini'
 import { rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
-import { isStaffRole } from '@/utils/roles'
+import { isAdminRole } from '@/utils/roles'
 
 export const runtime = 'nodejs'
 export const maxDuration = 90
@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ con
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
   const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
   if (profileError) return NextResponse.json({ error: 'Unable to verify administrator access.' }, { status: 500 })
-  if (!isStaffRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required.' }, { status: 403 })
+  if (!isAdminRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required.' }, { status: 403 })
 
   const { data: contribution, error: contributionError } = await supabase
     .from('book_contributions')

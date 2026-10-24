@@ -1,12 +1,12 @@
 import Link from 'next/link'
 
-export const metadata = { title: 'Privacy Policy | Smart Lib' }
+export const metadata = { title: 'Privacy Policy' }
 
 export default function PrivacyPage() {
   return (
     <main className="surface-page min-h-screen px-6 py-16 text-slate-900 dark:text-slate-100">
       <article className="surface-card mx-auto max-w-3xl p-8 sm:p-12">
-        <Link href="/" className="text-sm font-semibold text-sky-600 dark:text-sky-300">Back to Smart Lib</Link>
+        <Link href="/" className="text-sm font-semibold text-sky-600 dark:text-sky-300">Back to college library</Link>
         <h1 className="mt-8 text-4xl font-bold">Privacy Policy</h1>
         <p className="mt-3 text-sm text-slate-500">Last updated: September 8, 2026</p>
         <div className="mt-8 space-y-7 text-sm leading-7 text-slate-700 dark:text-slate-300">
@@ -14,7 +14,7 @@ export default function PrivacyPage() {
           <section><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">How we use information</h2><p className="mt-2">We use this information to authenticate users, provide library and research assistance, manage digital resource access, maintain security, send service notifications, and improve the library service.</p></section>
           <section><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Sharing and retention</h2><p className="mt-2">We do not sell personal information. When you use the AI library assistant, your message, recent chat context, matching catalog details, and—when you ask about your loans—limited details about your own loans are sent to Google Gemini to generate a response. Contribution screening also sends extracted contribution text to Gemini for an advisory review. Do not submit sensitive personal information in AI prompts. Data may also be processed by service providers that host authentication, database, and application infrastructure. We retain records for as long as needed to provide the service, meet institutional requirements, or resolve disputes.</p></section>
           <section><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Your choices</h2><p className="mt-2">You may request access to, correction of, or deletion of your account information, subject to library recordkeeping requirements. Contact your library administrator to make a request.</p></section>
-          <section><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Contact</h2><p className="mt-2">For privacy questions, contact the Smart Lib administrator for your institution.</p></section>
+          <section><h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Contact</h2><p className="mt-2">For privacy questions, contact the Mary the Queen College library administrator.</p></section>
         </div>
       </article>
     </main>

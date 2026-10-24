@@ -57,7 +57,7 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Active access required</h1><p className="mt-2">Request temporary digital access from the library before opening this resource.</p></div></div>
   }
 
-  const { data } = await supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,title,access_mode,catalog_type').eq('id', bookId).maybeSingle()
+  const { data } = await supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,file_name,mime_type,title,access_mode,catalog_type').eq('id', bookId).maybeSingle()
   const book = (data as any) ?? null
 
   if (book?.catalog_type === 'physical') {
@@ -68,6 +68,10 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Resource unavailable</h1><p className="mt-2">This resource does not have a readable digital file yet.</p></div></div>
   }
 
+  if (book.mime_type === 'application/epub+zip' || book.storage_path?.toLowerCase().endsWith('.epub')) {
+    return <main className="surface-page flex min-h-screen items-center justify-center px-4 py-10"><section className="surface-card w-full max-w-xl p-8"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-pine-700 dark:text-pine-200">EPUB book</p><h1 className="mt-3 text-2xl font-semibold">{book.title}</h1><p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">This book is available as an EPUB file. Download it and open it in an EPUB-compatible reading app.</p><a href={`/api/reader/${rawBookId}?download=1`} className="pine-action mt-6 inline-flex rounded-xl px-4 py-3 text-sm font-semibold">Download EPUB</a><a href="/dashboard#explore" className="ml-3 inline-flex rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold dark:border-slate-700">Back to catalog</a></section></main>
+  }
+
   let resolvedPdfUrl = book.pdf_url || ''
   if (book.storage_provider === 'google_drive' || book.storage_provider === 'supabase' || !resolvedPdfUrl.startsWith('http://') && !resolvedPdfUrl.startsWith('https://')) resolvedPdfUrl = `/api/reader/${rawBookId}`
 
@@ -75,7 +79,7 @@ export default async function Page({ params }: Props) {
     return <div className="surface-page min-h-screen p-8"><div className="surface-card mx-auto max-w-xl p-8"><h1 className="text-2xl font-semibold">Protected file migration required</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">This paid or restricted resource must be stored in the library&apos;s protected PDF storage before it can be opened.</p></div></div>
   }
 
-  const viewerLabel = [profile?.full_name, user.email].filter(Boolean).join(' · ') || 'Smart Lib member'
+  const viewerLabel = [profile?.full_name, user.email].filter(Boolean).join(' · ') || 'Mary the Queen College member'
 
   return (
     <div className="reader-page min-h-screen bg-paper-100 text-slate-900 dark:bg-forest-900 dark:text-paper-100">

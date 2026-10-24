@@ -16,9 +16,9 @@ function parseRange(value: string | null, size: number | null) {
   return { header: `bytes=${start}-${Math.min(end, size - 1)}` }
 }
 
-function responseHeaders(source?: Headers | Record<string, unknown>) {
+function responseHeaders(source?: Headers | Record<string, unknown>, contentType = 'application/pdf', attachmentName?: string | null) {
   const headers = new Headers({
-    'Content-Type': 'application/pdf',
+    'Content-Type': contentType,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
@@ -27,6 +27,7 @@ function responseHeaders(source?: Headers | Record<string, unknown>) {
     const value = source instanceof Headers ? source.get(name) : source?.[name]
     if (typeof value === 'string') headers.set(name, value)
   }
+  if (attachmentName) headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachmentName)}`)
   return headers
 }
 
@@ -50,7 +51,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
     { data: ownedContribution, error: contributionError },
   ] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
-    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type,file_size').eq('id', bookId).maybeSingle(),
+    supabase.from('books').select('id,pdf_url,storage_provider,storage_file_id,storage_path,catalog_type,file_size,file_name,mime_type').eq('id', bookId).maybeSingle(),
     supabase.from('book_contributions').select('id').eq('approved_book_id', bookId).eq('user_id', user.id).eq('status', 'approved').maybeSingle(),
   ])
   if (profileError) return apiError('Unable to verify your library role.', 500, profileError)
@@ -73,6 +74,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
     if (!loanResult.data && !grantResult.data) return NextResponse.json({ error: 'Active access required.' }, { status: 403 })
   }
 
+  const contentType = book.mime_type === 'application/epub+zip' || book.storage_path?.toLowerCase().endsWith('.epub') ? 'application/epub+zip' : 'application/pdf'
+  const attachmentName = new URL(request.url).searchParams.get('download') === '1' ? (book.file_name || `book-${bookId}.${contentType === 'application/epub+zip' ? 'epub' : 'pdf'}`) : null
+
   if (book.storage_provider === 'external' || (!book.storage_provider && book.pdf_url?.startsWith('http'))) {
     return NextResponse.json({ error: 'External resources must be migrated to protected library storage.' }, { status: 409 })
   }
@@ -89,7 +93,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
   if (book.storage_provider === 'google_drive' && book.storage_file_id) {
     try {
       const file = await streamGoogleDrivePdf(book.storage_file_id, undefined, range?.header)
-      const headers = responseHeaders(file.headers)
+      const headers = responseHeaders(file.headers, 'application/pdf', attachmentName)
       if (range && file.status === 200) {
         return NextResponse.json({ error: 'The document provider did not honor the requested byte range.' }, { status: 502 })
       }
@@ -119,6 +123,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ book
   }
   return new Response(upstream.body, {
     status: upstream.status,
-    headers: responseHeaders(upstream.headers),
+    headers: responseHeaders(upstream.headers, contentType, attachmentName),
   })
 }

@@ -3,7 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
-import { isStaffRole } from '@/utils/roles'
+import { isAdminRole } from '@/utils/roles'
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     .maybeSingle()
 
   if (profileError) return apiError('Unable to verify administrator access.', 500, profileError)
-  if (!isStaffRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
+  if (!isAdminRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -36,15 +36,23 @@ export async function POST(request: Request) {
   const password = typeof body.password === 'string' ? body.password : ''
   const role = body.role === 'faculty' || body.role === 'librarian' ? body.role : body.role === 'student' || body.role === undefined ? 'student' : null
   const fullName = boundedText(body.fullName ?? '', 120)
-  const school = boundedText(body.school ?? '', 120)
+  const school = 'Mary the Queen College of Quezon City'
   const department = boundedText(body.department ?? '', 120)
   const course = boundedText(body.course ?? '', 120)
   const studentYear = boundedText(body.studentYear ?? '', 40)
+  const facultyCourseIds = Array.isArray(body.facultyCourseIds)
+    ? Array.from(new Set(body.facultyCourseIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isSafeInteger(value) && value > 0)))
+    : []
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
   if (password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
   if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
-  if (fullName === null || school === null || department === null || course === null || studentYear === null) {
+  if (fullName === null || !fullName.trim()) return NextResponse.json({ error: 'Enter the member’s full name.' }, { status: 400 })
+  if (role === 'faculty' && !department) return NextResponse.json({ error: 'Choose a faculty.' }, { status: 400 })
+  if (role === 'student' && (!course || !studentYear)) {
+    return NextResponse.json({ error: 'Choose a course program and year level for the student account.' }, { status: 400 })
+  }
+  if (department === null || course === null || studentYear === null) {
     return NextResponse.json({ error: 'Profile details exceed the allowed length.' }, { status: 400 })
   }
 
@@ -52,15 +60,29 @@ export async function POST(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   })
   if (role === 'faculty') {
-    if (!department) return NextResponse.json({ error: 'Choose a department for the faculty account.' }, { status: 400 })
     const { data: departmentChoice, error: departmentError } = await adminClient
       .from('academic_departments')
       .select('id')
       .eq('name', department)
       .eq('is_active', true)
       .maybeSingle()
-    if (departmentError) return apiError('Faculty departments are not configured. Apply the faculty signup migration first.', 503, departmentError)
-    if (!departmentChoice) return NextResponse.json({ error: 'Choose an active department from the catalog.' }, { status: 400 })
+    if (departmentError) return apiError('The faculty list is unavailable.', 503, departmentError)
+    if (!departmentChoice) return NextResponse.json({ error: 'Choose an active faculty from the catalog.' }, { status: 400 })
+  }
+  if (role === 'student') {
+    const { data: courseChoice, error: courseError } = await adminClient
+      .from('academic_courses').select('id').eq('name', course).eq('is_active', true).maybeSingle()
+    if (courseError) return apiError('Student course choices are unavailable.', 503, courseError)
+    if (!courseChoice) return NextResponse.json({ error: 'Choose an active course program from the catalog.' }, { status: 400 })
+    if (!['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].includes(studentYear)) {
+      return NextResponse.json({ error: 'Choose a valid year level.' }, { status: 400 })
+    }
+  }
+  if (role === 'faculty') {
+    const { data: facultyCourses, error: facultyCoursesError } = await adminClient
+      .from('academic_courses').select('id').in('id', facultyCourseIds).eq('is_active', true)
+    if (facultyCoursesError) return apiError('Faculty course choices are unavailable.', 503, facultyCoursesError)
+    if ((facultyCourses ?? []).length !== facultyCourseIds.length) return NextResponse.json({ error: 'Choose active courses from the list.' }, { status: 400 })
   }
   const { data: created, error } = await adminClient.auth.admin.createUser({
     email,
@@ -91,6 +113,16 @@ export async function POST(request: Request) {
       const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
       if (rollbackError) console.error('Unable to roll back member creation after profile setup failed.', rollbackError)
       return apiError('Unable to save the new member profile.', 500, profileUpdateError)
+    }
+    if (role === 'faculty' && facultyCourseIds.length > 0) {
+      const { error: courseAssignmentError } = await adminClient.from('faculty_courses').insert(
+        facultyCourseIds.map((courseId) => ({ faculty_id: created.user!.id, course_id: courseId })),
+      )
+      if (courseAssignmentError) {
+        const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
+        if (rollbackError) console.error('Unable to roll back faculty creation after course assignment failed.', rollbackError)
+        return apiError('Unable to save the faculty course assignments.', 500, courseAssignmentError)
+      }
     }
   }
 
@@ -145,10 +177,6 @@ export async function DELETE(request: Request) {
     return apiError('Unable to find the member account.', 500, targetProfileError)
   }
   if (!targetProfile) return NextResponse.json({ error: 'Member account not found.' }, { status: 404 })
-  if (targetProfile.role === 'admin' || targetProfile.role === 'librarian') {
-    return NextResponse.json({ error: 'Staff accounts cannot be deleted from member management.' }, { status: 403 })
-  }
-
   const { data: targetAuthUser, error: targetAuthUserError } = await adminClient.auth.admin.getUserById(targetUserId)
   if (targetAuthUserError || !targetAuthUser.user) {
     if (targetAuthUserError) console.error('Unable to load the member auth account before deletion.', targetAuthUserError)

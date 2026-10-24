@@ -11,32 +11,33 @@ Used for role-aware auth routing and member profile details.
 | --- | --- | --- |
 | `id` | `uuid` | Supabase auth user id |
 | `email` | `text` | Login email |
-| `role` | `text` | `student`, `faculty`, or `admin` |
+| `role` | `text` | `admin`, `librarian`, `faculty`, or `student` |
 | `full_name` | `text` | Optional display name |
-| `school` | `text` | Optional school or college |
-| `department` | `text` | Optional department |
-| `course` | `text` | Optional student course or program |
-| `student_year` | `text` | Optional student year level |
-| `faculty_rank_id` | `bigint` | Optional faculty title; references `faculty_ranks.id` |
+| `school` | `text` | Legacy field; current product has one school |
+| `department` | `text` | Backing field for the controlled faculty choice on faculty profiles |
+| `course` | `text` | Student course; faculty assignments use `faculty_courses` |
+| `student_year` | `text` | Student year level |
+| `faculty_rank_id` | `bigint` | Legacy compatibility field; not used in the current account flow |
 | `created_at` | `timestamptz` | Default timestamp |
 
 Typical app behavior:
 - `/dashboard` checks `profiles.role`
 - `admin` redirects to `/dashboard/admin`
 - `student` and `faculty` redirect to `/dashboard/student`
-- login and sign-up upsert into `profiles` if missing
-- Schools and departments are free-text profile values until the institution supplies a managed directory.
-- Administrators can edit member details and switch student/faculty roles. Faculty-only rank and course assignments are updated transactionally through `admin_update_member_academics()`; members cannot self-assign a rank.
+- Public sign-up is disabled at the Auth trigger. Accounts are created only through the administrator's server-side Auth Admin API route.
+- Only administrators create/delete accounts and assign roles. Librarians use the separate `/dashboard/admin/physical` workspace.
+- Students choose a course and year level. Faculty accounts use a controlled faculty choice and assigned courses; the school is fixed and not a member choice.
+- Members can update only permitted personal details and cannot self-promote or edit protected academic assignments.
 
-### Faculty rank and course catalogs
+### Legacy rank and current course catalogs
 
 | Table | Purpose |
 | --- | --- |
-| `public.faculty_ranks` | Administrator-managed academic titles/ranks, such as Instructor, Lecturer, or Professor. Deactivate entries instead of deleting used titles. |
-| `public.academic_courses` | Administrator-managed courses/programs. Students select a course/program from this catalog when an administrator edits their profile. |
+| `public.faculty_ranks` | Legacy schema table; not exposed or used by the current account flow. |
+| `public.academic_courses` | Administrator-managed courses. Students select a course from this catalog when an administrator creates or edits an account. |
 | `public.faculty_courses` | Many-to-many assignments connecting faculty profiles to the courses they teach. |
 
-Authenticated users can read the catalogs; only administrators can manage catalog entries and faculty teaching assignments. The admin member-management screen supports multiple courses per faculty member.
+Authenticated users can read active choices; only administrators can manage catalogs and faculty course assignments. The admin member-management screen supports multiple courses per faculty member. Rank data is retained only for legacy profile compatibility.
 
 ## 2. Library catalog and lending flow
 
@@ -62,6 +63,7 @@ Workflow:
 - Only the librarian/admin checkout action marks a copy borrowed and marks the payment paid. It issues a receipt number; borrowers can view and print the digital receipt from their account.
 - Members can join a FIFO notification queue when no copy is available. A waitlist notification does not reserve a copy. The member must submit a normal borrow request, and a copy is assigned only when library staff confirms checkout. If availability changes before checkout, the request remains pending and staff must retry after checking inventory.
 - Pending physical requests have no `copy_id` and do not change copy availability. At checkout, the database selects and locks one available copy transactionally; concurrent checkouts cannot assign the same copy.
+- A member may have at most three active physical loans by default. `checked_out` and `return_pending` count until staff completes return inspection. A database trigger serializes member checkout transitions and rejects a fourth active loan; the request control is disabled at the limit. The default cap is pending Head Librarian confirmation.
 - Overdue and lost items prevent new physical requests until resolved. This is a library-only hold and does not affect enrollment, grades, or transcripts.
 - GCash references may be entered manually or optionally extracted from a receipt image with browser-side OCR. OCR is only a convenience and does not verify payment. Uploaded proof is private and is only available to its owner and library administrators.
 - A scheduler should call `/api/cron/physical-reminders` at least every 15 minutes with `Authorization: Bearer <CRON_SECRET>` to create due-soon/overdue in-app notifications. Configure `CRON_SECRET` and `SUPABASE_SERVICE_ROLE_KEY` only in the server environment. Actual email sending requires a separate worker/provider; the endpoint does not claim an email has been sent.
@@ -137,6 +139,10 @@ Unlike the active-access view, this row is retained after access expires or a lo
 
 ### `public.physical_book_loan_history`
 One synchronized history row per completed physical checkout. A trigger copies checkout and return state from `physical_book_requests`; the request/copy transaction remains authoritative for current circulation state.
+
+### `public.member_activity_ledger`
+
+Append-only chronological history for consequential account actions. Database triggers record physical requests, checkout/return/lost decisions, fines and their payment/waiver, print and digital purchase receipts, digital access, points, contributions, availability alerts, and controlled profile changes. Events carry a member UUID, timestamp, actor role, narrative, source entity/request identifiers, receipt number when available, and limited non-secret details. Existing trustworthy timestamps are backfilled; earlier decision times that were never stored are not fabricated. Members can read their own records, administrators can review all histories, and librarians can read circulation/financial event types. Loan and financial source tables remain authoritative, and clients cannot insert or edit ledger records.
 
 ## 3. Student features
 
@@ -223,8 +229,8 @@ erDiagram
   PROFILES ||--o{ HIGHLIGHTS : creates
   PROFILES ||--o{ FINES : receives
   PROFILES ||--o{ FACULTY_COURSES : teaches
-  FACULTY_RANKS ||--o{ PROFILES : ranks
   ACADEMIC_COURSES ||--o{ FACULTY_COURSES : taught
+  PROFILES ||--o{ MEMBER_ACTIVITY_LEDGER : has
 
   BOOKS ||--o{ BORROW_REQUESTS : has
   BOOKS ||--o{ STUDY_NOTES : read
@@ -232,36 +238,21 @@ erDiagram
 
   BORROW_REQUESTS ||--o| FINES : may_generate
   STUDY_NOTES ||--o| HIGHLIGHTS : optional_note_link
+
+  MEMBER_ACTIVITY_LEDGER {
+    bigint id
+    uuid member_id
+    timestamptz occurred_at
+    text event_type
+  }
 ```
 
-## 8. Recommended improvements
+## 8. Operational decisions and release checks
 
-1. Add index coverage for fast queries:
-   - `borrow_requests(student_id, status)`
-   - `borrow_requests(book_id, status)`
-   - `profiles(email)` unique index
-   - `books(category)` index
-   - `study_notes(user_id, book_id, page)`
-
-2. Add a `books` validation rule:
-   - `available_copies <= total_copies`
-   - trigger or check constraint
-
-3. Add `updated_at` triggers for `books`, `borrow_requests`, and `fines` for easier auditing.
-
-4. Add Storage bucket policy for PDFs:
-   - `pdfs` or `library-files` bucket
-   - signed URLs for private files
-
-5. Add a proper role guard in middleware or server routes to prevent client-only loopholes.
-
-6. Add a proper admin/staff UI for `fines` and the study room notes pane.
-
-7. Optionally split the logic into:
-   - auth/profile service
-   - borrowing service
-   - notes/highlights service
-   - notifications queue worker
+- The three-active-physical-loan default is implemented but remains pending the Head Librarian's final policy confirmation.
+- Apply the latest numbered migrations in order and verify Supabase Realtime publication membership and ledger row-level security in the deployed project.
+- The physical maintenance endpoint requires a configured external scheduler and `CRON_SECRET`; verify its schedule and job health in the deployment environment.
+- Continue to treat the activity ledger as a chronological index; source loan, fine, payment, and points tables remain authoritative.
 
 ## 9. Working app-level flow
 
@@ -275,7 +266,7 @@ erDiagram
 
 ## 10. Initialization
 
-For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql) once in the Supabase SQL Editor. This is the single canonical setup script: it includes the base schema and current contribution-file protections, digital-access workflow, faculty/department catalog, and duration-based point costs in dependency order. It also includes the physical circulation prerequisite before dependent SQL runs, and accepts the current owner-scoped `contributions/{userId}/...` path and the legacy `ebooks/contributions/{userId}/...` path for contribution access and review. Do not run the individual migration files after applying it.
+For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql), then apply migration files `20261038` through the latest numbered migration in filename order. The consolidated script contains the baseline; the later migrations add closed registration, staff role boundaries, physical fines/receipts, academic catalog updates, realtime finance, the active-loan limit, and the member activity ledger. Do not skip those follow-up migrations.
 
 **Do not run it against an existing database with data.** Existing installations need applicable migrations reviewed against their actual schema state and tested against a backup in staging before production. The migration files under `supabase/migrations/` are retained for incremental updates; they are not a complete database migration history and should not be applied blindly.
 
