@@ -21,9 +21,9 @@ import { generateCatalogIsbn } from '@/utils/isbn'
 import { isAdminRole } from '@/utils/roles'
 
 const navGroups = [
-  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Physical lending', section: 'physical-requests' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital access history', section: 'requests' }] },
+  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Physical lending', section: 'physical-requests' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital history', section: 'requests' }, { label: 'Contributions', section: 'contributions' }] },
   { label: 'Library', items: [{ label: 'Catalog management', section: 'books' }, { label: 'Physical catalog', section: 'physical' }, { label: 'Borrowing policy', section: 'policy' }] },
-  { label: 'Review & insights', items: [{ label: 'Course contributions', section: 'contributions' }, { label: 'Analytics', section: 'analytics' }, { label: 'Audit log', section: 'audit' }] },
+  { label: 'Review & insights', items: [{ label: 'Analytics', section: 'analytics' }, { label: 'Audit log', section: 'audit' }] },
 ]
 
 function ListPagination({ page, pageCount, total, onPageChange }: { page: number; pageCount: number; total: number; onPageChange: (page: number) => void }) {
@@ -231,11 +231,12 @@ export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
   const [physicalSectionVisited, setPhysicalSectionVisited] = useState(false)
-  const [overviewPhysicalAction, setOverviewPhysicalAction] = useState<{ panel: 'requests' | 'checkedOut' | 'history' | 'lost' | 'print' | 'addBook'; token: number; caseId?: number } | null>(null)
+  const [overviewPhysicalAction, setOverviewPhysicalAction] = useState<{ panel: 'requests' | 'checkedOut' | 'history' | 'lost' | 'print' | 'addBook'; token: number; caseId?: number; requestId?: number } | null>(null)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
   const [physicalRequestPreview, setPhysicalRequestPreview] = useState<PhysicalRequestPreview[]>([])
+  const [circulationSummary, setCirculationSummary] = useState({ pendingRequests: 0, activeLoans: 0, lostLoans: 0 })
   const [digitalLoanHistory, setDigitalLoanHistory] = useState<DigitalLoanHistoryItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
   const [academicCourses, setAcademicCourses] = useState<AcademicCourse[]>([])
@@ -277,8 +278,13 @@ export default function AdminPage() {
   const [digitalHistoryStatus, setDigitalHistoryStatus] = useState<'all' | 'active' | 'returned' | 'expired'>('all')
   const [bookPage, setBookPage] = useState(1)
   const [digitalHistoryPage, setDigitalHistoryPage] = useState(1)
+  const [selectedDigitalLoanIds, setSelectedDigitalLoanIds] = useState<number[]>([])
+  const [bulkRevokeOpen, setBulkRevokeOpen] = useState(false)
   const [userPage, setUserPage] = useState(1)
   const [contributionPage, setContributionPage] = useState(1)
+  const [selectedContributionIds, setSelectedContributionIds] = useState<number[]>([])
+  const [bulkContributionReview, setBulkContributionReview] = useState<{ decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
+  const [showContributionHistory, setShowContributionHistory] = useState(false)
   const [auditPage, setAuditPage] = useState(1)
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
   const [selectedCatalogBook, setSelectedCatalogBook] = useState<Book | null>(null)
@@ -319,8 +325,8 @@ export default function AdminPage() {
     if (nextSection === 'physical' || nextSection === 'physical-requests') setPhysicalSectionVisited(true)
   }
 
-  const openOverviewCirculationPanel = (panel: NonNullable<typeof overviewPhysicalAction>['panel']) => {
-    setOverviewPhysicalAction((current) => ({ panel, token: (current?.token ?? 0) + 1 }))
+  const openOverviewCirculationPanel = (panel: NonNullable<typeof overviewPhysicalAction>['panel'], requestId?: number) => {
+    setOverviewPhysicalAction((current) => ({ panel, token: (current?.token ?? 0) + 1, requestId }))
   }
 
 
@@ -562,7 +568,7 @@ export default function AdminPage() {
     const isMissingTableError = (error: { code?: string; message?: string } | null) =>
       Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, departmentsRes, physicalRequestsRes] = await Promise.all([
+    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, departmentsRes, physicalRequestsRes, pendingPhysicalRequestsRes] = await Promise.all([
       supabase
         .from('books')
         .select('id, title, author, isbn, category, description, cover_image_url, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, access_duration_days, created_at, is_archived')
@@ -588,7 +594,8 @@ export default function AdminPage() {
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('academic_courses').select('id,name,is_active').order('name'),
       supabase.from('academic_departments').select('id,name,is_active').order('name'),
-      supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').order('requested_at', { ascending: false }).limit(6),
+      supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').order('requested_at', { ascending: false }).limit(5),
+      supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').eq('status', 'pending').order('requested_at', { ascending: false }).limit(5),
     ])
 
     // Optional insights modules may not exist yet in older Supabase projects.
@@ -607,7 +614,11 @@ export default function AdminPage() {
       access_mode: normalizeAccessMode(book.access_mode, book.access_points),
     })) as Book[])
     setRequests((requestsRes.data ?? []) as RequestItem[])
-    setPhysicalRequestPreview((physicalRequestsRes.data ?? []) as PhysicalRequestPreview[])
+    const requestsForOverview = new Map<number, PhysicalRequestPreview>()
+    ;[...(physicalRequestsRes.data ?? []), ...(pendingPhysicalRequestsRes.data ?? [])].forEach((request) => requestsForOverview.set(request.id, request as PhysicalRequestPreview))
+    setPhysicalRequestPreview(Array.from(requestsForOverview.values())
+      .sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending') || new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime())
+      .slice(0, 8))
     setDigitalLoanHistory((historyRes.data ?? []) as DigitalLoanHistoryItem[])
     setStudents((studentsRes.data ?? []) as Profile[])
     setAcademicCourses((coursesRes.data ?? []) as AcademicCourse[])
@@ -620,6 +631,47 @@ export default function AdminPage() {
   useEffect(() => {
     loadData()
   }, [router])
+
+  useEffect(() => {
+    if (!profile || !isAdminRole(profile.role)) return
+
+    const refreshCirculationSummary = async () => {
+      const supabase = getSupabase()
+      const [pendingRequests, activeLoans, lostLoans] = await Promise.all([
+        supabase.from('physical_book_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('physical_book_loan_history').select('id', { count: 'exact', head: true }).in('status', ['checked_out', 'return_pending']),
+        supabase.from('physical_book_loan_history').select('id', { count: 'exact', head: true }).eq('status', 'lost'),
+      ])
+      setCirculationSummary({
+        pendingRequests: pendingRequests.count ?? 0,
+        activeLoans: activeLoans.count ?? 0,
+        lostLoans: lostLoans.count ?? 0,
+      })
+    }
+    void refreshCirculationSummary()
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel('admin-realtime-circulation-summary')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_requests' }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          const deleted = payload.old as { id: number }
+          setPhysicalRequestPreview((current) => current.filter((request) => request.id !== deleted.id))
+        } else {
+          const updated = payload.new as PhysicalRequestPreview
+          setPhysicalRequestPreview((current) => [updated, ...current.filter((request) => request.id !== updated.id)]
+            .sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending') || new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime())
+            .slice(0, 8))
+        }
+        void refreshCirculationSummary()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'physical_book_loan_history' }, () => {
+        void refreshCirculationSummary()
+      })
+      .subscribe()
+
+    return () => { void supabase.removeChannel(channel) }
+  }, [profile])
 
   useEffect(() => {
     if (!selectedMember) {
@@ -823,11 +875,16 @@ export default function AdminPage() {
   const physicalBorrowerName = (studentId: string) => students.find((student) => student.id === studentId)?.full_name?.trim() || 'Unknown borrower'
   const digitalHistoryPageCount = Math.max(1, Math.ceil(filteredDigitalLoanHistory.length / 10))
   const visibleDigitalLoanHistory = filteredDigitalLoanHistory.slice((Math.min(digitalHistoryPage, digitalHistoryPageCount) - 1) * 10, Math.min(digitalHistoryPage, digitalHistoryPageCount) * 10)
+  const visibleActiveDigitalRequestIds = visibleDigitalLoanHistory.flatMap((loan) => {
+    const request = requests.find((item) => item.id === loan.borrow_request_id)
+    return request && isActiveDigitalAccess(request) ? [request.id] : []
+  })
   const userPageCount = Math.max(1, Math.ceil(filteredStudentDetails.length / 10))
   const visibleStudentDetails = filteredStudentDetails.slice((Math.min(userPage, userPageCount) - 1) * 10, Math.min(userPage, userPageCount) * 10)
   const pendingContributions = contributions.filter((contribution) => contribution.status === 'pending')
   const contributionPageCount = Math.max(1, Math.ceil(pendingContributions.length / 10))
   const visiblePendingContributions = pendingContributions.slice((Math.min(contributionPage, contributionPageCount) - 1) * 10, Math.min(contributionPage, contributionPageCount) * 10)
+  const reviewedContributions = contributions.filter((contribution) => contribution.status !== 'pending').sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
   const auditPageCount = Math.max(1, Math.ceil(auditLogs.length / 10))
   const visibleAuditLogs = auditLogs.slice((Math.min(auditPage, auditPageCount) - 1) * 10, Math.min(auditPage, auditPageCount) * 10)
 
@@ -910,6 +967,55 @@ export default function AdminPage() {
     }
     setSaving(false)
     setConfirmAction(null)
+  }
+
+  const executeBulkRevoke = async () => {
+    const ids = selectedDigitalLoanIds
+    if (!ids.length) return
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    const supabase = getSupabase()
+    const failed: number[] = []
+    for (const requestId of ids) {
+      const { error } = await supabase.rpc('revoke_digital_loan', { request_id: requestId })
+      if (error) failed.push(requestId)
+    }
+    const succeeded = ids.length - failed.length
+    setSelectedDigitalLoanIds(failed)
+    if (succeeded) await loadData()
+    setBulkRevokeOpen(false)
+    setActionMessage(failed.length ? `Revoked ${succeeded} loan${succeeded === 1 ? '' : 's'}; ${failed.length} could not be revoked.` : `Revoked ${succeeded} digital loan${succeeded === 1 ? '' : 's'}.`)
+    if (failed.length) setError(`Could not revoke request IDs: ${failed.join(', ')}. Review their current status and try again.`)
+    setSaving(false)
+  }
+
+  const executeBulkContributionReview = async () => {
+    if (!bulkContributionReview || !selectedContributionIds.length) return
+    const { decision } = bulkContributionReview
+    const reward = decision === 'approved' ? Number(bulkContributionReview.reward) : 0
+    const accessPoints = decision === 'approved' ? Number(bulkContributionReview.accessPoints) : 0
+    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0 || !Number.isSafeInteger(accessPoints) || accessPoints < 0)) {
+      setError('Reward and access cost must be nonnegative whole numbers of points.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const supabase = getSupabase()
+    const failed: number[] = []
+    for (const contributionId of selectedContributionIds) {
+      const { error } = await supabase.rpc('admin_review_book_contribution', {
+        contribution_id: contributionId, decision, reward_points: reward, access_points: accessPoints,
+      })
+      if (error) failed.push(contributionId)
+    }
+    const succeeded = selectedContributionIds.length - failed.length
+    setSelectedContributionIds(failed)
+    setBulkContributionReview(null)
+    if (succeeded) await loadData()
+    setActionMessage(failed.length ? `Processed ${succeeded}; ${failed.length} contribution${failed.length === 1 ? '' : 's'} need review.` : `${succeeded} contribution${succeeded === 1 ? '' : 's'} ${decision}.`)
+    if (failed.length) setError(`Could not process contribution IDs: ${failed.join(', ')}.`)
+    setSaving(false)
   }
 
   const executeDeleteMember = async (memberId: string, label: string) => {
@@ -1344,10 +1450,7 @@ export default function AdminPage() {
           <header className="dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
             <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Admin</p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
-              </div>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
               <div className="rounded-[1.5rem] bg-slate-100 p-4 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
                 Active role: <span className="font-semibold text-slate-900 dark:text-slate-100">{profile?.role}</span>
               </div>
@@ -1355,49 +1458,42 @@ export default function AdminPage() {
           </header>
 
           {section === 'overview' && (
-            <section className="admin-overview">
-              <div className="admin-overview-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
-                <div className="admin-overview-column space-y-5">
-                  <section className="admin-overview-card rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="recent-physical-requests-title">
-                    <div className="admin-overview-section-heading">
-                      <div><h2 id="recent-physical-requests-title">Recent physical requests</h2><p>Latest requests, payment status, and checkout progress.</p></div>
-                    </div>
-                    <div className="admin-overview-table-wrap mt-4">
-                      <table className="admin-overview-table">
-                        <thead><tr><th scope="col">Borrower</th><th scope="col">Book</th><th scope="col">Payment</th><th scope="col">Status</th></tr></thead>
-                        <tbody>
-                          {physicalRequestPreview.map((request) => <tr key={request.id}>
-                            <td className="font-medium">{physicalBorrowerName(request.student_id)}</td>
-                            <td>{physicalBookTitle(request.book_id)}</td>
-                            <td><span className="capitalize">{request.payment_method}</span><small>₱{Number(request.fee_amount).toFixed(2)}</small></td>
-                            <td><span className={`admin-status-pill ${request.status === 'pending' ? 'is-pending' : request.status === 'checked_out' ? 'is-active' : request.status === 'returned' ? 'is-success' : request.status === 'lost' || request.status === 'rejected' ? 'is-danger' : 'is-muted'}`}>{request.status.replace(/_/g, ' ')}</span><small className="capitalize">{request.payment_status.replace(/_/g, ' ')}</small></td>
-                          </tr>)}
-                          {physicalRequestPreview.length === 0 ? <tr><td colSpan={4} className="admin-overview-empty">No physical requests yet. New requests will appear here.</td></tr> : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-
+            <section className="admin-overview space-y-6">
+              <section className="admin-overview-card admin-quick-actions rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="quick-actions-title">
+                <div className="admin-overview-section-heading"><div><h2 id="quick-actions-title">Quick actions</h2><p>Common tasks, one click away.</p></div></div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action admin-quick-action-primary"><strong>Create account</strong><span>Provision a student, faculty, or librarian</span></button>
+                  <button type="button" onClick={() => setQuickAction('recognition')} className="admin-quick-action admin-quick-action-primary"><strong>Give points</strong><span>Recognize a member</span></button>
+                  <button type="button" onClick={() => setSection('contributions')} className="admin-quick-action"><strong>Review contributions · {pendingContributions.length} pending</strong><span>Check pending academic materials</span></button>
+                  <button type="button" onClick={() => navigateToSection('physical')} className="admin-quick-action"><strong>Add a physical book</strong><span>Create a title, copies, and QR labels</span></button>
                 </div>
+              </section>
 
-                <div className="admin-overview-column space-y-5">
-                  <section className="admin-overview-card admin-quick-actions rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="quick-actions-title">
-                    <div className="admin-overview-section-heading">
-                      <div><h2 id="quick-actions-title">Quick actions</h2><p>Common admin tasks, one click away.</p></div>
-                    </div>
-                    <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                      <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action admin-quick-action-primary"><strong>Create account</strong><span>Provision a student, faculty, or librarian</span></button>
-                      <button type="button" onClick={() => setQuickAction('recognition')} className="admin-quick-action admin-quick-action-primary"><strong>Give points</strong><span>Recognize a member</span></button>
-                      <button type="button" onClick={() => setSection('contributions')} className="admin-quick-action"><strong>Review contributions ({pendingContributions.length})</strong><span>Check pending academic materials</span></button>
-                      <button type="button" onClick={() => openOverviewCirculationPanel('addBook')} className="admin-quick-action"><strong>Add a physical book</strong><span>Create a title, copies, and QR labels</span></button>
-                      <button type="button" onClick={() => openOverviewCirculationPanel('checkedOut')} className="admin-quick-action"><strong>Manage checked-out books</strong><span>Handle returns and loan status</span></button>
-                      <button type="button" onClick={() => openOverviewCirculationPanel('lost')} className="admin-quick-action"><strong>Resolve lost books</strong><span>Review cases and fines</span></button>
-                    </div>
-                  </section>
-
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">High-level telemetry of collection health, borrowing activity, fulfillment rates, and storage.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigateToSection('analytics')}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                  >
+                    View detailed analytics →
+                  </button>
                 </div>
-              </div>
-              <PhysicalCirculationAdminPage active={section === 'overview'} overviewOnly requestedPanel={overviewPhysicalAction} onOpenFines={() => setSection('physical-requests')} onClose={() => setSection('overview')} />
+                <AdminAnalytics
+                  totalBooks={books.length}
+                  totalStudents={students.length}
+                  totalRequests={requests.length}
+                  totalLoansActive={activeDigitalAccess.length}
+                  totalReturned={requests.filter((r) => r.status === 'returned').length}
+                  categoryStats={categoryStats}
+                  monthlyStats={monthlyStats}
+                  storageCount={storageCount}
+                />
+              </section>
             </section>
           )}
 
@@ -1424,48 +1520,111 @@ export default function AdminPage() {
 
           {section === 'books' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{showArchivedBooks ? 'Archived books' : 'Digital catalog'}</h2>
-                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-                  <input
-                    value={bookSearch}
-                    onChange={(e) => setBookSearch(e.target.value)}
-                    placeholder="Search books by title, author, category..."
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-72 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                  <select value={bookCategoryFilter} onChange={(event) => setBookCategoryFilter(event.target.value)} aria-label="Filter books by category" className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                    <option value="all">All categories</option>
-                    {bookFilterOptions.categories.map((category) => <option key={category} value={category}>{category}</option>)}
-                  </select>
-                  <select value={bookAuthorFilter} onChange={(event) => setBookAuthorFilter(event.target.value)} aria-label="Filter books by author" className="w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 sm:w-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                    <option value="all">All authors</option>
-                    {bookFilterOptions.authors.map((author) => <option key={author} value={author}>{author}</option>)}
-                  </select>
-                  {bookSearch ? (
+              <div className="mb-6 space-y-4 border-b border-slate-200 pb-5 dark:border-slate-700">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                        {showArchivedBooks ? 'Archived books' : 'Digital catalog'}
+                      </h2>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        {filteredBooks.length} {filteredBooks.length === 1 ? 'title' : 'titles'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {showArchivedBooks
+                        ? 'Archived titles hidden from members. Existing loan records remain preserved.'
+                        : 'Manage digital e-books, access costs, format licenses, and attached PDF documents.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2.5">
                     <button
                       type="button"
-                      onClick={() => setBookSearch('')}
-                      className="rounded-xl border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                      onClick={() => {
+                        setShowArchivedBooks((current) => !current)
+                        setBookPage(1)
+                        setBookCategoryFilter('all')
+                        setBookAuthorFilter('all')
+                      }}
+                      className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                     >
-                      ×
+                      {showArchivedBooks ? 'View active' : 'View archived'}
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => { setShowArchivedBooks((current) => !current); setBookPage(1); setBookCategoryFilter('all'); setBookAuthorFilter('all') }}
-                    className="rounded-2xl border border-slate-300 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  >
-                    {showArchivedBooks ? 'View active' : 'View archived'}
-                  </button>
-                  <button type="button" onClick={() => setNewBookOpen(true)} className="pine-action rounded-2xl px-4 py-2 text-xs font-semibold text-white">Add digital title</button>
+                    <button
+                      type="button"
+                      onClick={() => setNewBookOpen(true)}
+                      className="pine-action rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-sm transition"
+                    >
+                      + Add digital title
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+                  <div className="relative flex-1">
+                    <input
+                      type="search"
+                      value={bookSearch}
+                      onChange={(e) => setBookSearch(e.target.value)}
+                      placeholder="Search books by title, author, category..."
+                      className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-3.5 pr-8 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    {bookSearch ? (
+                      <button
+                        type="button"
+                        onClick={() => setBookSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        aria-label="Clear book search"
+                      >
+                        ✕
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={bookCategoryFilter}
+                      onChange={(event) => setBookCategoryFilter(event.target.value)}
+                      aria-label="Filter books by category"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="all">All categories</option>
+                      {bookFilterOptions.categories.map((category) => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={bookAuthorFilter}
+                      onChange={(event) => setBookAuthorFilter(event.target.value)}
+                      aria-label="Filter books by author"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="all">All authors</option>
+                      {bookFilterOptions.authors.map((author) => (
+                        <option key={author} value={author}>{author}</option>
+                      ))}
+                    </select>
+                    {(bookSearch || bookCategoryFilter !== 'all' || bookAuthorFilter !== 'all') ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBookSearch('')
+                          setBookCategoryFilter('all')
+                          setBookAuthorFilter('all')
+                        }}
+                        className="rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        Reset filters
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
               <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
-                <div className="overflow-hidden">
-                  <table className="w-full table-fixed text-left text-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[900px] table-fixed text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">
-                      <tr><th className="w-[22%] px-2 py-3 sm:px-4">Title</th><th className="w-[14%] px-2 py-3 sm:px-4">Author</th><th className="w-[14%] px-2 py-3 sm:px-4">Category</th><th className="w-[10%] px-2 py-3 sm:px-4">Format</th><th className="w-[17%] px-2 py-3 sm:px-4">Access cost</th><th className="w-[10%] px-2 py-3 sm:px-4">File</th><th className="w-[23%] px-2 py-3 sm:px-4">Actions</th></tr>
+                      <tr><th className="w-[21%] px-2 py-3 sm:px-4">Title</th><th className="w-[13%] px-2 py-3 sm:px-4">Author</th><th className="w-[13%] px-2 py-3 sm:px-4">Category</th><th className="w-[9%] px-2 py-3 sm:px-4">Format</th><th className="w-[17%] px-2 py-3 sm:px-4">Access cost</th><th className="w-[9%] px-2 py-3 sm:px-4">File</th><th className="w-[18%] px-2 py-3 sm:px-4">Actions</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleBooks.map((book) => <Fragment key={book.id}>
@@ -1476,7 +1635,7 @@ export default function AdminPage() {
                           <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{book.catalog_type}</td>
                           <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <><span className="mt-1 block text-xs text-slate-600 dark:text-slate-300">{book.access_costs?.['1'] ?? getDigitalAccessCost(book.access_points, 1)} pts · 1 day</span><details className="mt-1 text-xs"><summary className="w-fit cursor-pointer font-semibold text-emerald-800 underline dark:text-emerald-300">View tiers</summary><ul className="mt-1 space-y-0.5 text-slate-500 dark:text-slate-400">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <li key={days}>{days} days: {book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts</li>)}</ul></details></> : null}</td>
                           <td className="px-4 py-4">{book.pdf_url || book.storage_file_id || book.storage_path ? <span className="rounded-md bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{book.storage_provider === 'external' ? 'External' : 'File ready'}</span> : <span className="text-xs text-slate-400">Missing</span>}</td>
-                          <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openCatalogBook(book)} className="pine-action rounded-xl px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Manage book</button></td>
+                          <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openCatalogBook(book)} className="rounded-xl border border-pine-300 px-3 py-2 text-xs font-semibold text-pine-800 transition hover:bg-pine-50 disabled:opacity-50 dark:border-pine-700 dark:text-pine-200 dark:hover:bg-pine-950/30">Manage book</button></td>
                         </tr>
                       </Fragment>) }
                       {filteredBooks.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-300">No matching books found.</td></tr> : null}
@@ -1613,7 +1772,8 @@ export default function AdminPage() {
           {physicalSectionVisited ? (
             <div hidden={section !== 'physical' && section !== 'physical-requests'}>
               <PhysicalCirculationAdminPage
-                active={section === 'physical' || section === 'physical-requests'}                requestsOnly={section === 'physical-requests'}
+                active={section === 'physical' || section === 'physical-requests'}
+                requestsOnly={section === 'physical-requests'}
                 catalogOnly={section === 'physical'}
                 onClose={() => navigateToSection('overview')}
               />
@@ -1625,7 +1785,7 @@ export default function AdminPage() {
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-5">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Digital loan history</h2>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Digital history</h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Eligible free and points access is automatic. Revoke active access only when necessary.</p>
               </div>
               {pendingRequests.length > 0 ? <details className="mb-5 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
@@ -1642,15 +1802,18 @@ export default function AdminPage() {
                   </select>
                 </div>
                 <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Showing {filteredDigitalLoanHistory.length} of {digitalLoanHistory.length} loans</p>
+                {selectedDigitalLoanIds.length ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm dark:bg-emerald-950/30"><span>{selectedDigitalLoanIds.length} active loan{selectedDigitalLoanIds.length === 1 ? '' : 's'} selected</span><div className="flex gap-2"><button type="button" disabled={saving} onClick={() => setBulkRevokeOpen(true)} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 disabled:opacity-50 dark:text-rose-200">Revoke selected</button><button type="button" onClick={() => setSelectedDigitalLoanIds([])} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs dark:border-slate-700">Clear</button></div></div> : null}
                 <div>
                   <table className="w-full table-fixed divide-y divide-slate-200 text-left text-xs sm:text-sm dark:divide-slate-700">
-                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-[27%] px-2 py-3 font-semibold sm:px-3">Member / book</th><th className="w-[16%] px-2 py-3 font-semibold sm:px-3">Issue date</th><th className="w-[20%] px-2 py-3 font-semibold sm:px-3">Due / returned</th><th className="w-[18%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[19%] px-2 py-3 font-semibold sm:px-3">Status</th></tr></thead>
+                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-10 px-2 py-3"><input type="checkbox" aria-label="Select active digital loans on this page" checked={visibleActiveDigitalRequestIds.length > 0 && visibleActiveDigitalRequestIds.every((id) => selectedDigitalLoanIds.includes(id))} onChange={(event) => setSelectedDigitalLoanIds((current) => event.target.checked ? Array.from(new Set([...current, ...visibleActiveDigitalRequestIds])) : current.filter((id) => !visibleActiveDigitalRequestIds.includes(id)))} /></th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Member</th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Book</th><th className="w-[14%] px-2 py-3 font-semibold sm:px-3">Issue date</th><th className="w-[18%] px-2 py-3 font-semibold sm:px-3">Due / returned</th><th className="w-[16%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[14%] px-2 py-3 font-semibold sm:px-3">Status</th></tr></thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleDigitalLoanHistory.map((loan) => {
                         const request = requests.find((item) => item.id === loan.borrow_request_id)
                         const active = request ? isActiveDigitalAccess(request) : false
                         return <tr key={loan.id} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800/80">
-                          <td className="break-words px-2 py-3 text-slate-800 dark:text-slate-100 sm:px-3"><span className="block font-medium">{memberDisplayName(studentMap.get(loan.student_id))}</span><span className="mt-1 block text-slate-600 dark:text-slate-300">{bookMap.get(loan.book_id)?.title ?? 'Unknown book'}</span></td>
+                          <td className="px-2 py-3">{active && request ? <input type="checkbox" aria-label={`Select active loan for ${memberDisplayName(studentMap.get(loan.student_id))}`} checked={selectedDigitalLoanIds.includes(request.id)} onChange={(event) => setSelectedDigitalLoanIds((current) => event.target.checked ? [...current, request.id] : current.filter((id) => id !== request.id))} /> : null}</td>
+                          <td className="break-words px-2 py-3 font-medium text-slate-800 dark:text-slate-100 sm:px-3">{memberDisplayName(studentMap.get(loan.student_id))}</td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3">{bookMap.get(loan.book_id)?.title ?? 'Unknown book'}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block text-[10px] uppercase tracking-wide text-slate-400">{loan.borrowed_at ? 'Borrowed' : 'Requested'}</span><time>{new Date(loan.borrowed_at ?? loan.requested_at).toLocaleDateString()}</time></td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</span>{loan.returned_at ? <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-300">Returned {new Date(loan.returned_at).toLocaleDateString()}</span> : null}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">{loan.duration_days} days</span><span className="block">{loan.renewal_count} renewals · {loan.points_cost} pts</span></td>
@@ -1805,17 +1968,19 @@ export default function AdminPage() {
               <div className="mb-6">
                 <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Community contributions</h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review each submitted PDF before deciding whether to approve, request a revision, or reject it.</p>
+                <button type="button" onClick={() => setShowContributionHistory((shown) => !shown)} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{showContributionHistory ? 'Hide review history' : `Review history (${reviewedContributions.length})`}</button>
               </div>
+              {pendingContributions.length ? <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={visiblePendingContributions.length > 0 && visiblePendingContributions.every((item) => selectedContributionIds.includes(item.id))} onChange={(event) => setSelectedContributionIds((current) => event.target.checked ? Array.from(new Set([...current, ...visiblePendingContributions.map((item) => item.id)])) : current.filter((id) => !visiblePendingContributions.some((item) => item.id === id)))} />Select pending contributions on this page</label>{selectedContributionIds.length ? <div className="flex flex-wrap items-center gap-2"><span className="text-xs">{selectedContributionIds.length} selected</span><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'approved', reward: '25', accessPoints: '0' })} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200">Approve selected</button><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'rejected', reward: '0', accessPoints: '0' })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:text-rose-200">Reject selected</button><button type="button" onClick={() => setSelectedContributionIds([])} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs dark:border-slate-700">Clear</button></div> : null}</div> : null}
               <div className="space-y-3">
                 {pendingContributions.length > 0 ? visiblePendingContributions.map((contribution) => (
                   <article key={contribution.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
+                      <div className="flex min-w-0 gap-3"><input type="checkbox" className="mt-1 shrink-0" aria-label={`Select contribution ${contribution.title}`} checked={selectedContributionIds.includes(contribution.id)} onChange={(event) => setSelectedContributionIds((current) => event.target.checked ? [...current, contribution.id] : current.filter((id) => id !== contribution.id))} /><div className="min-w-0">
                         <h3 className="font-semibold text-slate-900 dark:text-slate-100">{contribution.title}</h3>
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {memberDisplayName(students.find((student) => student.id === contribution.user_id), 'Unknown student')}</p>
                         {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
                         {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <a href={`/api/contributions/${contribution.id}/file`} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
-                      </div>
+                      </div></div>
                       <div className="flex shrink-0 gap-2">
                         <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
                         <button type="button" disabled={saving} onClick={() => void handleContributionReview(contribution.id, 'rejected')} className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/50 dark:text-rose-300">Reject</button>
@@ -1828,6 +1993,7 @@ export default function AdminPage() {
                 )}
               </div>
               <ListPagination page={Math.min(contributionPage, contributionPageCount)} pageCount={contributionPageCount} total={pendingContributions.length} onPageChange={setContributionPage} />
+              {showContributionHistory ? <section className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-700"><h3 className="font-semibold">Reviewed contributions</h3>{reviewedContributions.length ? <div className="mt-3 space-y-2">{reviewedContributions.map((item) => <article key={`reviewed-${item.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{item.title} <span className="font-normal text-slate-500">by {item.author}</span></p><p className="text-xs text-slate-500">Last updated {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'date unavailable'}</p></div><span className={`rounded-full px-2 py-1 text-xs font-semibold capitalize ${item.status === 'approved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : item.status === 'rejected' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'}`}>{item.status.replaceAll('_', ' ')}</span></article>)}</div> : <p className="mt-2 text-sm text-slate-500">Reviewed decisions will appear here.</p>}</section> : null}
             </section>
           )}
 
@@ -1920,8 +2086,6 @@ export default function AdminPage() {
                       <th className="px-4 py-3 font-semibold">Member</th>
                       <th className="px-4 py-3 font-semibold">Email</th>
                       <th className="px-4 py-3 font-semibold">Role</th>
-                      <th className="px-4 py-3 font-semibold">Faculty</th>
-                      <th className="px-4 py-3 font-semibold">Year level</th>
                       <th className="px-4 py-3 font-semibold">Points</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
                       <th className="px-4 py-3 font-semibold">Joined</th>
@@ -1929,15 +2093,13 @@ export default function AdminPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                     {visibleStudentDetails.map((student) => (
-                      <tr key={student.id} tabIndex={0} onClick={() => openMemberDetails(student)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openMemberDetails(student) } }} className="cursor-pointer hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80">
-                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100"><span className="block font-medium">{memberDisplayName(student, 'Unknown member')}</span>{student.username ? <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">@{student.username}</span> : null}</td>
-                        <td className="max-w-[220px] break-all px-4 py-4 text-slate-600 dark:text-slate-300">{student.email || 'No email'}</td>
-                        <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{student.role}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? student.department || 'Not set' : '—'}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'student' ? <span title={student.student_year ? `Saved value: ${student.student_year}` : undefined}>{memberYearDisplay(student.student_year)}{student.student_year && memberYearDisplay(student.student_year) === 'Needs review' ? ` (${student.student_year})` : ''}</span> : '—'}</td>
-                        <td className="px-4 py-4 font-semibold text-slate-700 dark:text-slate-200">{Number(student.points_balance ?? 0).toLocaleString()}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
-                        <td className="whitespace-nowrap px-4 py-4 text-slate-600 dark:text-slate-300">{student.created_at ? new Date(student.created_at).toLocaleDateString() : 'Not available'}</td>
+                      <tr key={student.id} tabIndex={0} aria-selected={selectedMember?.id === student.id} onClick={() => openMemberDetails(student)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openMemberDetails(student) } }} className={`group cursor-pointer transition-colors focus:outline-none ${selectedMember?.id === student.id ? 'bg-emerald-900 text-white' : 'hover:bg-emerald-900 hover:text-white focus:bg-emerald-900 focus:text-white'}`}>
+                        <td className="px-4 py-4 text-slate-800 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-100"><span className="block font-medium">{memberDisplayName(student, 'Unknown member')}</span>{student.username ? <span className="mt-1 block text-xs text-slate-500 group-hover:text-emerald-100 group-focus:text-emerald-100 group-aria-selected:text-emerald-100 dark:text-slate-400">@{student.username}</span> : null}</td>
+                        <td className="max-w-[220px] break-all px-4 py-4 text-slate-600 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-300">{student.email || 'No email'}</td>
+                        <td className="px-4 py-4 capitalize text-slate-600 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-300">{student.role}</td>
+                        <td className="px-4 py-4 font-semibold text-slate-700 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-200">{Number(student.points_balance ?? 0).toLocaleString()}</td>
+                        <td className="px-4 py-4 text-slate-600 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-300">{student.active_loans}</td>
+                        <td className="whitespace-nowrap px-4 py-4 text-slate-600 group-hover:text-white group-focus:text-white group-aria-selected:text-white dark:text-slate-300">{student.created_at ? new Date(student.created_at).toLocaleDateString() : 'Not available'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1976,7 +2138,7 @@ export default function AdminPage() {
             <section className="mt-6 space-y-5" aria-labelledby="member-account-history-title">
               <div><h3 id="member-account-history-title" className="font-semibold text-slate-900 dark:text-slate-100">Account history</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Borrowing, fines, receipts, payments, points, and contributions recorded for this member.</p></div>
               {memberAccountHistoryError ? <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{memberAccountHistoryError}</p> : null}
-              {memberAccountHistoryLoading ? <p className="text-sm text-slate-500">Loading complete account history…</p> : null}
+              {memberAccountHistoryLoading ? <p className="text-sm text-slate-500">Loading complete account history”¦</p> : null}
               {memberAccountHistory ? <>
                 <details className="rounded-xl border border-slate-200 p-3 dark:border-slate-700"><summary className="cursor-pointer font-semibold">Chronological activity · {memberAccountHistory.activityLedger.length}</summary><ol className="mt-3 grid max-h-80 gap-2 overflow-y-auto">{memberAccountHistory.activityLedger.map((event) => <li key={event.id} className="rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800"><div className="flex flex-wrap items-start justify-between gap-2"><time className="text-xs text-slate-500">{new Date(event.occurred_at).toLocaleString()}</time><span className="text-xs capitalize text-slate-500">{event.actor_role === 'historical' ? 'Existing record' : event.actor_role === 'system' ? 'System' : `${event.actor_role} action`}</span></div><p className="mt-1 font-medium">{event.summary}</p>{event.related_request_id ? <p className="mt-1 text-xs text-slate-500">Related {event.related_request_type?.replace(/_/g, ' ')} #{event.related_request_id}</p> : null}{event.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt {event.receipt_number}</p> : null}</li>)}{memberAccountHistory.activityLedger.length === 0 ? <li className="text-sm text-slate-500">No ledger events have been recorded for this account yet.</li> : null}</ol></details>
                 <section><h4 className="text-sm font-semibold">Digital borrowing</h4><div className="mt-2 space-y-2">{memberAccountHistory.digitalLoans.map((loan) => <article key={`digital-${loan.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{bookMap.get(loan.book_id)?.title ?? `Book #${loan.book_id}`}</p><p className="text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}{loan.returned_at ? ` · Returned ${new Date(loan.returned_at).toLocaleDateString()}` : ''}</p></div><span className="text-xs font-semibold capitalize">{loan.status.replace(/_/g, ' ')} · {loan.points_cost} points</span></article>)}{memberAccountHistory.digitalLoans.length === 0 ? <p className="text-sm text-slate-500">No digital borrowing records.</p> : null}</div></section>
@@ -2006,7 +2168,7 @@ export default function AdminPage() {
           }}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2"><SearchableMemberSelect members={students.filter((student) => student.role === 'student')} value={recognitionForm.studentId} onChange={(studentId) => setRecognitionForm((current) => ({ ...current, studentId }))} label="Student" placeholder="Type a student name or email…" /></div>
+            <div className="sm:col-span-2"><SearchableMemberSelect members={students.filter((student) => student.role === 'student')} value={recognitionForm.studentId} onChange={(studentId) => setRecognitionForm((current) => ({ ...current, studentId }))} label="Student" placeholder="Type a student name or email”¦" /></div>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Points
               <input required type="text" inputMode="numeric" pattern="[0-9]+" value={recognitionForm.points} onChange={(event) => setRecognitionForm((current) => ({ ...current, points: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
             </label>
@@ -2102,6 +2264,16 @@ export default function AdminPage() {
           onConfirm={() => { if (confirmAction?.type === 'revokeLoan') void executeRevoke(confirmAction.id) }}
         />
         <ActionModal
+          open={bulkRevokeOpen}
+          title="Revoke selected digital loans?"
+          description={`${selectedDigitalLoanIds.length} selected active loan${selectedDigitalLoanIds.length === 1 ? '' : 's'} will be revoked. If a loan changes before processing, it may fail and remain selected.`}
+          confirmLabel="Revoke selected"
+          tone="danger"
+          busy={saving}
+          onClose={() => setBulkRevokeOpen(false)}
+          onConfirm={() => void executeBulkRevoke()}
+        />
+        <ActionModal
           open={confirmAction?.type === 'deleteMember'}
           title="Delete member account?"
           description={confirmAction?.type === 'deleteMember' ? `${confirmAction.label ?? 'This member'} will lose access and their account data will be permanently deleted. This cannot be undone.` : undefined}
@@ -2124,6 +2296,21 @@ export default function AdminPage() {
           {reviewDialog?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Reward points<input type="number" min="0" step="1" value={reviewDialog.reward} onChange={(event) => setReviewDialog({ ...reviewDialog, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Access cost / 7 days<input type="number" min="0" value={reviewDialog.accessPoints} onChange={(event) => setReviewDialog({ ...reviewDialog, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+          </div> : null}
+        </ActionModal>
+        <ActionModal
+          open={bulkContributionReview !== null}
+          title={bulkContributionReview?.decision === 'approved' ? 'Approve selected contributions?' : 'Reject selected contributions?'}
+          description={`${selectedContributionIds.length} pending contribution${selectedContributionIds.length === 1 ? '' : 's'} will be processed with the same decision. Some may fail if their state has changed.`}
+          confirmLabel={bulkContributionReview?.decision === 'approved' ? 'Approve selected' : 'Reject selected'}
+          tone={bulkContributionReview?.decision === 'rejected' ? 'danger' : 'default'}
+          busy={saving}
+          onClose={() => setBulkContributionReview(null)}
+          onConfirm={() => void executeBulkContributionReview()}
+        >
+          {bulkContributionReview?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium">Reward points per contribution<input type="number" min="0" step="1" value={bulkContributionReview.reward} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+            <label className="text-sm font-medium">Access cost / 7 days<input type="number" min="0" step="1" value={bulkContributionReview.accessPoints} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
           </div> : null}
         </ActionModal>
         <ActionModal

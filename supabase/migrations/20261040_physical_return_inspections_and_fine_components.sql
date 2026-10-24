@@ -11,7 +11,7 @@ set fine_type = case
   when fine_reason ilike '%lost%' then 'lost_item'
   else 'other'
 end
-where fine_type is null;
+where fine_type is null;    
 alter table public.fines alter column fine_type set default 'other';
 alter table public.fines alter column fine_type set not null;
 alter table public.fines drop constraint if exists fines_fine_type_check;

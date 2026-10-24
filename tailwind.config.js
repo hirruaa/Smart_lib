@@ -5,6 +5,16 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        theme: {
+          bg: 'var(--theme-bg, var(--bg))',
+          panel: 'var(--theme-panel, var(--panel))',
+          'panel-soft': 'var(--theme-panel-soft, var(--panel-strong))',
+          text: 'var(--theme-text, var(--text))',
+          muted: 'var(--theme-muted, var(--text-soft))',
+          border: 'var(--theme-border, var(--border))',
+          accent: 'var(--theme-accent, var(--brand))',
+          'accent-strong': 'var(--theme-accent-strong, var(--brand-strong))',
+        },
         paper: {
           50: '#ffffff',
           100: '#f6f8fb',

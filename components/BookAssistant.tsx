@@ -29,15 +29,15 @@ type ChatMessage = {
 type ChatSession = { id: string; title: string; updated_at?: string }
 
 const starterPrompts = [
-  'Find resources on distributed systems',
-  'What books do I currently have?',
-  'How long can I borrow a digital book?',
+  'What should I do if I lost a book?',
+  'How much are overdue fines?',
+  'What books do I currently have borrowed?',
 ]
 
 const initialMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Hi, I am your library assistant. Ask me to find a resource, explain a lending policy, or check your current access.',
+  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. Ask me any question or concern — how overdue fines work, what to do if a book is lost, borrowing rules, library clearance, or book recommendations.',
 }
 
 export default function BookAssistant() {

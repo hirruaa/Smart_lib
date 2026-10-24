@@ -38,6 +38,10 @@ export default function AdminAnalytics({
 
   // Calculate highest request month for chart normalization
   const maxMonthValue = Math.max(1, ...monthlyStats.map((m) => Math.max(m.requests, m.approved)))
+  const recentRequestValues = monthlyStats.slice(-6).map((month) => month.requests)
+  const requestSparkline = recentRequestValues.length > 1
+    ? recentRequestValues.map((value, index) => `${(index / (recentRequestValues.length - 1)) * 100},${22 - (value / Math.max(1, ...recentRequestValues)) * 18}`).join(' ')
+    : '0,20 100,20'
 
   // Max category count for bar normalization
   const maxCatCount = Math.max(1, ...categoryStats.map((c) => c.count))
@@ -46,19 +50,19 @@ export default function AdminAnalytics({
     <div className="space-y-6">
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm dark:border-emerald-900 dark:bg-emerald-950/25">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Fulfillment Rate
           </span>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+            <span className="text-4xl font-bold tracking-tight text-emerald-900 dark:text-emerald-100">
               {fulfillmentRate}%
             </span>
             <span className="text-xs text-emerald-600 dark:text-emerald-400">
               Granted or returned
             </span>
           </div>
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-emerald-100 dark:bg-emerald-950">
             <div
               className="h-full rounded-full bg-emerald-500 transition-all duration-500"
               style={{ width: `${Math.min(100, fulfillmentRate)}%` }}
@@ -112,9 +116,7 @@ export default function AdminAnalytics({
               Across {totalStudents} students
             </span>
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Lifetime requests logged: {totalRequests}
-          </p>
+          <div className="mt-2 flex items-center justify-between gap-3"><p className="text-xs text-slate-500 dark:text-slate-400">{totalRequests} requests recorded</p><svg viewBox="0 0 100 24" role="img" aria-label="Recent monthly request trend" className="h-7 w-24 overflow-visible"><polyline points={requestSparkline} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600 dark:text-emerald-400" /></svg></div>
         </div>
       </div>
 
@@ -202,7 +204,7 @@ export default function AdminAnalytics({
                         {cat.count} books ({percentage}%)
                       </span>
                     </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                       <div
                         className="h-full rounded-full bg-sky-600 dark:bg-sky-400 transition-all duration-500"
                         style={{ width: `${barWidth}%` }}

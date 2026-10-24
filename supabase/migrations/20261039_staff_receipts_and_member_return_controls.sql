@@ -1,95 +1,95 @@
-begin;
+    begin;
 
-update storage.buckets set allowed_mime_types = array['application/pdf', 'application/epub+zip'] where id = 'ebooks';
+    update storage.buckets set allowed_mime_types = array['application/pdf', 'application/epub+zip'] where id = 'ebooks';
 
--- Members do not self-return digital or physical loans; staff process returns at the desk.
-revoke all on function public.return_digital_loan(bigint) from public, anon, authenticated;
-revoke all on function public.request_physical_return(bigint) from public, anon, authenticated;
+    -- Members do not self-return digital or physical loans; staff process returns at the desk.
+    revoke all on function public.return_digital_loan(bigint) from public, anon, authenticated;
+    revoke all on function public.request_physical_return(bigint) from public, anon, authenticated;
 
--- Fine payments are settled by library staff and receive a student-visible receipt.
-alter table public.fines add column if not exists receipt_number text;
-create unique index if not exists fines_receipt_number_unique on public.fines(receipt_number) where receipt_number is not null;
+    -- Fine payments are settled by library staff and receive a student-visible receipt.
+    alter table public.fines add column if not exists receipt_number text;
+    create unique index if not exists fines_receipt_number_unique on public.fines(receipt_number) where receipt_number is not null;
 
-create or replace function public.admin_record_physical_fine_payment(p_fine_id bigint)
-returns public.fines language plpgsql security definer set search_path = public
-as $$
-declare paid_fine public.fines;
-begin
-  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
-  select * into paid_fine from public.fines where id = p_fine_id and physical_book_request_id is not null for update;
-  if paid_fine.id is null then raise exception 'Physical fine not found'; end if;
-  if paid_fine.status <> 'unpaid' then raise exception 'This fine is no longer unpaid'; end if;
-  if exists (select 1 from public.physical_book_requests where id = paid_fine.physical_book_request_id and status in ('checked_out', 'return_pending')) then
-    raise exception 'The physical book must be returned or classified as lost first.';
-  end if;
-  update public.fines set status = 'paid', paid_at = now(), paid_by = auth.uid(),
-    receipt_number = 'SF-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(p_fine_id::text, 6, '0')
-  where id = p_fine_id returning * into paid_fine;
-  return paid_fine;
-end;
-$$;
-revoke all on function public.admin_record_physical_fine_payment(bigint) from public, anon;
-grant execute on function public.admin_record_physical_fine_payment(bigint) to authenticated;
+    create or replace function public.admin_record_physical_fine_payment(p_fine_id bigint)
+    returns public.fines language plpgsql security definer set search_path = public
+    as $$
+    declare paid_fine public.fines;
+    begin
+      if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+      select * into paid_fine from public.fines where id = p_fine_id and physical_book_request_id is not null for update;
+      if paid_fine.id is null then raise exception 'Physical fine not found'; end if;
+      if paid_fine.status <> 'unpaid' then raise exception 'This fine is no longer unpaid'; end if;
+      if exists (select 1 from public.physical_book_requests where id = paid_fine.physical_book_request_id and status in ('checked_out', 'return_pending')) then
+        raise exception 'The physical book must be returned or classified as lost first.';
+      end if;
+      update public.fines set status = 'paid', paid_at = now(), paid_by = auth.uid(),
+        receipt_number = 'SF-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(p_fine_id::text, 6, '0')
+      where id = p_fine_id returning * into paid_fine;
+      return paid_fine;
+    end;
+    $$;
+    revoke all on function public.admin_record_physical_fine_payment(bigint) from public, anon;
+    grant execute on function public.admin_record_physical_fine_payment(bigint) to authenticated;
 
--- Close a lost physical loan and add its required staff-assessed fine atomically.
-create or replace function public.admin_close_physical_loan_with_fine(
-  p_request_id bigint, p_amount numeric, p_reason text
-) returns public.physical_book_requests
-language plpgsql security definer set search_path = public
-as $$
-declare saved_request public.physical_book_requests;
-begin
-  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
-  if p_amount is null or p_amount <= 0 or p_amount > 100000 then raise exception 'Enter a fine amount greater than zero'; end if;
-  if nullif(trim(coalesce(p_reason, '')), '') is null or char_length(trim(p_reason)) > 500 then raise exception 'Enter a fine reason of 1 to 500 characters'; end if;
-  perform public.admin_close_physical_loan(p_request_id, 'lost');
-  perform public.admin_add_lost_book_fine(p_request_id, p_amount, trim(p_reason));
-  select * into saved_request from public.physical_book_requests where id = p_request_id;
-  return saved_request;
-end;
-$$;
-revoke all on function public.admin_close_physical_loan_with_fine(bigint, numeric, text) from public, anon;
-grant execute on function public.admin_close_physical_loan_with_fine(bigint, numeric, text) to authenticated;
+    -- Close a lost physical loan and add its required staff-assessed fine atomically.
+    create or replace function public.admin_close_physical_loan_with_fine(
+      p_request_id bigint, p_amount numeric, p_reason text
+    ) returns public.physical_book_requests
+    language plpgsql security definer set search_path = public
+    as $$
+    declare saved_request public.physical_book_requests;
+    begin
+      if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+      if p_amount is null or p_amount <= 0 or p_amount > 100000 then raise exception 'Enter a fine amount greater than zero'; end if;
+      if nullif(trim(coalesce(p_reason, '')), '') is null or char_length(trim(p_reason)) > 500 then raise exception 'Enter a fine reason of 1 to 500 characters'; end if;
+      perform public.admin_close_physical_loan(p_request_id, 'lost');
+      perform public.admin_add_lost_book_fine(p_request_id, p_amount, trim(p_reason));
+      select * into saved_request from public.physical_book_requests where id = p_request_id;
+      return saved_request;
+    end;
+    $$;
+    revoke all on function public.admin_close_physical_loan_with_fine(bigint, numeric, text) from public, anon;
+    grant execute on function public.admin_close_physical_loan_with_fine(bigint, numeric, text) to authenticated;
 
--- Print-service payments have their own staff-issued receipt history.
-create table if not exists public.library_print_payments (
-  id bigint generated by default as identity primary key,
-  student_id uuid not null references public.profiles(id) on delete restrict,
-  amount numeric(10,2) not null check (amount > 0),
-  description text not null check (char_length(trim(description)) between 1 and 240),
-  receipt_number text unique,
-  issued_by uuid not null references public.profiles(id) on delete restrict,
-  created_at timestamptz not null default now()
-);
-comment on column public.library_print_payments.amount is 'Amount in Philippine pesos (PHP).';
-create index if not exists library_print_payments_student_created_idx on public.library_print_payments(student_id, created_at desc);
-alter table public.library_print_payments enable row level security;
-drop policy if exists library_print_payments_read_own_or_staff on public.library_print_payments;
-create policy library_print_payments_read_own_or_staff on public.library_print_payments
-  for select to authenticated using (student_id = auth.uid() or public.is_library_staff());
-grant select on public.library_print_payments to authenticated;
-revoke insert, update, delete on public.library_print_payments from public, anon, authenticated;
-grant all on public.library_print_payments to service_role;
+    -- Print-service payments have their own staff-issued receipt history.
+    create table if not exists public.library_print_payments (
+      id bigint generated by default as identity primary key,
+      student_id uuid not null references public.profiles(id) on delete restrict,
+      amount numeric(10,2) not null check (amount > 0),
+      description text not null check (char_length(trim(description)) between 1 and 240),
+      receipt_number text unique,
+      issued_by uuid not null references public.profiles(id) on delete restrict,
+      created_at timestamptz not null default now()
+    );
+    comment on column public.library_print_payments.amount is 'Amount in Philippine pesos (PHP).';
+    create index if not exists library_print_payments_student_created_idx on public.library_print_payments(student_id, created_at desc);
+    alter table public.library_print_payments enable row level security;
+    drop policy if exists library_print_payments_read_own_or_staff on public.library_print_payments;
+    create policy library_print_payments_read_own_or_staff on public.library_print_payments
+      for select to authenticated using (student_id = auth.uid() or public.is_library_staff());
+    grant select on public.library_print_payments to authenticated;
+    revoke insert, update, delete on public.library_print_payments from public, anon, authenticated;
+    grant all on public.library_print_payments to service_role;
 
-create or replace function public.admin_issue_print_payment_receipt(
-  p_student_id uuid, p_amount numeric, p_description text
-) returns public.library_print_payments
-language plpgsql security definer set search_path = public
-as $$
-declare receipt public.library_print_payments;
-begin
-  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
-  if p_amount is null or p_amount <= 0 or p_amount > 100000 then raise exception 'Enter an amount greater than zero and no more than 100,000'; end if;
-  if nullif(trim(coalesce(p_description, '')), '') is null or char_length(trim(p_description)) > 240 then raise exception 'Enter a payment description of 1 to 240 characters'; end if;
-  if not exists (select 1 from public.profiles where id = p_student_id and role in ('student', 'faculty')) then raise exception 'Choose an active student or faculty member'; end if;
-  insert into public.library_print_payments(student_id, amount, description, issued_by)
-    values (p_student_id, round(p_amount, 2), trim(p_description), auth.uid()) returning * into receipt;
-  update public.library_print_payments set receipt_number = 'SP-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(receipt.id::text, 6, '0')
-    where id = receipt.id returning * into receipt;
-  return receipt;
-end;
-$$;
-revoke all on function public.admin_issue_print_payment_receipt(uuid, numeric, text) from public, anon;
-grant execute on function public.admin_issue_print_payment_receipt(uuid, numeric, text) to authenticated;
+    create or replace function public.admin_issue_print_payment_receipt(
+      p_student_id uuid, p_amount numeric, p_description text
+    ) returns public.library_print_payments
+    language plpgsql security definer set search_path = public
+    as $$
+    declare receipt public.library_print_payments;
+    begin
+      if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+      if p_amount is null or p_amount <= 0 or p_amount > 100000 then raise exception 'Enter an amount greater than zero and no more than 100,000'; end if;
+      if nullif(trim(coalesce(p_description, '')), '') is null or char_length(trim(p_description)) > 240 then raise exception 'Enter a payment description of 1 to 240 characters'; end if;
+      if not exists (select 1 from public.profiles where id = p_student_id and role in ('student', 'faculty')) then raise exception 'Choose an active student or faculty member'; end if;
+      insert into public.library_print_payments(student_id, amount, description, issued_by)
+        values (p_student_id, round(p_amount, 2), trim(p_description), auth.uid()) returning * into receipt;
+      update public.library_print_payments set receipt_number = 'SP-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(receipt.id::text, 6, '0')
+        where id = receipt.id returning * into receipt;
+      return receipt;
+    end;
+    $$;
+    revoke all on function public.admin_issue_print_payment_receipt(uuid, numeric, text) from public, anon;
+    grant execute on function public.admin_issue_print_payment_receipt(uuid, numeric, text) to authenticated;
 
-commit;
+    commit;

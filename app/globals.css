@@ -62,11 +62,11 @@ html.dark body {
 body { line-height: 1.5; }
 button, a, input, select, textarea, [role='button'] { -webkit-tap-highlight-color: transparent; }
 :where(button, a, input, select, textarea, [role='button']):focus-visible {
-  outline: 3px solid rgba(38, 63, 58, .42);
+  outline: 3px solid var(--ds-focus, rgba(38, 63, 58, .42));
   outline-offset: 3px;
 }
 html.dark :where(button, a, input, select, textarea, [role='button']):focus-visible {
-  outline-color: rgba(221, 229, 222, .75);
+  outline-color: var(--ds-focus, rgba(221, 229, 222, .75));
 }
 .surface-page p, .auth-page p { color: #5f6661; }
 html.dark .surface-page p, html.dark .auth-page p { color: #d0cec2; }
@@ -4418,3 +4418,15 @@ body:has(.admin-shell)::-webkit-scrollbar-thumb,
 html:has(.admin-shell)::-webkit-scrollbar-thumb:hover,
 body:has(.admin-shell)::-webkit-scrollbar-thumb:hover,
 .admin-shell::-webkit-scrollbar-thumb:hover { background: #87968d; }
+
+/* Make the current admin destination read as a filled selection, not an outline. */
+html[data-theme] .admin-shell .admin-nav-button[class~="bg-slate-100"],
+html.dark[data-theme] .admin-shell .admin-nav-button[class~="dark:bg-slate-800"] {
+  border: 1px solid var(--theme-accent) !important;
+  background: var(--theme-accent-soft) !important;
+  color: var(--theme-text) !important;
+  box-shadow: inset 4px 0 0 var(--theme-accent) !important;
+}
+:where(html[data-theme]) {
+  --ds-focus: color-mix(in srgb, var(--theme-accent), transparent 42%);
+}

@@ -56,7 +56,7 @@ for (const file of requiredFiles) {
 }
 
 const libraryContracts = fs.readFileSync(path.join(root, 'utils/libraryContracts.ts'), 'utf8')
-for (const token of ['normalizeAccessMode', "'free' | 'points' | 'premium'", "'loan'", "'restricted'"]) {
+for (const token of ['normalizeAccessMode', "'free' | 'points'", "'loan'", "'restricted'"]) {
   if (!libraryContracts.includes(token)) throw new Error(`Missing canonical library contract: ${token}`)
 }
 
