@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,10 +16,12 @@ import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
 import PhysicalCirculationAdminPage from '@/components/PhysicalCirculationAdminPage'
+import SearchableMemberSelect from '@/components/SearchableMemberSelect'
+import { generateCatalogIsbn } from '@/utils/isbn'
 import { isAdminRole } from '@/utils/roles'
 
 const navGroups = [
-  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Physical requests', section: 'physical-requests' }, { label: 'Physical fines', section: 'physical-fines' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital access history', section: 'requests' }] },
+  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Physical lending', section: 'physical-requests' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital access history', section: 'requests' }] },
   { label: 'Library', items: [{ label: 'Catalog management', section: 'books' }, { label: 'Physical catalog', section: 'physical' }, { label: 'Borrowing policy', section: 'policy' }] },
   { label: 'Review & insights', items: [{ label: 'Course contributions', section: 'contributions' }, { label: 'Analytics', section: 'analytics' }, { label: 'Audit log', section: 'audit' }] },
 ]
@@ -43,6 +45,7 @@ type Book = {
   isbn: string | null
   category: string
   description: string | null
+  cover_image_url?: string | null
   pdf_url: string | null
   catalog_type: 'digital' | 'physical' | 'hybrid'
   storage_provider?: string | null
@@ -51,7 +54,6 @@ type Book = {
   access_points: number
   access_costs: DigitalAccessCosts | null
   access_mode: CanonicalAccessMode
-  premium_price: number
   access_duration_days: number
   created_at: string | null
   is_archived: boolean
@@ -134,6 +136,7 @@ type MemberAccountHistory = {
 type Profile = {
   id: string
   email: string
+  username?: string | null
   role: string
   created_at: string | null
   points_balance?: number | null
@@ -146,14 +149,12 @@ type Profile = {
 
 type AcademicCourse = { id: number; name: string; is_active: boolean }
 type AcademicDepartment = { id: number; name: string; is_active: boolean }
-type FacultyCourse = { faculty_id: string; course_id: number }
 type MemberEditForm = {
   role: 'student' | 'faculty' | 'librarian'
   school: string
   department: string
   course: string
   studentYear: string
-  courseIds: string[]
 }
 
 type AdminProfile = {
@@ -178,7 +179,7 @@ type Contribution = {
 }
 
 type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
-type AdminConfirm = { type: 'archiveBook' | 'revokeLoan'; id: number; label?: string; isArchived?: boolean } | { type: 'deleteMember'; id: string; label?: string } | null
+type AdminConfirm = { type: 'archiveBook' | 'revokeLoan'; id: number; label?: string; isArchived?: boolean } | { type: 'deleteBook'; id: number; label?: string } | { type: 'deleteMember'; id: string; label?: string } | null
 
 function memberDisplayName(member?: Pick<Profile, 'full_name' | 'email'> | null, fallback = 'Member') {
   return member?.full_name?.trim() || fallback
@@ -230,7 +231,7 @@ export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
   const [physicalSectionVisited, setPhysicalSectionVisited] = useState(false)
-  const [overviewPhysicalAction, setOverviewPhysicalAction] = useState<{ panel: 'requests' | 'checkedOut' | 'history' | 'lost' | 'print'; token: number } | null>(null)
+  const [overviewPhysicalAction, setOverviewPhysicalAction] = useState<{ panel: 'requests' | 'checkedOut' | 'history' | 'lost' | 'print' | 'addBook'; token: number; caseId?: number } | null>(null)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
@@ -239,7 +240,6 @@ export default function AdminPage() {
   const [students, setStudents] = useState<Profile[]>([])
   const [academicCourses, setAcademicCourses] = useState<AcademicCourse[]>([])
   const [academicDepartments, setAcademicDepartments] = useState<AcademicDepartment[]>([])
-  const [facultyCourses, setFacultyCourses] = useState<FacultyCourse[]>([])
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -253,8 +253,7 @@ export default function AdminPage() {
     isbn: '',
     pdf_url: '',
     access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>,
-    access_mode: 'free' as 'free' | 'points' | 'premium',
-    premium_price: '',
+    access_mode: 'free' as 'free' | 'points',
     access_duration_days: '30',
     description: '',
   })
@@ -283,17 +282,18 @@ export default function AdminPage() {
   const [auditPage, setAuditPage] = useState(1)
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
   const [selectedCatalogBook, setSelectedCatalogBook] = useState<Book | null>(null)
-  const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points' | 'premium', premiumPrice: '0', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
+  const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
+  const [editingBookDetailsId, setEditingBookDetailsId] = useState<number | null>(null)
+  const [bookDetailsDraft, setBookDetailsDraft] = useState({ title: '', author: '', category: '', isbn: '', description: '', coverImageUrl: '' })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [newStudent, setNewStudent] = useState({ email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '' })
+  const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '' })
   const [recognitionForm, setRecognitionForm] = useState({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
-  const [grantForm, setGrantForm] = useState({ studentId: '', bookId: '', duration: '7', reason: '' })
   const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
   const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
   const [revisionDialog, setRevisionDialog] = useState<{ id: number; feedback: string } | null>(null)
-  const [quickAction, setQuickAction] = useState<'recognition' | 'grant' | null>(null)
+  const [quickAction, setQuickAction] = useState<'recognition' | null>(null)
   const [memberToolModal, setMemberToolModal] = useState<'catalogs' | 'createMember' | null>(null)
   const [editingMember, setEditingMember] = useState<Profile | null>(null)
   const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
@@ -395,11 +395,30 @@ export default function AdminPage() {
     }
   }
 
+  const permanentlyDeleteBook = async (bookId: number, title: string) => {
+    setSaving(true)
+    setError(null)
+    setActionMessage(null)
+    try {
+      const { error: deleteError } = await getSupabase().rpc('admin_delete_catalog_book', { p_book_id: bookId })
+      if (deleteError) throw new Error(deleteError.message)
+      setBooks((current) => current.filter((book) => book.id !== bookId))
+      setSelectedCatalogBook(null)
+      setBookPage(1)
+      setActionMessage(`“${title}” was permanently deleted.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to permanently delete this title.')
+    } finally {
+      setSaving(false)
+      setConfirmAction(null)
+    }
+  }
+
   const startBookAccessEdit = (book: Book) => {
+    setEditingBookDetailsId(null)
     setEditingBookId(book.id)
     setBookAccessDraft({
       mode: book.access_mode,
-      premiumPrice: String(book.premium_price ?? 0),
       costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, String(book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days))])),
     })
   }
@@ -407,6 +426,50 @@ export default function AdminPage() {
   const openCatalogBook = (book: Book) => {
     setSelectedCatalogBook(book)
     setEditingBookId(null)
+    setEditingBookDetailsId(null)
+  }
+
+  const startBookDetailsEdit = (book: Book) => {
+    setEditingBookId(null)
+    setEditingBookDetailsId(book.id)
+    setBookDetailsDraft({ title: book.title, author: book.author, category: book.category, isbn: book.isbn ?? '', description: book.description ?? '', coverImageUrl: book.cover_image_url ?? '' })
+  }
+
+  const generateBookIsbn = (update: (isbn: string) => void, excludedBookId?: number) => {
+    try {
+      update(generateCatalogIsbn(books.filter((book) => book.id !== excludedBookId).map((book) => book.isbn)))
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not generate a catalog identifier.')
+    }
+  }
+
+  const saveBookDetailsEdit = async (event: FormEvent<HTMLFormElement>, book: Book) => {
+    event.preventDefault()
+    const title = bookDetailsDraft.title.trim()
+    const author = bookDetailsDraft.author.trim()
+    const category = bookDetailsDraft.category.trim()
+    if (!title || !author || !category) {
+      setError('Title, author, and category are required.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const { data, error: updateError } = await getSupabase().from('books').update({
+      title, author, category,
+      isbn: bookDetailsDraft.isbn.trim() || null,
+      description: bookDetailsDraft.description.trim() || null,
+      cover_image_url: bookDetailsDraft.coverImageUrl.trim() || null,
+    }).eq('id', book.id).select('id,title,author,category,isbn,description,cover_image_url').single()
+    if (updateError) {
+      setError(`Unable to update book details: ${updateError.message}`)
+    } else {
+      setBooks((current) => current.map((item) => item.id === book.id ? { ...item, ...data } : item))
+      setSelectedCatalogBook((current) => current?.id === book.id ? { ...current, ...data } : current)
+      setEditingBookDetailsId(null)
+      setActionMessage(`Details for "${data.title}" were updated.`)
+    }
+    setSaving(false)
   }
 
   const saveBookAccessEdit = async (event: FormEvent<HTMLFormElement>, book: Book) => {
@@ -416,14 +479,11 @@ export default function AdminPage() {
       setError('Enter a points cost for every access duration.')
       return
     }
-    const costs = Object.fromEntries(rawCosts.map(([days, value]) => [days, Number(value || 0)]))
+    const costs: Record<string, number> = bookAccessDraft.mode === 'points'
+      ? Object.fromEntries(rawCosts.map(([days, value]) => [days, Number(value)]))
+      : {}
     if (Object.values(costs).some((cost) => !Number.isInteger(cost) || cost < 0)) {
       setError('Each access cost must be a whole number of points greater than or equal to zero.')
-      return
-    }
-    const premiumPrice = Number(bookAccessDraft.premiumPrice)
-    if (bookAccessDraft.mode === 'premium' && (!Number.isFinite(premiumPrice) || premiumPrice <= 0)) {
-      setError('Set a premium price greater than zero.')
       return
     }
 
@@ -436,10 +496,9 @@ export default function AdminPage() {
         access_mode: bookAccessDraft.mode,
         access_points: bookAccessDraft.mode === 'points' ? costs['7'] : 0,
         access_costs: costs,
-        premium_price: bookAccessDraft.mode === 'premium' ? premiumPrice : 0,
       })
       .eq('id', book.id)
-      .select('id, access_points, access_costs, access_mode, premium_price, access_duration_days')
+      .select('id, access_points, access_costs, access_mode, access_duration_days')
       .single()
 
     if (updateError) {
@@ -450,7 +509,6 @@ export default function AdminPage() {
         access_points: data.access_points,
         access_costs: data.access_costs as DigitalAccessCosts,
         access_mode: normalizeAccessMode(data.access_mode, data.access_points),
-        premium_price: Number(data.premium_price ?? 0),
         access_duration_days: data.access_duration_days,
       } : item))
       setEditingBookId(null)
@@ -504,10 +562,10 @@ export default function AdminPage() {
     const isMissingTableError = (error: { code?: string; message?: string } | null) =>
       Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, facultyCoursesRes, departmentsRes, physicalRequestsRes] = await Promise.all([
+    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, departmentsRes, physicalRequestsRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, premium_price, access_duration_days, created_at, is_archived')
+        .select('id, title, author, isbn, category, description, cover_image_url, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, access_duration_days, created_at, is_archived')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -520,7 +578,7 @@ export default function AdminPage() {
         .limit(200),
       supabase
         .from('profiles')
-        .select('id, email, role, created_at, points_balance, full_name, school, department, course, student_year')
+        .select('id, email, username, role, created_at, points_balance, full_name, school, department, course, student_year')
         .in('role', ['student', 'faculty', 'librarian'])
         .order('created_at', { ascending: false }),
       supabase
@@ -529,18 +587,17 @@ export default function AdminPage() {
         .order('created_at', { ascending: false }),
       supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
       supabase.from('academic_courses').select('id,name,is_active').order('name'),
-      supabase.from('faculty_courses').select('faculty_id,course_id'),
       supabase.from('academic_departments').select('id,name,is_active').order('name'),
       supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').order('requested_at', { ascending: false }).limit(6),
     ])
 
     // Optional insights modules may not exist yet in older Supabase projects.
     // Keep the control panel usable while those sections remain empty.
-    if (booksRes.error || requestsRes.error || historyRes.error || studentsRes.error || contributionsRes.error || coursesRes.error || facultyCoursesRes.error || departmentsRes.error) {
-      const failedResource = [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, coursesRes, facultyCoursesRes, departmentsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
+    if (booksRes.error || requestsRes.error || historyRes.error || studentsRes.error || contributionsRes.error || coursesRes.error || departmentsRes.error) {
+      const failedResource = [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, coursesRes, departmentsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (failedResource) {
         setError(`Failed to load admin data: ${failedResource.message || 'Please check the Supabase schema.'}`)
-      } else if (coursesRes.error || facultyCoursesRes.error || departmentsRes.error) {
+      } else if (coursesRes.error || departmentsRes.error) {
         setError('Academic catalogs are not configured. Apply the academic catalog migrations in Supabase.')
       }
     }
@@ -555,7 +612,6 @@ export default function AdminPage() {
     setStudents((studentsRes.data ?? []) as Profile[])
     setAcademicCourses((coursesRes.data ?? []) as AcademicCourse[])
     setAcademicDepartments((departmentsRes.data ?? []) as AcademicDepartment[])
-    setFacultyCourses((facultyCoursesRes.data ?? []) as FacultyCourse[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
     setAuditLogs((auditRes.data ?? []) as AuditLog[])
     setLoading(false)
@@ -618,15 +674,6 @@ export default function AdminPage() {
 
   const bookMap = useMemo(() => new Map(books.map((book) => [book.id, book])), [books])
   const studentMap = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
-  const academicCourseMap = useMemo(() => new Map(academicCourses.map((course) => [course.id, course.name])), [academicCourses])
-  const facultyCourseMap = useMemo(() => {
-    const coursesByFaculty = new Map<string, string[]>()
-    facultyCourses.forEach(({ faculty_id, course_id }) => {
-      const name = academicCourseMap.get(course_id)
-      if (name) coursesByFaculty.set(faculty_id, [...(coursesByFaculty.get(faculty_id) ?? []), name])
-    })
-    return coursesByFaculty
-  }, [facultyCourses, academicCourseMap])
   const bookFilterOptions = useMemo(() => {
     const digitalBooks = books.filter((book) => book.catalog_type !== 'physical' && book.is_archived === showArchivedBooks)
     return {
@@ -742,7 +789,6 @@ export default function AdminPage() {
         student.department,
         student.course,
         student.student_year,
-        ...(student.role === 'faculty' ? (facultyCourseMap.get(student.id) ?? []) : []),
       ].filter(Boolean).join(' ').toLowerCase().includes(query)
       const matchesRole = userRoleFilter === 'all' || student.role === userRoleFilter
       const matchesLoanState = userLoanFilter === 'all'
@@ -750,7 +796,7 @@ export default function AdminPage() {
         || (userLoanFilter === 'none' && student.active_loans === 0)
       return matchesQuery && matchesRole && matchesLoanState
     })
-  }, [debouncedUserSearch, facultyCourseMap, studentDetails, userLoanFilter, userRoleFilter])
+  }, [debouncedUserSearch, studentDetails, userLoanFilter, userRoleFilter])
 
   const filteredDigitalLoanHistory = useMemo(() => {
     const query = debouncedDigitalHistorySearch.trim().toLowerCase()
@@ -900,7 +946,6 @@ export default function AdminPage() {
       department: member.department ?? '',
       course: memberCourseFormValue(member.course, academicCourses),
       studentYear: memberYearDisplay(member.student_year) === 'Not set' || memberYearDisplay(member.student_year) === 'Needs review' ? member.student_year ?? '' : memberYearDisplay(member.student_year),
-      courseIds: facultyCourses.filter((assignment) => assignment.faculty_id === member.id).map((assignment) => String(assignment.course_id)),
     })
     setError(null)
   }
@@ -923,10 +968,6 @@ export default function AdminPage() {
         setError('Choose an active faculty before saving this profile.')
         return
       }
-      if (memberEditForm.courseIds.length === 0 || memberEditForm.courseIds.some((id) => !academicCourses.some((course) => course.is_active && String(course.id) === id))) {
-        setError('Assign at least one active course to this faculty member before saving.')
-        return
-      }
     }
     setSaving(true)
     setError(null)
@@ -939,7 +980,6 @@ export default function AdminPage() {
       new_course: memberEditForm.role === 'student' ? memberEditForm.course.trim() || null : null,
       new_student_year: memberEditForm.role === 'student' ? memberEditForm.studentYear.trim() || null : null,
       new_faculty_rank_id: null,
-      new_course_ids: memberEditForm.role === 'faculty' ? memberEditForm.courseIds.map(Number) : [],
     })
     if (error) {
       setError(error.message)
@@ -1083,8 +1123,8 @@ export default function AdminPage() {
       setSaving(false)
       return false
     } else {
-      setActionMessage(`Member account created for ${data.email}.`)
-      setNewStudent({ email: '', password: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '' })
+      setActionMessage(`Member account created for ${data.email}. Username: ${data.username}.`)
+      setNewStudent({ username: '', email: '', password: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '' })
       await loadData()
     }
     setSaving(false)
@@ -1112,21 +1152,6 @@ export default function AdminPage() {
       setRecognitionForm({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
       setQuickAction(null)
     }
-    setSaving(false)
-  }
-
-  const submitGrantAccess = async () => {
-    setSaving(true)
-    setError(null)
-    setActionMessage(null)
-    const { error } = await getSupabase().rpc('admin_grant_book_access', {
-      target_user_id: grantForm.studentId,
-      target_book_id: Number(grantForm.bookId),
-      duration_days: Number(grantForm.duration),
-      grant_reason: grantForm.reason,
-    })
-    if (error) setError(error.message)
-    else { setActionMessage('Temporary access granted.'); setGrantForm({ studentId: '', bookId: '', duration: '7', reason: '' }); setQuickAction(null); await loadData() }
     setSaving(false)
   }
 
@@ -1177,14 +1202,8 @@ export default function AdminPage() {
       storageMetadata = { storage_provider: uploadResult.storage_provider, storage_file_id: uploadResult.storage_file_id || null, storage_path: uploadResult.storage_path || null, file_name: uploadResult.file_name || newBookFile.name, file_size: uploadResult.file_size || newBookFile.size, mime_type: uploadResult.mime_type || 'application/pdf' }
     }
 
-    if (newBook.access_mode !== 'free' && /^https?:\/\//i.test(finalPdfUrl)) {
-      setError('Paid resources must use a PDF uploaded to protected library storage.')
-      setSaving(false)
-      return
-    }
-    const premiumPrice = Number(newBook.premium_price)
-    if (newBook.access_mode === 'premium' && (!Number.isFinite(premiumPrice) || premiumPrice <= 0)) {
-      setError('Set a premium price greater than zero.')
+    if (newBook.access_mode === 'points' && /^https?:\/\//i.test(finalPdfUrl)) {
+      setError('Points-based resources must use a PDF uploaded to protected library storage.')
       setSaving(false)
       return
     }
@@ -1197,10 +1216,9 @@ export default function AdminPage() {
         pdf_url: finalPdfUrl || null,
         ...storageMetadata,
         description: newBook.description || null,
-        access_points: parsedAccessCosts['7'],
-        access_costs: parsedAccessCosts,
+        access_points: newBook.access_mode === 'points' ? parsedAccessCosts['7'] : 0,
+        access_costs: newBook.access_mode === 'points' ? parsedAccessCosts : {},
         access_mode: newBook.access_mode,
-        premium_price: newBook.access_mode === 'premium' ? premiumPrice : 0,
         catalog_type: 'digital',
         access_duration_days: Number(newBook.access_duration_days) || 30,
         total_copies: 0,
@@ -1212,7 +1230,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New e-book added to the online catalog.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', premium_price: '', access_duration_days: '30', description: '' })
+      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
       setNewBookFile(null)
       setNewBookOpen(false)
       await loadData()
@@ -1352,7 +1370,7 @@ export default function AdminPage() {
                             <td className="font-medium">{physicalBorrowerName(request.student_id)}</td>
                             <td>{physicalBookTitle(request.book_id)}</td>
                             <td><span className="capitalize">{request.payment_method}</span><small>₱{Number(request.fee_amount).toFixed(2)}</small></td>
-                            <td><span className={`admin-status-pill ${request.status === 'pending' ? 'is-pending' : request.status === 'checked_out' ? 'is-active' : 'is-muted'}`}>{request.status.replace(/_/g, ' ')}</span><small className="capitalize">{request.payment_status.replace(/_/g, ' ')}</small></td>
+                            <td><span className={`admin-status-pill ${request.status === 'pending' ? 'is-pending' : request.status === 'checked_out' ? 'is-active' : request.status === 'returned' ? 'is-success' : request.status === 'lost' || request.status === 'rejected' ? 'is-danger' : 'is-muted'}`}>{request.status.replace(/_/g, ' ')}</span><small className="capitalize">{request.payment_status.replace(/_/g, ' ')}</small></td>
                           </tr>)}
                           {physicalRequestPreview.length === 0 ? <tr><td colSpan={4} className="admin-overview-empty">No physical requests yet. New requests will appear here.</td></tr> : null}
                         </tbody>
@@ -1370,20 +1388,16 @@ export default function AdminPage() {
                     <div className="mt-5 grid gap-2 sm:grid-cols-2">
                       <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action admin-quick-action-primary"><strong>Create account</strong><span>Provision a student, faculty, or librarian</span></button>
                       <button type="button" onClick={() => setQuickAction('recognition')} className="admin-quick-action admin-quick-action-primary"><strong>Give points</strong><span>Recognize a member</span></button>
-                      <button type="button" onClick={() => setQuickAction('grant')} className="admin-quick-action"><strong>Grant access</strong><span>Unlock a resource</span></button>
-                      <button type="button" onClick={() => navigateToSection('physical-requests')} className="admin-quick-action"><strong>Review physical requests</strong><span>Process payment and checkout decisions</span></button>
                       <button type="button" onClick={() => setSection('contributions')} className="admin-quick-action"><strong>Review contributions ({pendingContributions.length})</strong><span>Check pending academic materials</span></button>
+                      <button type="button" onClick={() => openOverviewCirculationPanel('addBook')} className="admin-quick-action"><strong>Add a physical book</strong><span>Create a title, copies, and QR labels</span></button>
                       <button type="button" onClick={() => openOverviewCirculationPanel('checkedOut')} className="admin-quick-action"><strong>Manage checked-out books</strong><span>Handle returns and loan status</span></button>
                       <button type="button" onClick={() => openOverviewCirculationPanel('lost')} className="admin-quick-action"><strong>Resolve lost books</strong><span>Review cases and fines</span></button>
-                      <button type="button" onClick={() => navigateToSection('physical-fines')} className="admin-quick-action"><strong>Settle physical fines</strong><span>Review unpaid charges, record payments, and issue receipts</span></button>
-                      <button type="button" onClick={() => openOverviewCirculationPanel('print')} className="admin-quick-action"><strong>Print payments &amp; receipts</strong><span>Record a payment or view receipts</span></button>
-                      <button type="button" onClick={() => openOverviewCirculationPanel('history')} className="admin-quick-action"><strong>Physical loan history</strong><span>Find completed circulation records</span></button>
                     </div>
                   </section>
 
                 </div>
               </div>
-              <PhysicalCirculationAdminPage active={section === 'overview'} overviewOnly requestedPanel={overviewPhysicalAction} />
+              <PhysicalCirculationAdminPage active={section === 'overview'} overviewOnly requestedPanel={overviewPhysicalAction} onOpenFines={() => setSection('physical-requests')} onClose={() => setSection('overview')} />
             </section>
           )}
 
@@ -1460,7 +1474,7 @@ export default function AdminPage() {
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.author}</td>
                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{book.category}</td>
                           <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{book.catalog_type}</td>
-                          <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'premium' ? `Premium · ₱${Number(book.premium_price).toFixed(2)}` : book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <span className="mt-1 block text-xs text-slate-500">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => `${days}d: ${book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts`).join(' · ')}</span> : book.access_mode === 'premium' ? <span className="mt-1 block text-xs text-slate-500">Staff verifies payment before permanent access.</span> : null}</td>
+                          <td className="px-4 py-4"><span className="font-medium text-slate-900 dark:text-slate-100">{book.access_mode === 'points' ? 'Points' : 'Free'}</span>{book.access_mode === 'points' ? <><span className="mt-1 block text-xs text-slate-600 dark:text-slate-300">{book.access_costs?.['1'] ?? getDigitalAccessCost(book.access_points, 1)} pts · 1 day</span><details className="mt-1 text-xs"><summary className="w-fit cursor-pointer font-semibold text-emerald-800 underline dark:text-emerald-300">View tiers</summary><ul className="mt-1 space-y-0.5 text-slate-500 dark:text-slate-400">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <li key={days}>{days} days: {book.access_costs?.[String(days) as keyof DigitalAccessCosts] ?? getDigitalAccessCost(book.access_points, days)} pts</li>)}</ul></details></> : null}</td>
                           <td className="px-4 py-4">{book.pdf_url || book.storage_file_id || book.storage_path ? <span className="rounded-md bg-pine-100 px-2 py-1 text-[10px] font-bold text-pine-700 dark:bg-forest-700 dark:text-pine-200">{book.storage_provider === 'external' ? 'External' : 'File ready'}</span> : <span className="text-xs text-slate-400">Missing</span>}</td>
                           <td className="px-4 py-4"><button type="button" disabled={saving} onClick={() => openCatalogBook(book)} className="pine-action rounded-xl px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Manage book</button></td>
                         </tr>
@@ -1480,7 +1494,7 @@ export default function AdminPage() {
                   </div>
                   <div className="mt-6 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Format</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.catalog_type}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Access</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.access_mode}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">ISBN</p><p className="mt-1 font-semibold">{selectedCatalogBook.isbn || 'Not set'}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">File</p><p className="mt-1 font-semibold">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'Available' : 'Missing'}</p></div></div>
                   {selectedCatalogBook.description ? <p className="mt-5 text-sm leading-6 text-slate-600 dark:text-slate-300">{selectedCatalogBook.description}</p> : null}
-                  {editingBookId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookAccessEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option><option value="premium">Premium</option></select></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Premium price (₱)<input type="number" min="0.01" step="0.01" value={bookAccessDraft.premiumPrice} onChange={(event) => setBookAccessDraft((current) => ({ ...current, premiumPrice: event.target.value }))} disabled={bookAccessDraft.mode !== 'premium'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} disabled={bookAccessDraft.mode !== 'points'} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" /></label>)}</div><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : <div className="mt-6 flex flex-wrap gap-2"><button type="button" disabled={saving || !(selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path)} onClick={() => window.open(`/reader/${selectedCatalogBook.id}`, '_blank', 'noopener,noreferrer')} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Open reader</button><button type="button" disabled={saving} onClick={() => openPdfAttachment(selectedCatalogBook.id)} className="rounded-xl border border-sky-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(selectedCatalogBook)} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleArchiveBook(selectedCatalogBook.id, selectedCatalogBook.title)} className="!bg-rose-700 !text-white rounded-xl px-4 py-2.5 text-sm font-semibold hover:!bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-rose-700 dark:hover:!bg-rose-600">{selectedCatalogBook.is_archived ? 'Restore to catalog' : 'Remove from catalog'}</button></div>}
+                  {editingBookDetailsId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookDetailsEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit book information</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Title<input required maxLength={300} value={bookDetailsDraft.title} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, title: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Author<input required maxLength={200} value={bookDetailsDraft.author} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, author: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Category<input required maxLength={120} value={bookDetailsDraft.category} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, category: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><div><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">ISBN<input maxLength={32} value={bookDetailsDraft.isbn} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, isbn: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><button type="button" onClick={() => generateBookIsbn((isbn) => setBookDetailsDraft((current) => ({ ...current, isbn })), selectedCatalogBook.id)} className="mt-2 text-xs font-semibold text-sky-700 underline dark:text-sky-300">Generate ISBN-13</button><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Internal catalog ID, not a publisher-assigned ISBN.</span></div></div><label className="mt-3 block text-xs font-semibold text-slate-600 dark:text-slate-300">Description<textarea maxLength={5000} rows={4} value={bookDetailsDraft.description} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, description: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save book details'}</button><button type="button" disabled={saving} onClick={() => setEditingBookDetailsId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : editingBookId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookAccessEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option></select></label>{bookAccessDraft.mode === 'points' ? DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} required className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>) : <p className="text-sm text-slate-500 dark:text-slate-400">Free access unlocks immediately. No points are deducted.</p>}</div><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : <div className="mt-6 flex flex-wrap gap-2"><button type="button" disabled={saving || !(selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path)} onClick={() => window.open(`/reader/${selectedCatalogBook.id}`, '_blank', 'noopener,noreferrer')} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Open reader</button><button type="button" disabled={saving} onClick={() => openPdfAttachment(selectedCatalogBook.id)} className="rounded-xl border border-sky-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookDetailsEdit(selectedCatalogBook)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit details</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(selectedCatalogBook)} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleArchiveBook(selectedCatalogBook.id, selectedCatalogBook.title)} className="!bg-rose-700 !text-white rounded-xl px-4 py-2.5 text-sm font-semibold hover:!bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-rose-700 dark:hover:!bg-rose-600">{selectedCatalogBook.is_archived ? 'Restore to catalog' : 'Archive book'}</button>{selectedCatalogBook.is_archived ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteBook', id: selectedCatalogBook.id, label: selectedCatalogBook.title })} className="rounded-xl border border-rose-400 px-4 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">Delete permanently</button> : null}</div>}
                 </section>
               </div> : null}
 
@@ -1515,15 +1529,6 @@ export default function AdminPage() {
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </label>
-                  <fieldset className="sm:col-span-2">
-                    <legend className="text-sm font-medium text-slate-700 dark:text-slate-200">Points per access period</legend>
-                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                      {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}
-                        <input type="number" min="0" step="1" value={newBook.access_costs[String(days)] ?? '0'} onChange={(event) => setNewBook({ ...newBook, access_costs: { ...newBook.access_costs, [days]: event.target.value } })} disabled={newBook.access_mode === 'free'} required className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900" />
-                      </label>)}
-                    </div>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Set a separate cost for each supported access period. Free access ignores these values.</span>
-                  </fieldset>
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access mode</span>
                     <select
@@ -1533,15 +1538,18 @@ export default function AdminPage() {
                     >
                       <option value="free">Free access</option>
                       <option value="points">Points-based access</option>
-                      <option value="premium">Premium paid access</option>
                     </select>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Free and points access unlock immediately. Premium access requires the member to submit payment evidence for staff verification.</span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Choose how members unlock this title.</span>
                   </label>
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Premium price (₱)</span>
-                    <input type="number" min="0.01" step="0.01" value={newBook.premium_price} onChange={(event) => setNewBook({ ...newBook, premium_price: event.target.value })} disabled={newBook.access_mode !== 'premium'} required={newBook.access_mode === 'premium'} className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Premium purchases grant permanent access after staff verifies payment.</span>
-                  </label>
+                  {newBook.access_mode === 'points' ? <fieldset className="sm:col-span-2">
+                    <legend className="text-sm font-medium text-slate-700 dark:text-slate-200">Points per access period</legend>
+                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}
+                        <input type="number" min="0" step="1" value={newBook.access_costs[String(days)] ?? '0'} onChange={(event) => setNewBook({ ...newBook, access_costs: { ...newBook.access_costs, [days]: event.target.value } })} required className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" />
+                      </label>)}
+                    </div>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Set the points required for each access period.</span>
+                  </fieldset> : <p className="sm:col-span-2 text-sm text-slate-500 dark:text-slate-400">Free access unlocks immediately at no points cost.</p>}
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration</span>
                     <select
@@ -1562,6 +1570,8 @@ export default function AdminPage() {
                     onChange={(event) => setNewBook({ ...newBook, isbn: event.target.value })}
                     className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   />
+                  <button type="button" onClick={() => generateBookIsbn((isbn) => setNewBook((current) => ({ ...current, isbn })))} className="mt-2 text-xs font-semibold text-sky-700 underline dark:text-sky-300">Generate ISBN-13</button>
+                  <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Internal catalog ID, not a publisher-assigned ISBN.</span>
                 </label>
                 <div className="mt-4">
                   <EbookUploader
@@ -1603,9 +1613,7 @@ export default function AdminPage() {
           {physicalSectionVisited ? (
             <div hidden={section !== 'physical' && section !== 'physical-requests'}>
               <PhysicalCirculationAdminPage
-                active={section === 'physical' || section === 'physical-requests'}
-                initialPanel={section === 'physical-requests' ? 'requests' : undefined}
-                requestsOnly={section === 'physical-requests'}
+                active={section === 'physical' || section === 'physical-requests'}                requestsOnly={section === 'physical-requests'}
                 catalogOnly={section === 'physical'}
                 onClose={() => navigateToSection('overview')}
               />
@@ -1613,7 +1621,6 @@ export default function AdminPage() {
           ) : null}
 
           {section === 'policy' ? <PhysicalCirculationAdminPage active policyOnly /> : null}
-          {section === 'physical-fines' ? <PhysicalCirculationAdminPage active finesOnly /> : null}
 
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
@@ -1637,16 +1644,17 @@ export default function AdminPage() {
                 <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Showing {filteredDigitalLoanHistory.length} of {digitalLoanHistory.length} loans</p>
                 <div>
                   <table className="w-full table-fixed divide-y divide-slate-200 text-left text-xs sm:text-sm dark:divide-slate-700">
-                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-[30%] px-2 py-3 font-semibold sm:px-3">Member / book</th><th className="w-[34%] px-2 py-3 font-semibold sm:px-3">Timeline</th><th className="w-[19%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Status</th></tr></thead>
+                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-[27%] px-2 py-3 font-semibold sm:px-3">Member / book</th><th className="w-[16%] px-2 py-3 font-semibold sm:px-3">Issue date</th><th className="w-[20%] px-2 py-3 font-semibold sm:px-3">Due / returned</th><th className="w-[18%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[19%] px-2 py-3 font-semibold sm:px-3">Status</th></tr></thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleDigitalLoanHistory.map((loan) => {
                         const request = requests.find((item) => item.id === loan.borrow_request_id)
                         const active = request ? isActiveDigitalAccess(request) : false
                         return <tr key={loan.id} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800/80">
                           <td className="break-words px-2 py-3 text-slate-800 dark:text-slate-100 sm:px-3"><span className="block font-medium">{memberDisplayName(studentMap.get(loan.student_id))}</span><span className="mt-1 block text-slate-600 dark:text-slate-300">{bookMap.get(loan.book_id)?.title ?? 'Unknown book'}</span></td>
-                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">Requested · {new Date(loan.requested_at).toLocaleDateString()}</span><span className="block">Borrowed · {loan.borrowed_at ? new Date(loan.borrowed_at).toLocaleDateString() : '—'}</span><span className="block">Due · {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}{loan.returned_at ? ` · Returned ${new Date(loan.returned_at).toLocaleDateString()}` : ''}</span></td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block text-[10px] uppercase tracking-wide text-slate-400">{loan.borrowed_at ? 'Borrowed' : 'Requested'}</span><time>{new Date(loan.borrowed_at ?? loan.requested_at).toLocaleDateString()}</time></td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</span>{loan.returned_at ? <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-300">Returned {new Date(loan.returned_at).toLocaleDateString()}</span> : null}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">{loan.duration_days} days</span><span className="block">{loan.renewal_count} renewals · {loan.points_cost} pts</span></td>
-                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block capitalize">{loan.status.replace('_', ' ')}</span>{active && request ? <button type="button" disabled={saving} onClick={() => handleRevoke(request.id)} className="mt-2 rounded-lg border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900 dark:text-rose-300">Revoke</button> : null}</td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block capitalize">{loan.status.replace('_', ' ')}</span>{active && request ? <button type="button" disabled={saving} onClick={() => handleRevoke(request.id)} className="mt-2 inline-flex items-center rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200 dark:hover:bg-rose-950">Revoke access</button> : null}</td>
                         </tr>
                       })}
                     </tbody>
@@ -1816,7 +1824,7 @@ export default function AdminPage() {
                     </div>
                   </article>
                 )) : (
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">No pending contributions.</div>
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center dark:border-slate-700 dark:bg-slate-800/40"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-6 w-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" /><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4z" /></svg></span><p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-100">No pending contributions</p><p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">Member-submitted books will appear here when they are ready for review.</p></div>
                 )}
               </div>
               <ListPagination page={Math.min(contributionPage, contributionPageCount)} pageCount={contributionPageCount} total={pendingContributions.length} onPageChange={setContributionPage} />
@@ -1891,14 +1899,15 @@ export default function AdminPage() {
               <form onSubmit={async (event) => { if (await handleCreateStudent(event)) setMemberToolModal(null) }} className="mt-5">
                 <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <input type="text" required maxLength={120} value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() })} placeholder="Username (3–30 characters)" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <PasswordInput required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <select required value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                  <select required aria-label="Account type" value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                     <option value="student">Student</option>
                     <option value="faculty">Faculty</option>
                     <option value="librarian">Librarian</option>
                   </select>
-                  {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium">Faculty<select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Select faculty</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label> : null}
+                  {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium">Department<select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label> : null}
                   {newStudent.role === 'student' ? <select required value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Course</option>{academicCourses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select> : null}
                   {newStudent.role === 'student' ? <select required value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Year level</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select> : null}
                 </div>
@@ -1912,7 +1921,6 @@ export default function AdminPage() {
                       <th className="px-4 py-3 font-semibold">Email</th>
                       <th className="px-4 py-3 font-semibold">Role</th>
                       <th className="px-4 py-3 font-semibold">Faculty</th>
-                      <th className="px-4 py-3 font-semibold">Courses</th>
                       <th className="px-4 py-3 font-semibold">Year level</th>
                       <th className="px-4 py-3 font-semibold">Points</th>
                       <th className="px-4 py-3 font-semibold">Active loans</th>
@@ -1922,11 +1930,10 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                     {visibleStudentDetails.map((student) => (
                       <tr key={student.id} tabIndex={0} onClick={() => openMemberDetails(student)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openMemberDetails(student) } }} className="cursor-pointer hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-800/80 dark:focus:bg-slate-800/80">
-                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100"><span className="block font-medium">{memberDisplayName(student, 'Unknown member')}</span></td>
+                        <td className="px-4 py-4 text-slate-800 dark:text-slate-100"><span className="block font-medium">{memberDisplayName(student, 'Unknown member')}</span>{student.username ? <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">@{student.username}</span> : null}</td>
                         <td className="max-w-[220px] break-all px-4 py-4 text-slate-600 dark:text-slate-300">{student.email || 'No email'}</td>
                         <td className="px-4 py-4 capitalize text-slate-600 dark:text-slate-300">{student.role}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? student.department || 'Not set' : '—'}</td>
-                        <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'faculty' ? (facultyCourseMap.get(student.id)?.join(', ') || 'No courses assigned') : student.role === 'student' ? <span title={student.course ? `Saved value: ${student.course}` : undefined}>{memberCourseDisplay(student.course, academicCourses)}{student.course && memberCourseDisplay(student.course, academicCourses) === 'Needs review' ? ` (${student.course})` : ''}</span> : '—'}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.role === 'student' ? <span title={student.student_year ? `Saved value: ${student.student_year}` : undefined}>{memberYearDisplay(student.student_year)}{student.student_year && memberYearDisplay(student.student_year) === 'Needs review' ? ` (${student.student_year})` : ''}</span> : '—'}</td>
                         <td className="px-4 py-4 font-semibold text-slate-700 dark:text-slate-200">{Number(student.points_balance ?? 0).toLocaleString()}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{student.active_loans}</td>
@@ -1963,7 +1970,7 @@ export default function AdminPage() {
               <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500 dark:text-slate-400">Joined</p><p className="mt-1 font-semibold">{selectedMember.created_at ? new Date(selectedMember.created_at).toLocaleDateString() : '-'}</p></div>
             </div>
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
-              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Profile and academics</h3><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{selectedMember.role === 'student' ? <><div><dt className="text-slate-500">Course</dt><dd className="font-medium" title={selectedMember.course ? `Saved value: ${selectedMember.course}` : undefined}>{memberCourseDisplay(selectedMember.course, academicCourses)}{selectedMember.course && memberCourseDisplay(selectedMember.course, academicCourses) === 'Needs review' ? ` (${selectedMember.course})` : ''}</dd></div><div><dt className="text-slate-500">Year level</dt><dd className="font-medium" title={selectedMember.student_year ? `Saved value: ${selectedMember.student_year}` : undefined}>{memberYearDisplay(selectedMember.student_year)}{selectedMember.student_year && memberYearDisplay(selectedMember.student_year) === 'Needs review' ? ` (${selectedMember.student_year})` : ''}</dd></div></> : selectedMember.role === 'faculty' ? <><div><dt className="text-slate-500">Faculty</dt><dd className="font-medium">{selectedMember.department || 'Not set'}</dd></div><div className="sm:col-span-2"><dt className="text-slate-500">Courses taught</dt><dd className="font-medium">{facultyCourseMap.get(selectedMember.id)?.join(', ') || 'No courses assigned'}</dd></div></> : <div><dt className="text-slate-500">Account type</dt><dd className="font-medium">Librarian</dd></div>}</dl></section>
+              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Profile and academics</h3><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{selectedMember.role === 'student' ? <><div><dt className="text-slate-500">Course</dt><dd className="font-medium" title={selectedMember.course ? `Saved value: ${selectedMember.course}` : undefined}>{memberCourseDisplay(selectedMember.course, academicCourses)}{selectedMember.course && memberCourseDisplay(selectedMember.course, academicCourses) === 'Needs review' ? ` (${selectedMember.course})` : ''}</dd></div><div><dt className="text-slate-500">Year level</dt><dd className="font-medium" title={selectedMember.student_year ? `Saved value: ${selectedMember.student_year}` : undefined}>{memberYearDisplay(selectedMember.student_year)}{selectedMember.student_year && memberYearDisplay(selectedMember.student_year) === 'Needs review' ? ` (${selectedMember.student_year})` : ''}</dd></div></> : selectedMember.role === 'faculty' ? <div><dt className="text-slate-500">Faculty</dt><dd className="font-medium">{selectedMember.department || 'Not set'}</dd></div> : <div><dt className="text-slate-500">Account type</dt><dd className="font-medium">Librarian</dd></div>}</dl></section>
               <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account summary</h3><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.digitalLoans.length ?? 0} digital loan records</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.physicalLoans.length ?? 0} physical checkouts</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberFineStatusAvailable ? memberAccountHistory?.fines.filter((fine) => fine.status === 'unpaid').length ?? 0 : '—'} unpaid fines</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{(memberAccountHistory?.printPayments.length ?? 0) + (memberAccountHistory?.ebookPurchases.length ?? 0)} payment records</p></div></section>
             </div>
             <section className="mt-6 space-y-5" aria-labelledby="member-account-history-title">
@@ -1999,9 +2006,7 @@ export default function AdminPage() {
           }}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Student
-                  <select required value={recognitionForm.studentId} onChange={(event) => setRecognitionForm({ ...recognitionForm, studentId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{memberDisplayName(student)}</option>)}</select>
-            </label>
+            <div className="sm:col-span-2"><SearchableMemberSelect members={students.filter((student) => student.role === 'student')} value={recognitionForm.studentId} onChange={(studentId) => setRecognitionForm((current) => ({ ...current, studentId }))} label="Student" placeholder="Type a student name or email…" /></div>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Points
               <input required type="text" inputMode="numeric" pattern="[0-9]+" value={recognitionForm.points} onChange={(event) => setRecognitionForm((current) => ({ ...current, points: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
             </label>
@@ -2010,36 +2015,6 @@ export default function AdminPage() {
             </label>
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
               <textarea required maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm((current) => ({ ...current, reason: event.target.value }))} rows={3} placeholder="What did the student do?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
-          </div>
-        </ActionModal>
-        <ActionModal
-          open={quickAction === 'grant'}
-          title="Grant temporary access"
-          description="Give a member access to a protected digital resource without charging points."
-          confirmLabel="Grant access"
-          busy={saving}
-          onClose={() => { if (!saving) setQuickAction(null) }}
-          onConfirm={() => {
-            if (!grantForm.studentId || !grantForm.bookId || !grantForm.reason.trim()) {
-              setError('Choose a student, resource, and reason before granting access.')
-              return
-            }
-            void submitGrantAccess()
-          }}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Student
-                  <select required value={grantForm.studentId} onChange={(event) => setGrantForm({ ...grantForm, studentId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a student</option>{students.map((student) => <option key={student.id} value={student.id}>{memberDisplayName(student)}</option>)}</select>
-            </label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Resource
-              <select required value={grantForm.bookId} onChange={(event) => setGrantForm({ ...grantForm, bookId: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a book</option>{books.filter((book) => book.pdf_url).map((book) => <option key={book.id} value={book.id}>{book.title}</option>)}</select>
-            </label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Duration (days)
-              <input required type="number" min="1" max="365" value={grantForm.duration} onChange={(event) => setGrantForm({ ...grantForm, duration: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
-              <textarea required maxLength={500} value={grantForm.reason} onChange={(event) => setGrantForm({ ...grantForm, reason: event.target.value })} rows={3} placeholder="Why is this access being granted?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
             </label>
           </div>
         </ActionModal>
@@ -2062,7 +2037,7 @@ export default function AdminPage() {
                   </select>
                 </label>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {memberEditForm.role === 'faculty' ? <label className="block text-sm font-medium">Faculty<select required value={memberEditForm.department} onChange={(event) => setMemberEditForm({ ...memberEditForm, department: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select faculty</option>{academicDepartments.filter((item) => item.is_active || item.name === memberEditForm.department).map((item) => <option key={item.id} value={item.name}>{item.name}{item.is_active ? '' : ' (inactive)'}</option>)}</select></label> : null}
+                  {memberEditForm.role === 'faculty' ? <label className="block text-sm font-medium">Department<select required value={memberEditForm.department} onChange={(event) => setMemberEditForm({ ...memberEditForm, department: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active || item.name === memberEditForm.department).map((item) => <option key={item.id} value={item.name}>{item.name}{item.is_active ? '' : ' (inactive)'}</option>)}</select></label> : null}
                   {memberEditForm.role === 'student' ? <>
                     <label className="block text-sm font-medium">Course
                       <select required value={memberEditForm.course} onChange={(event) => setMemberEditForm({ ...memberEditForm, course: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950">
@@ -2072,24 +2047,6 @@ export default function AdminPage() {
                       </select>
                     </label>
                     <label className="block text-sm font-medium">Year level<select required value={memberEditForm.studentYear} onChange={(event) => setMemberEditForm({ ...memberEditForm, studentYear: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select year</option>{memberEditForm.studentYear && memberYearDisplay(memberEditForm.studentYear) === 'Needs review' ? <option value={memberEditForm.studentYear}>Current value needs review: {memberEditForm.studentYear}</option> : null}{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
-                  </> : memberEditForm.role === 'faculty' ? <>
-                    <fieldset className="sm:col-span-2">
-                      <legend className="text-sm font-medium">Courses taught</legend>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                        {academicCourses.filter((item) => item.is_active || memberEditForm.courseIds.includes(String(item.id))).map((item) => (
-                          <label key={item.id} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
-                            <input type="checkbox" checked={memberEditForm.courseIds.includes(String(item.id))} onChange={(event) => setMemberEditForm({
-                              ...memberEditForm,
-                              courseIds: event.target.checked
-                                ? [...memberEditForm.courseIds, String(item.id)]
-                                : memberEditForm.courseIds.filter((id) => id !== String(item.id)),
-                            })} />
-                            {item.name}{item.is_active ? '' : ' (inactive)'}
-                          </label>
-                        ))}
-                        {academicCourses.length === 0 ? <p className="text-sm text-slate-500">Add courses to the catalog before assigning them to faculty.</p> : null}
-                      </div>
-                    </fieldset>
                   </> : null}
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
@@ -2116,6 +2073,16 @@ export default function AdminPage() {
             setConfirmAction(null)
             void setBookArchived(id, label ?? 'Book', Boolean(isArchived))
           }}
+        />
+        <ActionModal
+          open={confirmAction?.type === 'deleteBook'}
+          title="Permanently delete this archived title?"
+          description={confirmAction?.type === 'deleteBook' ? `“${confirmAction.label ?? 'This title'}” will be deleted only if it has no loans, payments, member activity, or attached file. This cannot be undone.` : undefined}
+          confirmLabel="Permanently delete"
+          tone="danger"
+          busy={saving}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => { if (confirmAction?.type === 'deleteBook') void permanentlyDeleteBook(confirmAction.id, confirmAction.label ?? 'Book') }}
         />
         <ResultModal
           open={Boolean(error || (actionMessage && !actionMessage.startsWith('Uploading')))}

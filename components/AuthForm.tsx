@@ -17,7 +17,7 @@ function getAuthOrigin() {
 export default function AuthForm() {
   const router = useRouter()
   const [mode, setMode] = useState<AuthMode>('login')
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
@@ -32,16 +32,28 @@ export default function AuthForm() {
     try {
       const supabase = getSupabase()
       if (isForgot) {
-        const result = await supabase.auth.resetPasswordForEmail(email, {
+        const result = await supabase.auth.resetPasswordForEmail(identifier.trim(), {
           redirectTo: `${getAuthOrigin()}/auth/callback?next=/reset-password`,
         })
         if (result.error) setErrorMsg(result.error.message)
         else setSuccessMsg('Password recovery link sent. Please check your inbox.')
       } else {
-        const result = await supabase.auth.signInWithPassword({ email, password })
-        if (result.error) {
-          setErrorMsg(result.error.message)
-          return
+        if (identifier.includes('@')) {
+          const result = await supabase.auth.signInWithPassword({ email: identifier.trim(), password })
+          if (result.error) {
+            setErrorMsg('The username/email or password is incorrect.')
+            return
+          }
+        } else {
+          const response = await fetch('/api/auth/username-login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: identifier.trim(), password }),
+          })
+          if (!response.ok) {
+            setErrorMsg('The username/email or password is incorrect.')
+            return
+          }
         }
         const requestedPath = new URLSearchParams(window.location.search).get('next')
         const parsedNext = requestedPath ? new URL(requestedPath, window.location.origin) : null
@@ -60,13 +72,13 @@ export default function AuthForm() {
   return <main className="surface-page flex min-h-screen flex-col items-center justify-center px-4 py-12 text-slate-900 antialiased dark:text-slate-100 sm:px-6">
     <section className="surface-card w-full max-w-md p-8 shadow-2xl sm:p-10">
       <div className="mb-7 flex items-center justify-between"><Link href="/" className="text-xs font-semibold text-pine-600 hover:underline dark:text-pine-200">← Back to college site</Link><BrandLogo iconSize="sm" showText={false}/></div>
-      <div className="text-center"><h1 className="text-2xl font-bold tracking-tight">{isForgot ? 'Reset your password' : 'College library sign in'}</h1><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{isForgot ? 'Enter your account email to receive a password reset link.' : 'Use the account issued to you by the college administrator.'}</p></div>
+      <div className="text-center"><h1 className="text-2xl font-bold tracking-tight">{isForgot ? 'Reset your password' : 'College library sign in'}</h1>{isForgot ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Enter your account email to receive a password reset link.</p> : null}</div>
       {errorMsg ? <div role="alert" aria-live="assertive" className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">{errorMsg}</div> : null}
       {successMsg ? <div role="status" aria-live="polite" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">{successMsg}</div> : null}
       <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <label className="block"><span className="text-xs font-semibold uppercase tracking-wider">Email address</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="you@college.edu"/></label>
+        <label className="block"><span className="text-xs font-semibold uppercase tracking-wider">{isForgot ? 'Email address' : 'Username or email'}</span><input type={isForgot ? 'email' : 'text'} value={identifier} onChange={(event) => setIdentifier(event.target.value)} required autoComplete={isForgot ? 'email' : 'username'} className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder={isForgot ? 'you@college.edu' : 'Your username or email'}/></label>
         {!isForgot ? <label className="block"><span className="text-xs font-semibold uppercase tracking-wider">Password</span><PasswordInput value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" className="mt-1.5 w-full rounded-xl border border-paper-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-pine-500 dark:border-forest-700 dark:bg-forest-950 dark:text-slate-100" placeholder="Your password"/></label> : null}
-        <button type="submit" disabled={isSubmitting} className="pine-action w-full rounded-xl py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">{isSubmitting ? 'Processing...' : isForgot ? 'Send reset link' : 'Sign in'}</button>
+        <button type="submit" disabled={isSubmitting} className="pine-action w-full rounded-xl py-3 text-sm font-semibold !text-amber-300 disabled:cursor-not-allowed disabled:opacity-50">{isSubmitting ? 'Processing...' : isForgot ? 'Send reset link' : 'Sign in'}</button>
       </form>
       <div className="mt-5 text-center">{isForgot ? <button type="button" onClick={() => { setMode('login'); setErrorMsg(''); setSuccessMsg('') }} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">← Return to sign in</button> : <button type="button" onClick={() => { setMode('forgot'); setErrorMsg(''); setSuccessMsg('') }} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">Forgot password?</button>}</div>
     </section>

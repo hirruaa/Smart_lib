@@ -133,7 +133,7 @@ export default function AdminAnalytics({
             </div>
             <div className="flex items-center gap-3 text-xs">
               <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-sky-500" /> Requests
+                <span className="h-2.5 w-2.5 rounded-sm bg-sky-500/80" /> Requests
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Approved

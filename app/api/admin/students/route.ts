@@ -33,6 +33,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null)
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+  const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
   const password = typeof body.password === 'string' ? body.password : ''
   const role = body.role === 'faculty' || body.role === 'librarian' ? body.role : body.role === 'student' || body.role === undefined ? 'student' : null
   const fullName = boundedText(body.fullName ?? '', 120)
@@ -40,11 +41,9 @@ export async function POST(request: Request) {
   const department = boundedText(body.department ?? '', 120)
   const course = boundedText(body.course ?? '', 120)
   const studentYear = boundedText(body.studentYear ?? '', 40)
-  const facultyCourseIds = Array.isArray(body.facultyCourseIds)
-    ? Array.from(new Set(body.facultyCourseIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isSafeInteger(value) && value > 0)))
-    : []
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
+  if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) return NextResponse.json({ error: 'Username must be 3–30 characters and use letters, numbers, periods, underscores, or hyphens.' }, { status: 400 })
   if (password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
   if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
   if (fullName === null || !fullName.trim()) return NextResponse.json({ error: 'Enter the member’s full name.' }, { status: 400 })
@@ -59,6 +58,10 @@ export async function POST(request: Request) {
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+  const { data: usernameMatch, error: usernameLookupError } = await adminClient
+    .from('profiles').select('id').eq('username', username).maybeSingle()
+  if (usernameLookupError) return apiError('Unable to verify username availability.', 503, usernameLookupError)
+  if (usernameMatch) return NextResponse.json({ error: 'That username is already in use.' }, { status: 409 })
   if (role === 'faculty') {
     const { data: departmentChoice, error: departmentError } = await adminClient
       .from('academic_departments')
@@ -78,18 +81,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Choose a valid year level.' }, { status: 400 })
     }
   }
-  if (role === 'faculty') {
-    const { data: facultyCourses, error: facultyCoursesError } = await adminClient
-      .from('academic_courses').select('id').in('id', facultyCourseIds).eq('is_active', true)
-    if (facultyCoursesError) return apiError('Faculty course choices are unavailable.', 503, facultyCoursesError)
-    if ((facultyCourses ?? []).length !== facultyCourseIds.length) return NextResponse.json({ error: 'Choose active courses from the list.' }, { status: 400 })
-  }
   const { data: created, error } = await adminClient.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
     user_metadata: {
       full_name: fullName,
+      username,
       member_type: role,
       school,
       department,
@@ -103,6 +101,7 @@ export async function POST(request: Request) {
   if (created.user) {
     const { error: profileUpdateError } = await adminClient.from('profiles').update({
       full_name: fullName || null,
+      username,
       school: school || null,
       department: department || null,
       course: role === 'student' ? course || null : null,
@@ -114,19 +113,9 @@ export async function POST(request: Request) {
       if (rollbackError) console.error('Unable to roll back member creation after profile setup failed.', rollbackError)
       return apiError('Unable to save the new member profile.', 500, profileUpdateError)
     }
-    if (role === 'faculty' && facultyCourseIds.length > 0) {
-      const { error: courseAssignmentError } = await adminClient.from('faculty_courses').insert(
-        facultyCourseIds.map((courseId) => ({ faculty_id: created.user!.id, course_id: courseId })),
-      )
-      if (courseAssignmentError) {
-        const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-        if (rollbackError) console.error('Unable to roll back faculty creation after course assignment failed.', rollbackError)
-        return apiError('Unable to save the faculty course assignments.', 500, courseAssignmentError)
-      }
-    }
   }
 
-  return NextResponse.json({ success: true, email })
+  return NextResponse.json({ success: true, email, username })
 }
 
 export async function DELETE(request: Request) {

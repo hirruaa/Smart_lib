@@ -2,6 +2,8 @@
 
 This document captures the Supabase database schema and app flow actually used by the project.
 
+For a **new, empty Supabase project**, use [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql), which consolidates the baseline and migrations through `20261054`. It includes cleanup for retired review, wishlist, and faculty course-assignment tables. It is not a reset script and should not be run against a populated production database. Existing installations should continue with reviewed migrations and a backup; the two `20261028` filenames still need reconciliation against that project's migration history before using the Supabase CLI.
+
 ## 1. Core auth and role model
 
 ### `public.profiles`
@@ -15,7 +17,7 @@ Used for role-aware auth routing and member profile details.
 | `full_name` | `text` | Optional display name |
 | `school` | `text` | Legacy field; current product has one school |
 | `department` | `text` | Backing field for the controlled faculty choice on faculty profiles |
-| `course` | `text` | Student course; faculty assignments use `faculty_courses` |
+| `course` | `text` | Student course program; faculty profiles use their department |
 | `student_year` | `text` | Student year level |
 | `faculty_rank_id` | `bigint` | Legacy compatibility field; not used in the current account flow |
 | `created_at` | `timestamptz` | Default timestamp |
@@ -26,7 +28,7 @@ Typical app behavior:
 - `student` and `faculty` redirect to `/dashboard/student`
 - Public sign-up is disabled at the Auth trigger. Accounts are created only through the administrator's server-side Auth Admin API route.
 - Only administrators create/delete accounts and assign roles. Librarians use the separate `/dashboard/admin/physical` workspace.
-- Students choose a course and year level. Faculty accounts use a controlled faculty choice and assigned courses; the school is fixed and not a member choice.
+- Students choose a course and year level. Faculty accounts use a controlled department choice; the school is fixed and not a member choice.
 - Members can update only permitted personal details and cannot self-promote or edit protected academic assignments.
 
 ### Legacy rank and current course catalogs
@@ -35,9 +37,8 @@ Typical app behavior:
 | --- | --- |
 | `public.faculty_ranks` | Legacy schema table; not exposed or used by the current account flow. |
 | `public.academic_courses` | Administrator-managed courses. Students select a course from this catalog when an administrator creates or edits an account. |
-| `public.faculty_courses` | Many-to-many assignments connecting faculty profiles to the courses they teach. |
 
-Authenticated users can read active choices; only administrators can manage catalogs and faculty course assignments. The admin member-management screen supports multiple courses per faculty member. Rank data is retained only for legacy profile compatibility.
+Authenticated users can read active choices; only administrators can manage catalogs. Faculty course assignments have been removed. Rank data is retained only for legacy profile compatibility.
 
 ## 2. Library catalog and lending flow
 
@@ -266,7 +267,7 @@ erDiagram
 
 ## 10. Initialization
 
-For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql), then apply migration files `20261038` through the latest numbered migration in filename order. The consolidated script contains the baseline; the later migrations add closed registration, staff role boundaries, physical fines/receipts, academic catalog updates, realtime finance, the active-loan limit, and the member activity ledger. Do not skip those follow-up migrations.
+For a **new, empty Supabase project**, run [`supabase/COMPLETE_SCHEMA.sql`](supabase/COMPLETE_SCHEMA.sql), then apply migration files `20261038` through the latest numbered migration in filename order. The consolidated script contains the baseline; the later migrations add closed registration, staff role boundaries, physical fines/receipts, academic catalog updates, realtime finance, the active-loan limit, the member activity ledger, and physical damage/lost-item case assessments with cashier-confirmed refunds. Do not skip those follow-up migrations.
 
 **Do not run it against an existing database with data.** Existing installations need applicable migrations reviewed against their actual schema state and tested against a backup in staging before production. The migration files under `supabase/migrations/` are retained for incremental updates; they are not a complete database migration history and should not be applied blindly.
 

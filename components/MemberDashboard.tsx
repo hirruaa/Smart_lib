@@ -27,7 +27,6 @@ type Book = {
   access_points: number
   access_costs: DigitalAccessCosts | null
   access_mode: CanonicalAccessMode
-  premium_price: number
   access_duration_days: number
   page_count?: number | null
   pdf_url?: string | null
@@ -38,6 +37,8 @@ type Book = {
   physical_available_copies?: number
   physical_borrowed_copies?: number
   physical_locations?: string[] | null
+  physical_book_ids?: number[]
+  isbn_conflict?: boolean
 }
 
 type PhysicalBookSelection = {
@@ -46,6 +47,7 @@ type PhysicalBookSelection = {
   author: string
   category: string
   catalog_type: 'physical' | 'hybrid'
+  related_book_ids?: number[]
 }
 
 type PhysicalCatalogEntry = {
@@ -78,9 +80,8 @@ type UserProfile = {
   department?: string | null
 }
 
-type Fine = { id: number; amount: number; status: string; fine_type: 'late_fee' | 'lost_item' | 'damage' | 'other'; physical_book_request_id?: number | null; created_at: string | null; paid_at?: string | null; fine_reason?: string | null; waiver_reason?: string | null; receipt_number?: string | null }
+type Fine = { id: number; amount: number; status: string; fine_type: 'late_fee' | 'lost_item' | 'damage' | 'other'; physical_book_request_id?: number | null; created_at: string | null; paid_at?: string | null; fine_reason?: string | null; waiver_reason?: string | null; refund_reason?: string | null; receipt_number?: string | null }
 type PrintPayment = { id: number; amount: number; description: string; receipt_number: string; created_at: string }
-type EbookPayment = { id: number; book_id: number; fee_amount: number; transaction_reference: string; status: string; receipt_number: string | null; requested_at: string }
 type SystemNotification = { id: number; title: string; message: string; read_at: string | null; created_at: string }
 type FeedbackModal = { title: string; message: string; tone: 'success' | 'error' | 'info' }
 type MemberReceipt = { title: string; receiptNumber: string; amount: number; date: string | null; description: string; payment: string }
@@ -113,6 +114,8 @@ function getPhysicalCopyToken(qrData: string) {
     return null
   }
 }
+const physicalTitleGroupKey = (book: Pick<Book, 'title' | 'author'>) =>
+  [book.title, book.author].map((value) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).join('|')
 function LineIcon({ children, className }: { children: React.ReactNode; className?: string }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
 }
@@ -147,10 +150,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [availabilityAlertSavingBookId, setAvailabilityAlertSavingBookId] = useState<number | null>(null)
   const [feedbackModal, setFeedbackModal] = useState<FeedbackModal | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
-  const [premiumReference, setPremiumReference] = useState('')
-  const [premiumProofFile, setPremiumProofFile] = useState<File | null>(null)
-  const [premiumSimulationConfirmed, setPremiumSimulationConfirmed] = useState(false)
-  const [premiumPurchaseSaving, setPremiumPurchaseSaving] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [physicalBook, setPhysicalBook] = useState<PhysicalBookSelection | null>(null)
@@ -162,11 +161,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [requestsOpen, setRequestsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [paymentsOpen, setPaymentsOpen] = useState(false)
-  const [finesOpen, setFinesOpen] = useState(false)
   const [clearanceFines, setClearanceFines] = useState<Fine[]>([])
+  const [activitySearch, setActivitySearch] = useState('')
+  const [activityTypeFilter, setActivityTypeFilter] = useState<'all' | 'loans' | 'charges' | 'alerts' | 'unpaid' | 'active'>('all')
   const [finesError, setFinesError] = useState<string | null>(null)
   const [printPayments, setPrintPayments] = useState<PrintPayment[]>([])
-  const [ebookPayments, setEbookPayments] = useState<EbookPayment[]>([])
   const [clearanceError, setClearanceError] = useState<string | null>(null)
   const [physicalReceipt, setPhysicalReceipt] = useState<PhysicalLoan | null>(null)
   const [memberReceipt, setMemberReceipt] = useState<MemberReceipt | null>(null)
@@ -221,20 +220,19 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   }, [])
 
   useEffect(() => {
-    if (!notificationsOpen && !continueReadingOpen && !paymentsOpen && !finesOpen) return
+    if (!notificationsOpen && !continueReadingOpen && !paymentsOpen) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setNotificationsOpen(false)
         setContinueReadingOpen(false)
         setPaymentsOpen(false)
-        setFinesOpen(false)
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [notificationsOpen, continueReadingOpen, paymentsOpen, finesOpen])
+  }, [notificationsOpen, continueReadingOpen, paymentsOpen])
 
   useEffect(() => {
     if (!sidebarOpen) return
@@ -437,7 +435,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         }
       }
       const { data, error } = await supabase.from('fines')
-        .select('id,amount,status,fine_type,physical_book_request_id,created_at,paid_at,fine_reason,waiver_reason,receipt_number')
+        .select('id,amount,status,fine_type,physical_book_request_id,created_at,paid_at,fine_reason,waiver_reason,refund_reason,receipt_number')
         .eq('student_id', userId)
         .order('created_at', { ascending: false })
       if (!active) return
@@ -488,21 +486,15 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     let active = true
     const supabase = getSupabase()
     const loadPayments = async () => {
-      const [printResult, ebookResult] = await Promise.all([
-        supabase.from('library_print_payments').select('id,amount,description,receipt_number,created_at').eq('student_id', userId).order('created_at', { ascending: false }),
-        supabase.from('ebook_purchase_requests').select('id,book_id,fee_amount,transaction_reference,status,receipt_number,requested_at').eq('student_id', userId).order('requested_at', { ascending: false }),
-      ])
+      const printResult = await supabase.from('library_print_payments').select('id,amount,description,receipt_number,created_at').eq('student_id', userId).order('created_at', { ascending: false })
       if (!active) return
-      const failed = printResult.error ?? ebookResult.error
-      if (failed) setClearanceError(`Unable to load clearance records: ${failed.message}`)
+      if (printResult.error) setClearanceError(`Unable to load transaction records: ${printResult.error.message}`)
       else setClearanceError(null)
       setPrintPayments((printResult.data ?? []) as PrintPayment[])
-      setEbookPayments((ebookResult.data ?? []) as EbookPayment[])
     }
     void loadPayments()
     const channel = supabase.channel(`member-payments-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'library_print_payments', filter: `student_id=eq.${userId}` }, () => void loadPayments())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ebook_purchase_requests', filter: `student_id=eq.${userId}` }, () => void loadPayments())
       .subscribe()
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [paymentsOpen, userId])
@@ -564,7 +556,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, availabilityAlertsResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, cover_image_url, access_points, access_costs, access_mode, premium_price, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
+          .select('id, title, author, category, description, isbn, cover_image_url, access_points, access_costs, access_mode, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -617,7 +609,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         access_mode: ownedContributionBookIds.has(book.id)
           ? 'free'
           : normalizeAccessMode(book.access_mode, book.access_points),
-        premium_price: Number(book.premium_price ?? 0),
         access_duration_days: book.access_duration_days ?? 30,
         page_count: book.page_count ?? null,
         pdf_url: book.pdf_url ?? null,
@@ -672,6 +663,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           author: book.author,
           category: book.category,
           catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
+          related_book_ids: book.catalog_type === 'physical'
+            ? books.filter((item) => item.catalog_type === 'physical' && physicalTitleGroupKey(item) === physicalTitleGroupKey(book)).map((item) => item.id)
+            : [book.id],
         })
       }
     })
@@ -681,7 +675,30 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
   const [selectedFormat, setSelectedFormat] = useState<'all' | 'digital' | 'physical'>('all')
 
-  const catalogBooks = useMemo(() => books.filter((book) => !book.is_archived), [books])
+  const catalogBooks = useMemo(() => {
+    const grouped = new Map<string, Book[]>()
+    for (const book of books.filter((item) => !item.is_archived)) {
+      const key = book.catalog_type === 'physical' ? `physical:${physicalTitleGroupKey(book)}` : `${book.catalog_type}:${book.id}`
+      grouped.set(key, [...(grouped.get(key) ?? []), book])
+    }
+    return Array.from(grouped.values()).map((group) => {
+      const ordered = [...group].sort((a, b) => a.id - b.id)
+      const book = ordered[0]
+      if (ordered.length === 1 || book.catalog_type !== 'physical') return book
+      const isbns = new Set(ordered.map((item) => item.isbn?.trim()).filter(Boolean))
+      return {
+        ...book,
+        isbn: isbns.size === 1 ? Array.from(isbns)[0] ?? null : null,
+        isbn_conflict: isbns.size > 1,
+        category: ordered.map((item) => item.category.trim()).find(Boolean) ?? book.category,
+        physical_book_ids: ordered.map((item) => item.id),
+        physical_registered_copies: ordered.reduce((total, item) => total + (item.physical_registered_copies ?? 0), 0),
+        physical_available_copies: ordered.reduce((total, item) => total + (item.physical_available_copies ?? 0), 0),
+        physical_borrowed_copies: ordered.reduce((total, item) => total + (item.physical_borrowed_copies ?? 0), 0),
+        physical_locations: Array.from(new Set(ordered.flatMap((item) => item.physical_locations ?? []))),
+      }
+    })
+  }, [books])
 
   const categories = useMemo(() => {
     const set = new Set<string>()
@@ -748,6 +765,45 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const pendingPhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'pending').length
   const unpaidFineCount = clearanceFines.filter((fine) => fine.status === 'unpaid').length
 
+  const matchesActivity = (kind: 'loans' | 'charges' | 'alerts', status: string, text: string) => {
+    const filterMatches = activityTypeFilter === 'all'
+      || activityTypeFilter === kind
+      || (activityTypeFilter === 'unpaid' && kind === 'charges' && status === 'unpaid')
+      || (activityTypeFilter === 'active' && kind === 'loans' && status === 'active')
+    const searchMatches = !activitySearch.trim() || text.toLowerCase().includes(activitySearch.trim().toLowerCase())
+    return filterMatches && searchMatches
+  }
+  const physicalActivity = [
+    ...physicalLoans.map((loan) => ({
+      kind: 'loans' as const,
+      key: 'loan-' + loan.id,
+      date: loan.returned_at ?? loan.checked_out_at ?? loan.requested_at,
+      filterStatus: loan.status === 'pending' ? 'pending' : loan.status === 'checked_out' || loan.status === 'return_pending' ? 'active' : loan.status,
+      searchText: (loan.title ?? '') + ' ' + loan.status + ' ' + loan.payment_status + ' ' + loan.payment_method + ' ' + (loan.receipt_number ?? ''),
+      loan,
+    })),
+    ...clearanceFines.map((fine) => {
+      const relatedLoan = physicalLoans.find((loan) => loan.id === fine.physical_book_request_id)
+      return {
+        kind: 'charges' as const,
+        key: 'charge-' + fine.id,
+        date: fine.created_at ?? '',
+        filterStatus: fine.status,
+        searchText: (relatedLoan?.title ?? '') + ' ' + fine.fine_type + ' ' + fine.status + ' ' + (fine.fine_reason ?? '') + ' ' + (fine.receipt_number ?? ''),
+        fine,
+        relatedLoan,
+      }
+    }),
+    ...availabilityAlerts.map((alert) => ({
+      kind: 'alerts' as const,
+      key: 'alert-' + alert.book_id,
+      date: alert.created_at,
+      filterStatus: 'active',
+      searchText: (alert.title ?? '') + ' availability alert',
+      alert,
+    })),
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  const filteredPhysicalActivity = physicalActivity.filter((item) => matchesActivity(item.kind, item.filterStatus, item.searchText))
   const activeBorrowRequests = useMemo(() => {
     const activeLoanIds = new Set(activeLoans.map((loan) => loan.id))
     return borrowRequests.filter((request) => request.status === 'pending' || activeLoanIds.has(request.id))
@@ -903,27 +959,26 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       return
     }
 
-    const subscribed = availabilityAlerts.some((alert) => alert.book_id === book.id)
+    const bookIds = book.physical_book_ids?.length ? book.physical_book_ids : [book.id]
+    const subscribedIds = availabilityAlerts.filter((alert) => bookIds.includes(alert.book_id)).map((alert) => alert.book_id)
+    const subscribed = subscribedIds.length > 0
     setAvailabilityAlertSavingBookId(book.id)
     setRequestStatus(null)
     try {
-      const { error: alertError } = await getSupabase().rpc(
+      const results = await Promise.all((subscribed ? subscribedIds : bookIds).map((bookId) => getSupabase().rpc(
         subscribed ? 'leave_physical_book_waitlist' : 'join_physical_book_waitlist',
-        { p_book_id: book.id }
-      )
+        { p_book_id: bookId }
+      )))
+      const alertError = results.find((result) => result.error)?.error
 
       if (alertError) {
         const message = alertError.message.replace('availability queue', 'availability alerts')
         setRequestStatus(`Unable to ${subscribed ? 'turn off' : 'turn on'} the availability alert. (${message})`)
       } else if (subscribed) {
-        setAvailabilityAlerts((current) => current.filter((alert) => alert.book_id !== book.id))
+        setAvailabilityAlerts((current) => current.filter((alert) => !subscribedIds.includes(alert.book_id)))
         setRequestStatus(`Availability alert turned off for "${book.title}".`)
       } else {
-        setAvailabilityAlerts((current) => [...current, {
-          book_id: book.id,
-          created_at: new Date().toISOString(),
-          title: book.title,
-        }])
+        setAvailabilityAlerts((current) => [...current, ...bookIds.map((book_id) => ({ book_id, created_at: new Date().toISOString(), title: book.title }))])
         setRequestStatus(`You'll be notified when "${book.title}" is available. Alerts do not reserve a copy; borrowing is first come, first served.`)
       }
     } catch (cause) {
@@ -1007,56 +1062,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     } finally {
       setRequestingBookId(null)
       setSelectedBook(null)
-    }
-  }
-
-  const submitPremiumPurchase = async () => {
-    if (!selectedBook || selectedBook.access_mode !== 'premium' || !userId) return
-    if (!premiumSimulationConfirmed) {
-      setRequestStatus('Confirm that you are submitting a simulated GCash payment for this capstone demo.')
-      return
-    }
-    if (!premiumReference.trim() || !premiumProofFile) {
-      setRequestStatus('Enter the payment reference and upload the payment proof.')
-      return
-    }
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(premiumProofFile.type) || premiumProofFile.size > 5 * 1024 * 1024) {
-      setRequestStatus('Payment proof must be JPG, PNG, or WebP and no larger than 5 MB.')
-      return
-    }
-    setPremiumPurchaseSaving(true)
-    setRequestStatus(null)
-    let proofPath: string | null = null
-    const supabase = getSupabase()
-    try {
-      const extension = premiumProofFile.type === 'image/jpeg' ? 'jpg' : premiumProofFile.type.split('/')[1]
-      proofPath = `${userId}/${crypto.randomUUID()}.${extension}`
-      const { error: uploadError } = await supabase.storage.from('ebook-payment-proofs').upload(proofPath, premiumProofFile, { contentType: premiumProofFile.type, upsert: false })
-      if (uploadError) throw new Error(`Payment proof upload failed: ${uploadError.message}`)
-      const { error: purchaseError } = await supabase.rpc('request_premium_ebook_purchase', {
-        p_book_id: selectedBook.id,
-        p_transaction_reference: premiumReference.trim(),
-        p_payment_proof_path: proofPath,
-      })
-      if (purchaseError) throw new Error(purchaseError.message)
-      setFeedbackModal({
-        title: 'Payment submitted',
-        message: `Your payment evidence for ${selectedBook.title} was submitted successfully. Staff will verify it before permanent access is granted.`,
-        tone: 'success',
-      })
-      setPremiumReference('')
-      setPremiumProofFile(null)
-      setPremiumSimulationConfirmed(false)
-      setSelectedBook(null)
-    } catch (cause) {
-      if (proofPath) await supabase.storage.from('ebook-payment-proofs').remove([proofPath])
-      setFeedbackModal({
-        title: 'Payment not submitted',
-        message: cause instanceof Error ? cause.message : 'Unable to submit the premium e-book payment.',
-        tone: 'error',
-      })
-    } finally {
-      setPremiumPurchaseSaving(false)
     }
   }
 
@@ -1231,7 +1236,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <a className={activeSidebarItem === 'overview' ? 'active' : ''} href="#overview" aria-label="Overview" title={sidebarCollapsed ? 'Overview' : undefined} onClick={() => { setActiveSidebarItem('overview'); setSidebarOpen(false) }}><DashboardIcon /><span>Overview</span></a>
             <a className={activeSidebarItem === 'catalog' ? 'active' : ''} href="#explore" aria-label="Catalog" title={sidebarCollapsed ? 'Catalog' : undefined} onClick={() => { setActiveSidebarItem('catalog'); setSidebarOpen(false) }}><BookIcon /><span>Catalog</span></a>
             <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-            <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Requests and payments" title={sidebarCollapsed ? 'Requests and payments' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Requests &amp; Payments</span></button>
+            <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Transactions" title={sidebarCollapsed ? 'Transactions' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Transactions</span></button>
             {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
             <button type="button" onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span aria-hidden="true">▣</span><span>Scan book QR</span></button>
           </nav>
@@ -1316,7 +1321,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             </div>
             <div className="physical-lending-metrics">
               <div><span className="physical-lending-count">{activePhysicalLoanCount}</span><span>active loans</span></div>
-              <div><span className="physical-lending-count">{unpaidFineCount}</span><span>unpaid fines</span></div>
+              <div><span className="physical-lending-count">{unpaidFineCount}</span><span>unpaid charges</span></div>
             </div>
             <div className="physical-lending-status" aria-live="polite">
               {unpaidFineCount > 0
@@ -1326,7 +1331,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   : <p>{physicalLoans.length} total physical request{physicalLoans.length === 1 ? '' : 's'}</p>}
             </div>
             <div className="physical-lending-actions">
-              <button type="button" onClick={() => setFinesOpen(true)} className="secondary-action">Fines &amp; clearance</button>
+              <button type="button" onClick={() => setPaymentsOpen(true)} className="secondary-action">Transactions</button>
             </div>
           </div>
 
@@ -1448,6 +1453,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           <div className="flex flex-wrap items-center gap-2"><p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p><span className="rounded-full border border-paper-300 bg-paper-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:border-forest-700 dark:bg-forest-800 dark:text-slate-300">{book.catalog_type === 'physical' ? 'Physical' : book.catalog_type === 'hybrid' ? 'Digital + physical' : 'Digital'}</span></div>
                           <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
                           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
+                          {book.catalog_type !== 'digital' ? <p className="mt-2 text-xs font-medium text-pine-700 dark:text-pine-200">{book.physical_available_copies ?? 0} available · {book.physical_registered_copies ?? 0} total copies</p> : null}
                         </div>
                       </div>
                     </article>
@@ -1666,8 +1672,8 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div className="min-w-0 flex-1">
                 <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{catalogDetailsBook.description || 'No description is available for this title yet.'}</p>
                 <dl className="catalog-detail-meta">
-                  <div><dt>ISBN</dt><dd>{catalogDetailsBook.isbn || 'Not listed'}</dd></div>
-                  <div><dt>Access</dt><dd>{catalogDetailsBook.access_mode === 'premium' ? 'Staff verified payment' : catalogDetailsBook.access_mode === 'points' ? 'Points access' : 'Automatic access'}</dd></div>
+                  <div><dt>ISBN</dt><dd>{catalogDetailsBook.isbn_conflict ? 'Needs staff review' : catalogDetailsBook.isbn || 'Not listed'}</dd>{catalogDetailsBook.isbn_conflict ? <p>Matching title records have different ISBNs. Staff can reconcile them.</p> : null}</div>
+                  <div><dt>Access</dt><dd>{catalogDetailsBook.access_mode === 'points' ? 'Points access' : 'Free access'}</dd></div>
                   {catalogDetailsBook.catalog_type !== 'digital' ? <div className="catalog-detail-stock"><dt>Physical copies</dt><dd>{catalogDetailsBook.physical_available_copies ?? 0} available / {catalogDetailsBook.physical_borrowed_copies ?? 0} borrowed / {catalogDetailsBook.physical_registered_copies ?? 0} total</dd><p>{catalogDetailsBook.physical_locations?.length ? `Location: ${catalogDetailsBook.physical_locations.join(', ')}` : 'Location has not been assigned yet.'}</p></div> : null}
                 </dl>
                 {catalogDetailsBook.pdf_url && catalogDetailsBook.catalog_type !== 'physical' ? <p className="catalog-detail-ready">Digital file available</p> : null}
@@ -1678,18 +1684,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 const book = catalogDetailsBook
                 setCatalogDetailsBook(null)
                 setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
-                if (book.access_mode === 'premium') {
-                  setPremiumReference(`DEMO-GCASH-${Date.now().toString().slice(-8)}`)
-                  setPremiumProofFile(null)
-                  setPremiumSimulationConfirmed(false)
-                }
                 setSelectedBook(book)
                 setRequestStatus(null)
               }}>Request digital access</button> : null}
               {catalogDetailsBook.catalog_type !== 'digital' ? <button type="button" className="secondary-action" onClick={() => {
                 const book = catalogDetailsBook
                 setCatalogDetailsBook(null)
-                setPhysicalBook({ id: book.id, title: book.title, author: book.author, category: book.category, catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid' })
+                setPhysicalBook({ id: book.id, title: book.title, author: book.author, category: book.category, catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid', related_book_ids: book.physical_book_ids ?? [book.id] })
               }}>{catalogDetailsBook.catalog_type === 'physical' ? 'Browse copies & request' : 'Browse physical copies'}</button> : null}
               {catalogDetailsBook.catalog_type !== 'digital' && (catalogDetailsBook.physical_available_copies ?? 0) === 0 ? (() => {
                 const book = catalogDetailsBook
@@ -1707,12 +1708,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <div>
                 <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Unlock access</p>
                 <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedBook.access_mode === 'premium' ? 'Submit payment evidence for staff verification. Permanent access is granted after approval.' : 'Choose how long you need this digital resource. Access unlocks immediately.'}</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Choose how long you need this digital resource. Access unlocks immediately.</p>
               </div>
               <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
             </div>
 
-            {selectedBook.access_mode !== 'premium' ? <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
               {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => (
                 <button
                   key={days}
@@ -1725,32 +1726,22 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <span className="access-duration-caption mt-1 block text-xs">Configured access period</span>
                 </button>
               ))}
-            </div> : null}
-
-            {selectedBook.access_mode === 'premium' ? <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-              <p className="font-semibold">Checkout simulation</p>
-              <p className="mt-1 text-xs leading-5">This is a capstone demo only. No real GCash account or payment gateway is connected. The request will remain pending until an administrator reviews it.</p>
-              <label className="mt-3 flex items-start gap-2 text-xs leading-5">
-                <input type="checkbox" checked={premiumSimulationConfirmed} onChange={(event) => setPremiumSimulationConfirmed(event.target.checked)} className="mt-1" />
-                <span>I understand this is a simulated payment and not a real charge.</span>
-              </label>
-            </div> : null}
-
-            {selectedBook.access_mode === 'premium' ? <div className="mt-5 space-y-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70"><div className="flex items-center justify-between gap-4 text-sm"><span className="font-semibold text-slate-800 dark:text-slate-100">Premium price</span><span className="font-semibold text-pine-700 dark:text-pine-200">₱{Number(selectedBook.premium_price).toFixed(2)}</span></div><label className="block text-sm font-medium">Demo GCash reference<input value={premiumReference} onChange={(event) => setPremiumReference(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><label className="block text-sm font-medium">Sample payment receipt<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPremiumProofFile(event.target.files?.[0] ?? null)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /></label><p className="text-xs leading-5 text-slate-500 dark:text-slate-300">A demo reference is generated for you. Upload a sample receipt image so the administrator can practice reviewing the checkout evidence.</p></div> : <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
+            </div>
+            <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
                 <span className="font-semibold text-pine-700 dark:text-pine-200">
                   {selectedBook.access_mode === 'free' ? 'Free access' : `${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points`}
                 </span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p>
+              {selectedBook.access_mode === 'points' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">This access is free. No points will be deducted.</p>}
               {selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
-            </div>}
+            </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void (selectedBook.access_mode === 'premium' ? submitPremiumPurchase() : submitAccessRequest())} disabled={requestingBookId !== null || premiumPurchaseSaving || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id || premiumPurchaseSaving ? 'Submitting...' : selectedBook.access_mode === 'premium' ? `Simulate GCash payment · ₱${Number(selectedBook.premium_price).toFixed(2)}` : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
+              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+                {requestingBookId === selectedBook.id ? 'Submitting...' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
               </button>
             </div>
           </section>
@@ -1915,42 +1906,37 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       ) : null}
 
       {paymentsOpen ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPaymentsOpen(false) }}>
-        <section className="notification-modal requests-payments-modal max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="clearance-title">
-          <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Member services</p><h2 id="clearance-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Requests &amp; payments</h2></div><button type="button" className="notification-modal-close" onClick={() => setPaymentsOpen(false)} aria-label="Close requests and payments">×</button></div>
-          <div className="requests-payments-intro mt-2"><p className="text-sm text-slate-500 dark:text-slate-400">Track physical borrowing and view receipts issued by library staff.</p><button type="button" onClick={() => { setPaymentsOpen(false); setFinesOpen(true) }} className="secondary-action requests-payments-fines-link rounded-xl border px-3 py-2 text-xs font-semibold">Fines &amp; clearance <span className={`requests-payments-fine-count${unpaidFineCount ? ' has-unpaid' : ''}`}>{unpaidFineCount} unpaid</span></button></div>
+        <section className="notification-modal requests-payments-modal max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="transactions-title">
+          <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Member services</p><h2 id="transactions-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical requests &amp; loans</h2></div><button type="button" className="notification-modal-close" onClick={() => setPaymentsOpen(false)} aria-label="Close transactions">×</button></div>
+          <div className="requests-payments-intro mt-2 justify-end"><span className={`requests-payments-fine-count${unpaidFineCount ? ' has-unpaid' : ''}`}>{unpaidFineCount} unpaid</span></div>
           {finesError ? <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{finesError}</p> : null}
-          <div className="requests-payments-grid mt-5">
-            <section className="requests-payments-physical" aria-labelledby="physical-requests-payments-title"><h3 id="physical-requests-payments-title" className="font-semibold">Physical requests &amp; loans</h3><div className="mt-2 space-y-2">{availabilityAlerts.map((entry) => <article key={`availability-alert-${entry.book_id}`} className="modal-record"><div><p className="font-semibold">{entry.title ?? `Book #${entry.book_id}`}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability alert · enabled {new Date(entry.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Alerts on</span></article>)}{physicalLoans.map((loan) => <article key={`physical-service-${loan.id}`} className="modal-record"><div className="min-w-0"><p className="font-semibold">{loan.title ?? `Book #${loan.book_id}`}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status === 'pending' ? 'Waiting for librarian confirmation' : loan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · ₱{Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</article>)}{physicalLoans.length === 0 && availabilityAlerts.length === 0 ? <div className="modal-empty-state">No physical requests, loans, or availability alerts yet.</div> : null}</div></section>
-            {printPayments.length > 0 ? <section><h3 className="font-semibold">Print payments</h3><div className="mt-2 space-y-2">{printPayments.map((payment) => <article key={payment.id} className="modal-record"><div><p className="font-semibold">{payment.description}</p><p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {payment.receipt_number}</p></div><button type="button" onClick={() => setMemberReceipt({ title: 'Print-service receipt', receiptNumber: payment.receipt_number, amount: payment.amount, date: payment.created_at, description: payment.description, payment: 'Paid' })} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button></article>)}</div></section> : null}
-            {ebookPayments.length > 0 ? <section><h3 className="font-semibold">Digital purchases</h3><div className="mt-2 space-y-2">{ebookPayments.map((payment) => <article key={payment.id} className="modal-record"><div><p className="font-semibold">{books.find((book) => book.id === payment.book_id)?.title ?? `Book #${payment.book_id}`}</p><p className="mt-1 text-xs capitalize text-slate-500">₱{Number(payment.fee_amount).toFixed(2)} · {payment.status}</p>{payment.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {payment.receipt_number}</p> : null}</div>{payment.receipt_number ? <button type="button" onClick={() => setMemberReceipt({ title: 'Digital purchase receipt', receiptNumber: payment.receipt_number!, amount: payment.fee_amount, date: payment.requested_at, description: books.find((book) => book.id === payment.book_id)?.title ?? `Book #${payment.book_id}`, payment: payment.status })} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : <span className="text-xs text-slate-500">No receipt issued</span>}</article>)}</div></section> : null}
-          </div>
-        </section>
-      </div> : null}
-      {finesOpen ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFinesOpen(false) }}>
-        <section className="notification-modal max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="fine-clearance-title">
-          <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Member services</p><h2 id="fine-clearance-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Fines &amp; clearance</h2></div><button type="button" className="notification-modal-close" onClick={() => setFinesOpen(false)} aria-label="Close fines and clearance">×</button></div>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Outstanding charges and staff-issued receipts. Payments are completed with library staff.</p>
           {clearanceError ? <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{clearanceError}</p> : null}
-          <span className={`mt-3 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${unpaidFineCount ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200' : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200'}`}>{unpaidFineCount} unpaid</span>
-          <div className="mt-4 space-y-2">
-            {clearanceFines.map((fine) => {
-              const fineLoan = physicalLoans.find((loan) => loan.id === fine.physical_book_request_id)
-              const kind = fine.fine_type === 'late_fee' ? 'Late return' : fine.fine_type === 'lost_item' ? 'Lost item assessment' : fine.fine_type === 'damage' ? 'Damage assessment' : 'Library charge'
-              return <article key={fine.id} className="modal-record">
-                <div className="min-w-0">
-                  <p className="font-semibold">{fineLoan?.title || kind} · ₱{Number(fine.amount).toFixed(2)}</p>
-                  {fineLoan?.title ? <p className="mt-1 text-xs font-semibold text-slate-600 dark:text-slate-300">{kind}</p> : null}
-                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Status: <span className="font-semibold capitalize">{fine.status}</span></p>
-                  <p className="mt-1 text-xs text-slate-500">{fine.status === 'waived' ? fine.waiver_reason || 'This charge was waived by library staff.' : fine.fine_reason || 'Library fine'} · {fine.created_at ? new Date(fine.created_at).toLocaleDateString() : 'Date unavailable'}</p>
-                  {fine.status === 'unpaid' ? <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-200">Pay at the library cashier. Staff will record the payment and issue your receipt.</p> : null}
-                  {fine.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {fine.receipt_number}</p> : null}
-                </div>
-                {fine.receipt_number ? <button type="button" onClick={() => setMemberReceipt({ title: 'Fine payment receipt', receiptNumber: fine.receipt_number!, amount: fine.amount, date: fine.paid_at ?? fine.created_at, description: fine.fine_reason || kind, payment: fine.status })} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}
-              </article>
-            })}
-            {clearanceFines.length === 0 ? <p className="modal-empty-state">No fines are recorded for your account. If a book is lost or damaged, contact the librarian to assess and record the case.</p> : null}
+          <div className="requests-payments-grid mt-5"><section aria-labelledby="physical-activity-title">
+            <h3 id="physical-activity-title" className="font-semibold">Requests, loans &amp; charges</h3>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <input type="search" value={activitySearch} onChange={(event) => setActivitySearch(event.target.value)} placeholder="Search title, charge, status, or receipt..." aria-label="Search physical activity" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+              <select value={activityTypeFilter} onChange={(event) => setActivityTypeFilter(event.target.value as typeof activityTypeFilter)} aria-label="Filter physical activity" className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="all">All activity</option><option value="loans">Requests &amp; loans</option><option value="charges">Fines &amp; charges</option><option value="unpaid">Unpaid charges</option><option value="active">Active loans</option><option value="alerts">Availability alerts</option></select></div>
+            <div className="mt-3 space-y-2">
+              {filteredPhysicalActivity.map((item) => {
+                if (item.kind === 'loans') {
+                  const loan = item.loan
+                  return <article key={item.key} className={loan.payment_status === 'paid' ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'modal-record'}><div className="min-w-0"><p className="font-semibold">{loan.title ?? 'Book #' + loan.book_id}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status === 'pending' ? 'Waiting for librarian confirmation' : loan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · ₱{Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ' · Due ' + new Date(loan.due_date).toLocaleDateString() : ''}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</article>
+                }
+                if (item.kind === 'charges') {
+                  const fine = item.fine
+                  const kind = fine.fine_type === 'late_fee' ? 'Late return' : fine.fine_type === 'lost_item' ? 'Lost item assessment' : fine.fine_type === 'damage' ? 'Damage assessment' : 'Library charge'
+                  const settled = ['paid', 'refunded', 'waived'].includes(fine.status)
+                  const explanation = fine.status === 'waived' ? fine.waiver_reason || 'This charge was waived by library staff.' : fine.status === 'refund_due' ? fine.refund_reason || 'A replacement-charge refund is due after the book was recovered.' : fine.status === 'refunded' ? fine.refund_reason || 'The library recorded the replacement-charge refund.' : fine.fine_reason || 'Library fine'
+                  return <article key={item.key} className={settled ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 text-emerald-950 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-100' : 'modal-record transaction-status-card transaction-status-card--attention border-rose-200 bg-rose-50/80 text-rose-950 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-100'}><div className="min-w-0"><p className="font-semibold">{item.relatedLoan?.title || kind} · ₱{Number(fine.amount).toFixed(2)}</p><p className={settled ? 'mt-1 text-xs font-semibold text-emerald-800 dark:text-emerald-200' : 'mt-1 text-xs font-semibold text-rose-800 dark:text-rose-200'}>{kind} · {fine.status.replace(/_/g, ' ')}</p><p className={settled ? 'mt-1 text-xs text-emerald-800 dark:text-emerald-200' : 'mt-1 text-xs text-rose-800 dark:text-rose-200'}>{explanation} · {fine.created_at ? new Date(fine.created_at).toLocaleDateString() : 'Date unavailable'}</p>{fine.status === 'unpaid' ? <p className="mt-1 text-xs font-medium">Pay at the library cashier. Staff will record the payment and issue your receipt.</p> : fine.status === 'refund_due' ? <p className="mt-1 text-xs font-medium">The library is processing your refund. The original payment receipt remains available.</p> : fine.status === 'refunded' ? <p className="mt-1 text-xs font-medium">Refund recorded by the library cashier.</p> : null}{fine.receipt_number ? <p className="mt-1 font-mono text-xs">Receipt: {fine.receipt_number}</p> : null}</div>{fine.receipt_number ? <button type="button" onClick={() => setMemberReceipt({ title: 'Fine payment receipt', receiptNumber: fine.receipt_number!, amount: fine.amount, date: fine.paid_at ?? fine.created_at, description: fine.fine_reason || kind, payment: fine.status })} className={settled ? 'shrink-0 rounded-xl border border-emerald-300 px-3 py-2 text-xs font-semibold text-emerald-900 dark:border-emerald-700 dark:text-emerald-100' : 'shrink-0 rounded-xl border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-700 dark:text-rose-100'}>View receipt</button> : null}</article>
+                }
+                return <article key={item.key} className="modal-record"><div><p className="font-semibold">{item.alert.title ?? 'Book #' + item.alert.book_id}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability alert · enabled {new Date(item.alert.created_at).toLocaleDateString()}</p></div><span className="status-pill rounded-full px-3 py-1 text-xs font-semibold status-pending">Alerts on</span></article>
+              })}
+              {filteredPhysicalActivity.length === 0 ? <div className="modal-empty-state">No activity matches these filters.</div> : null}
+            </div>
+            <details className="fine-resolution-details mt-4"><summary className="cursor-pointer text-sm font-semibold">How to resolve a charge</summary><div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100"><ol className="list-decimal space-y-1 pl-5 text-xs leading-5"><li><strong>Late:</strong> bring the book to the librarian&apos;s desk for return inspection and final charge calculation.</li><li><strong>Damaged:</strong> bring the book to the desk for inspection and assessment.</li><li><strong>Lost:</strong> contact the librarian promptly. If you later find the book, bring it in so staff can resolve the lost record.</li><li>Pay at the library cashier. Staff records the payment; your receipt appears here automatically.</li><li>Ask the librarian to review any disputed assessment. Staff can correct the case or record a waiver.</li></ol><p className="mt-2 text-xs">Late charges follow posted policy and remain separate from damage or lost-item assessments.</p></div></details>            {printPayments.length > 0 ? <section><h3 className="font-semibold">Print-service receipts</h3><div className="mt-2 space-y-2">{printPayments.map((payment) => <article key={payment.id} className="modal-record"><div><p className="font-semibold">{payment.description}</p><p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {payment.receipt_number}</p></div><button type="button" onClick={() => setMemberReceipt({ title: 'Print-service receipt', receiptNumber: payment.receipt_number, amount: payment.amount, date: payment.created_at, description: payment.description, payment: 'Paid' })} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button></article>)}</div></section> : null}
+
+          </section>
           </div>
-          <details className="fine-resolution-details mt-4"><summary className="cursor-pointer text-sm font-semibold">How to resolve a fine</summary><div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100"><ol className="list-decimal space-y-1 pl-5 text-xs leading-5"><li><strong>Late:</strong> bring the book to the librarian&apos;s desk for return inspection and final charge calculation.</li><li><strong>Damaged:</strong> bring the book to the desk for inspection and assessment.</li><li><strong>Lost:</strong> contact the librarian promptly. If you later find the book, bring it in so staff can resolve the lost record.</li><li>Pay at the library cashier. Staff records the payment; your receipt appears here automatically.</li><li>Ask the librarian to review any disputed assessment. Staff can correct the case or record a waiver.</li></ol><p className="mt-2 text-xs">Late charges follow posted policy and remain separate from damage or lost-item assessments.</p></div></details>
         </section>
       </div> : null}
       {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>

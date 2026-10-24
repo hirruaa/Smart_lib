@@ -103,7 +103,6 @@ html.dark .physical-queue-nav { border-color: #52645a; background: #263f3a; }
   .physical-catalog-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .physical-catalog-toolbar > input { grid-column: 1 / -1; }
   .physical-catalog-toolbar > button { width: 100%; }
-  .physical-queue-nav > div:first-child { flex-basis: 100%; margin-bottom: 4px; }
 }
 
 ::selection {
@@ -2061,14 +2060,21 @@ html:has(.reader-page), body:has(.reader-page) { height: auto !important; min-he
 }
 
 .physical-requests-only > .mx-auto {
-  display: contents !important;
+  display: flex !important;
+  flex-direction: column;
 }
-.physical-requests-only > .mx-auto > *:not(.physical-requests-inline):not(.physical-requests-result):not(.physical-checked-out-modal) {
+.physical-requests-only > .mx-auto > *:not(.physical-requests-result):not(.physical-checked-out-modal):not(.physical-requests-modal):not(.physical-history-modal):not(.physical-lost-modal):not(.physical-queue-nav):not(#physical-transactions) {
   display: none !important;
 }
 
-.physical-requests-inline {
-  width: 100%;
+.physical-requests-only > .mx-auto > .physical-requests-result {
+  order: -1;
+}
+.physical-requests-only > .mx-auto > .physical-queue-nav {
+  order: 0;
+}
+.physical-requests-only > .mx-auto > #physical-transactions {
+  order: 5;
 }
 
 .physical-copies-dialog table {
@@ -2750,6 +2756,8 @@ html.dark[data-theme] .access-modal button { color: var(--theme-text); }
 .admin-status-pill.is-pending { background: #fff1d7; color: #885715; }
 .admin-status-pill.is-active { background: #e4f3e8; color: #2b6547; }
 .admin-status-pill.is-muted { background: #eef0ed; color: #59635d; }
+.admin-status-pill.is-success { background: #dff3e5; color: #17613a; }
+.admin-status-pill.is-danger { background: #fde5e5; color: #a12626; }
 .admin-activity-list { display: grid; }
 .admin-activity-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid color-mix(in srgb, var(--theme-border, #e2ded4) 55%, transparent); padding: 12px 0; }
 .admin-activity-item:first-child { padding-top: 0; }
@@ -3120,6 +3128,8 @@ html.dark .admin-shell .admin-stat-violet { border-color: #5e506e; background: #
 html.dark .admin-shell .admin-status-pill.is-pending { background: #574629; color: #f0d49c; }
 html.dark .admin-shell .admin-status-pill.is-active { background: #294a39; color: #bfe2ca; }
 html.dark .admin-shell .admin-status-pill.is-muted { background: #414a44; color: #d0d8d1; }
+html.dark .admin-shell .admin-status-pill.is-success { background: #214b34; color: #b9e5c7; }
+html.dark .admin-shell .admin-status-pill.is-danger { background: #592d30; color: #ffc4c4; }
 
 /* The document is the reader's only vertical scroll container. */
 html:has(.reader-page),
@@ -4341,11 +4351,70 @@ html.dark[data-theme] .student-shell .resource-card {
 .requests-payments-physical { min-width: 0; }
 .requests-payments-fine-list { max-height: min(42vh, 380px); overflow-y: auto; padding-right: 3px; }
 .requests-payments-modal .modal-record { width: 100%; }
+.requests-payments-modal .transaction-status-card--attention {
+  border-color: #fecdd3;
+  background-color: #fff1f2;
+}
+.requests-payments-modal .transaction-status-card--settled {
+  border-color: #a7f3d0;
+  background-color: #ecfdf5;
+}
+html.dark .requests-payments-modal .transaction-status-card--attention {
+  border-color: #8d454d;
+  background-color: #3f2425;
+}
+html.dark .requests-payments-modal .transaction-status-card--settled {
+  border-color: #3d7b5b;
+  background-color: #1b342a;
+}
 html.dark .requests-payments-fine-count { background: #334155; color: #e2e8f0; }
 html.dark .requests-payments-fine-count.has-unpaid { background: #5c4015; color: #fde68a; }
 .fine-resolution-details > summary { color: var(--theme-accent-strong, #1e5128); }
 .requests-payments-modal .modal-record { align-items: flex-start; }
+@media print {
+  body:has(.physical-finance-receipt) * { visibility: hidden !important; }
+  .physical-finance-receipt, .physical-finance-receipt * { visibility: visible !important; }
+  .physical-finance-receipt { position: fixed !important; inset: 0 !important; width: 100% !important; max-width: none !important; max-height: none !important; overflow: visible !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; color: #111 !important; background: #fff !important; }
+  .physical-finance-receipt [data-print-hide] { display: none !important; }
+}
 @media (max-width: 720px) {
   .requests-payments-intro { align-items: flex-start; flex-direction: column; }
   .requests-payments-fine-list { max-height: 35dvh; }
 }
+
+/* Keep admin controls and surfaces flat and let the browser keep a quiet scrollbar. */
+html[data-theme] .admin-shell main > header,
+html[data-theme] .admin-shell main > section,
+html[data-theme] .admin-shell main > div,
+html[data-theme] .admin-shell .admin-sidebar,
+html[data-theme] .admin-shell .admin-metrics-grid > div,
+html[data-theme] .admin-shell .admin-overview-grid > div {
+  box-shadow: 0 8px 24px var(--theme-shadow) !important;
+}
+html[data-theme] .admin-shell button[class*="bg-slate-900"],
+html[data-theme] .admin-shell button[class*="bg-sky-500"],
+html[data-theme] .admin-shell button[class*="bg-emerald-"],
+html[data-theme] .admin-shell button.pine-action,
+html[data-theme] .admin-shell .physical-review-action {
+  box-shadow: none !important;
+  transform: none !important;
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease;
+}
+html:has(.admin-shell),
+body:has(.admin-shell),
+.admin-shell {
+  scrollbar-width: thin;
+  scrollbar-color: #aeb9b2 #edf1ee;
+}
+html:has(.admin-shell)::-webkit-scrollbar,
+body:has(.admin-shell)::-webkit-scrollbar,
+.admin-shell::-webkit-scrollbar { width: 10px; height: 10px; }
+html:has(.admin-shell)::-webkit-scrollbar-track,
+body:has(.admin-shell)::-webkit-scrollbar-track,
+.admin-shell::-webkit-scrollbar-track { background: #edf1ee; }
+html:has(.admin-shell)::-webkit-scrollbar-thumb,
+body:has(.admin-shell)::-webkit-scrollbar-thumb,
+.admin-shell::-webkit-scrollbar-thumb { border: 2px solid #edf1ee; border-radius: 999px; background: #aeb9b2; }
+html:has(.admin-shell)::-webkit-scrollbar-thumb:hover,
+body:has(.admin-shell)::-webkit-scrollbar-thumb:hover,
+.admin-shell::-webkit-scrollbar-thumb:hover { background: #87968d; }

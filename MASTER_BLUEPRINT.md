@@ -242,7 +242,7 @@ Treat every transition as a state machine with permitted transition rules, audit
 
 | Group | Entities | Relationships / purpose |
 |---|---|---|
-| Identity and academics | `profiles`, `faculty_ranks`, `academic_courses`, `faculty_courses` | Auth user has one profile/role; faculty may have a rank and many course assignments; student school/course/year fields are stored on profile |
+| Identity and academics | `profiles`, `faculty_ranks`, `academic_courses` | Auth user has one profile/role; faculty use a department; student school/course/year fields are stored on profile |
 | Catalog | `books` | Shared bibliographic record; `catalog_type` distinguishes digital, physical, hybrid; optional `cover_image_url`; legacy digital copy-count fields are not authoritative |
 | Digital access | `borrow_requests`, `book_access_grants`, `point_transactions`, legacy `ebook_purchase_requests` | Free/points access is automatically granted in the digital-loan transaction; old GCash purchase rows are retained for reconciliation and new submissions are disabled |
 | Physical circulation | `physical_book_copies`, `physical_loan_options`, `physical_book_requests`, `physical_book_waitlist`, `physical_reminder_events` | Each copy belongs to a title; requests bind member/title/copy/fee/payment; waitlist is member/title; reminder event is unique by loan/type/date |
@@ -257,7 +257,6 @@ Treat every transition as a state machine with permitted transition rules, audit
 auth.users 1—1 profiles
 profiles 1—N borrow_requests / physical_book_requests / ebook_purchase_requests
 profiles 1—N study_notes / highlights / reading_progress / notifications
-profiles N—N academic_courses (faculty_courses)
 books 1—N physical_book_copies / physical_book_requests / physical_book_waitlist
 books 1—N borrow_requests / book_access_grants / ebook_purchase_requests
 physical_book_requests 0—1 physical_book_copies (active assignment)

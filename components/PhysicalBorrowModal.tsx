@@ -5,10 +5,10 @@ import BaseModal from '@/components/BaseModal'
 import ActionModal from '@/components/ActionModal'
 import { getSupabase } from '@/utils/supabase/client'
 
-type PhysicalBook = { id: number; title: string; author: string; category: string; catalog_type: 'physical' | 'hybrid' }
-type LoanOption = { id: number; duration_days: number; fee_amount: number; is_active: boolean }
+type PhysicalBook = { id: number; title: string; author: string; category: string; catalog_type: 'physical' | 'hybrid'; related_book_ids?: number[] }
+type LoanOption = { id: number; book_id: number; duration_days: number; fee_amount: number; is_active: boolean }
 type PhysicalRequest = { id: number; status: string; payment_status: string; duration_days: number; fee_amount: number; requested_at: string; receipt_number: string | null; checked_out_at: string | null; due_date: string | null }
-type PhysicalCopyLocation = { id: number; section: string | null; shelf_number: string | null; row_number: string | null; position_number: string | null; location: string | null }
+type PhysicalCopyLocation = { id: number; book_id: number; status: string; section: string | null; shelf_number: string | null; row_number: string | null; position_number: string | null; location: string | null }
 
 type Props = {
   open: boolean
@@ -28,6 +28,8 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
   const [options, setOptions] = useState<LoanOption[]>([])
   const [availableCopies, setAvailableCopies] = useState(0)
   const [availableCopyLocations, setAvailableCopyLocations] = useState<PhysicalCopyLocation[]>([])
+  const [borrowedBookIds, setBorrowedBookIds] = useState<number[]>([])
+  const [alertBookIds, setAlertBookIds] = useState<number[]>([])
   const [selectedOption, setSelectedOption] = useState('')
   const [request, setRequest] = useState<PhysicalRequest | null>(null)
   const [availabilityAlertEnabled, setAvailabilityAlertEnabled] = useState(false)
@@ -45,24 +47,35 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
     setError('')
     void (async () => {
       const supabase = getSupabase()
+      const bookIds = Array.from(new Set(book.related_book_ids?.length ? book.related_book_ids : [book.id]))
+      const preferredBookIds = [book.id, ...bookIds.filter((id) => id !== book.id)]
       const [optionsResult, copiesResult, requestResult, alertSubscriptionResult] = await Promise.all([
-        supabase.from('physical_loan_options').select('id,duration_days,fee_amount,is_active').eq('book_id', book.id).eq('is_active', true).order('duration_days'),
-        supabase.from('physical_book_copies').select('id,section,shelf_number,row_number,position_number,location').eq('book_id', book.id).eq('status', 'available'),
-        supabase.from('physical_book_requests').select('id,status,payment_status,duration_days,fee_amount,requested_at,receipt_number,checked_out_at,due_date').eq('student_id', userId).eq('book_id', book.id).in('status', ['pending', 'checked_out']).order('requested_at', { ascending: false }).limit(1).maybeSingle(),
-        supabase.from('physical_book_waitlist').select('book_id').eq('student_id', userId).eq('book_id', book.id).maybeSingle(),
+        supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').in('book_id', bookIds).eq('is_active', true).order('duration_days'),
+        supabase.from('physical_book_copies').select('id,book_id,status,section,shelf_number,row_number,position_number,location').in('book_id', bookIds),
+        supabase.from('physical_book_requests').select('id,status,payment_status,duration_days,fee_amount,requested_at,receipt_number,checked_out_at,due_date').eq('student_id', userId).in('book_id', bookIds).in('status', ['pending', 'checked_out']).order('requested_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('physical_book_waitlist').select('book_id').eq('student_id', userId).in('book_id', bookIds),
       ])
       if (!active) return
       const failed = [optionsResult, copiesResult, requestResult, alertSubscriptionResult].find((result) => result.error)
       if (failed?.error) setError(`Unable to load physical-book availability: ${failed.error.message}`)
-      const nextOptions = (optionsResult.data ?? []) as LoanOption[]
+      const allOptions = (optionsResult.data ?? []) as LoanOption[]
+      const allCopies = (copiesResult.data ?? []) as PhysicalCopyLocation[]
+      const availableCounts = new Map<number, number>()
+      for (const copy of allCopies.filter((item) => item.status === 'available')) availableCounts.set(copy.book_id, (availableCounts.get(copy.book_id) ?? 0) + 1)
+      const preferredRank = new Map(preferredBookIds.map((id, index) => [id, index]))
+      const nextOptions = allOptions
+        .filter((option) => (availableCounts.get(option.book_id) ?? 0) > 0)
+        .sort((left, right) => (preferredRank.get(left.book_id) ?? 999) - (preferredRank.get(right.book_id) ?? 999) || left.duration_days - right.duration_days)
+        .filter((option, index, list) => list.findIndex((candidate) => candidate.duration_days === option.duration_days) === index)
       setOptions(nextOptions)
       setSelectedOption(String(nextOptions[0]?.id ?? ''))
-      const availableCopiesData = (copiesResult.data ?? []) as PhysicalCopyLocation[]
+      const availableCopiesData = allCopies.filter((item) => item.status === 'available')
       setAvailableCopyLocations(availableCopiesData)
       setAvailableCopies(availableCopiesData.length)
+      setBorrowedBookIds(Array.from(new Set(allCopies.filter((item) => item.status === 'borrowed').map((item) => item.book_id))))
+      setAlertBookIds((alertSubscriptionResult.data ?? []).map((entry: { book_id: number }) => entry.book_id))
       setRequest((requestResult.data ?? null) as PhysicalRequest | null)
-      setAvailabilityAlertEnabled(Boolean(alertSubscriptionResult.data))
-      setAvailableCopies(availableCopiesData.length)
+      setAvailabilityAlertEnabled((alertSubscriptionResult.data ?? []).length > 0)
       setLoading(false)
     })()
     return () => { active = false }
@@ -102,7 +115,7 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
     const supabase = getSupabase()
     try {
       const { data, error: requestError } = await supabase.rpc('request_physical_book', {
-        p_book_id: book.id,
+        p_book_id: option.book_id,
         p_copy_id: copyId ?? null,
         p_duration_days: option.duration_days,
         p_payment_method: 'cash',
@@ -137,14 +150,20 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
 
   const enableAvailabilityAlert = async () => {
     if (!book) return
+    if (borrowedBookIds.length === 0) {
+      setError('There are no borrowed copies to track right now. Contact the library for availability information.')
+      return
+    }
     setSaving(true)
     setError('')
     setMessage('')
     try {
-      const { error: alertError } = await getSupabase().rpc('join_physical_book_waitlist', { p_book_id: book.id })
-      if (alertError) setError(alertError.message.replace('availability queue', 'availability alerts'))
+      const results = await Promise.all(borrowedBookIds.map((bookId) => getSupabase().rpc('join_physical_book_waitlist', { p_book_id: bookId })))
+      const failure = results.find((result) => result.error)
+      if (failure?.error && results.every((result) => result.error)) setError(failure.error.message.replace('availability queue', 'availability alerts'))
       else {
         setAvailabilityAlertEnabled(true)
+        setAlertBookIds(borrowedBookIds)
         setMessage('You will be notified when a copy is available. The alert does not reserve a copy; borrowing is first come, first served.')
         onComplete()
       }
@@ -163,10 +182,12 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
     setError('')
     setMessage('')
     try {
-      const { error: alertError } = await getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: book.id })
-      if (alertError) setError(alertError.message)
+      const results = await Promise.all(alertBookIds.map((bookId) => getSupabase().rpc('leave_physical_book_waitlist', { p_book_id: bookId })))
+      const failure = results.find((result) => result.error)
+      if (failure?.error) setError(failure.error.message)
       else {
         setAvailabilityAlertEnabled(false)
+        setAlertBookIds([])
         setMessage('Availability alert turned off.')
         onComplete()
       }

@@ -377,7 +377,7 @@ select is(
 select is(
   (public.admin_update_member_academics(
     'd3600000-0000-4000-8000-000000000002', 'faculty', 'QA School', 'QA Department',
-    null, null, 910010, array[910010]::bigint[]
+    null, null, 910010
   )).role,
   'faculty',
   'An administrator can promote a student to faculty'
@@ -387,11 +387,5 @@ select is(
   910010::bigint,
   'An administrator can assign a faculty title'
 );
-select is(
-  (select count(*)::integer from public.faculty_courses where faculty_id = 'd3600000-0000-4000-8000-000000000002'),
-  1,
-  'An administrator can assign faculty courses'
-);
-
 select * from finish();
 rollback;

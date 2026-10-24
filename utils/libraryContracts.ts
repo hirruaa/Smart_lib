@@ -1,8 +1,8 @@
-export type CanonicalAccessMode = 'free' | 'points' | 'premium'
+export type CanonicalAccessMode = 'free' | 'points'
 export type StoredAccessMode = CanonicalAccessMode | 'loan' | 'restricted' | string | null | undefined
 
 export const DIGITAL_ACCESS_DURATION_OPTIONS = [1, 3, 7, 14, 30] as const
-export const PHYSICAL_LOAN_DURATION_OPTIONS = [14] as const
+export const PHYSICAL_LOAN_DURATION_OPTIONS = [1, 3, 5, 7, 14, 30] as const
 export type DigitalAccessCosts = Partial<Record<`${typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]}`, number>>
 
 /**
@@ -12,7 +12,6 @@ export type DigitalAccessCosts = Partial<Record<`${typeof DIGITAL_ACCESS_DURATIO
  */
 export function normalizeAccessMode(value: StoredAccessMode, accessPoints: number | null | undefined): CanonicalAccessMode {
   const mode = String(value ?? '').trim().toLowerCase()
-  if (mode === 'premium') return 'premium'
   if (mode === 'points') return 'points'
   if (mode === 'free') return 'free'
   return Number(accessPoints ?? 0) > 0 ? 'points' : 'free'

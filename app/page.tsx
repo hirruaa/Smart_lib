@@ -1,8 +1,9 @@
-"use client"
-
 import Link from 'next/link'
 import BrandLogo from '@/components/BrandLogo'
 import ThemeToggle from '@/components/ThemeToggle'
+import { createClient } from '@/utils/supabase/server'
+import { dashboardPathForRole } from '@/utils/roles'
+import { redirect } from 'next/navigation'
 
 type IconName = 'book' | 'notes' | 'arrow' | 'check'
 
@@ -20,7 +21,14 @@ function FeatureCard({ icon, eyebrow, title, description }: { icon: IconName; ey
   return <article className="landing-feature"><div className="landing-icon"><Icon name={icon}/></div><p className="landing-eyebrow">{eyebrow}</p><h3>{title}</h3><p className="landing-muted">{description}</p></article>
 }
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) {
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
+    redirect(dashboardPathForRole(profile?.role))
+  }
+
   return <main className="landing-page school-landing">
     <header className="landing-nav">
       <Link href="/" aria-label="Mary the Queen College home"><BrandLogo iconSize="sm"/></Link>

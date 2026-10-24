@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { authCookieOptions } from '@/utils/supabase/cookieOptions'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -15,6 +16,7 @@ export async function middleware(request: NextRequest) {
 
   try {
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
+      cookieOptions: authCookieOptions,
       cookies: {
         getAll() {
           return request.cookies.getAll()

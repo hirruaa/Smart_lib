@@ -123,13 +123,6 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     return () => observer.disconnect()
   }, [])
 
-  const refreshNotes = useCallback(async () => {
-    const response = await fetch(`/api/study/notes?book_id=${bookId}`)
-    if (!response.ok) return
-    const data = await response.json()
-    setNotes(Array.isArray(data) ? data : [])
-  }, [bookId])
-
   const refreshHighlights = useCallback(async () => {
     const response = await fetch(`/api/study/highlights?book_id=${bookId}`)
     if (!response.ok) return
@@ -137,8 +130,6 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     setHighlights(Array.isArray(data) ? data : [])
   }, [bookId])
 
-  useEffect(() => { void refreshNotes() }, [refreshNotes])
-  useEffect(() => { void refreshHighlights() }, [refreshHighlights])
   useEffect(() => {
     const refresh = () => void refreshHighlights()
     window.addEventListener('smart-lib:highlights-changed', refresh)
@@ -152,8 +143,11 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     setPageNumber(1)
     const storedPage = Number(window.localStorage.getItem(`smart-lib:last-page:${bookId}`))
     const savedPage = Number.isInteger(storedPage) && storedPage > 0 ? storedPage : 1
-    void fetch(`/api/reading-progress?book_id=${bookId}`).then((response) => response.ok ? response.json() : null).then((progress) => {
+    void fetch(`/api/reader/${bookId}/study`).then((response) => response.ok ? response.json() : null).then((studyData) => {
       if (!active) return
+      setNotes(Array.isArray(studyData?.notes) ? studyData.notes : [])
+      setHighlights(Array.isArray(studyData?.highlights) ? studyData.highlights : [])
+      const progress = studyData?.progress
       const remotePage = Number(progress?.current_page)
       setPageNumber(Number.isInteger(remotePage) && remotePage > 0 ? remotePage : savedPage)
       setProgressInitialized(true)
