@@ -3661,7 +3661,60 @@ body:has(.reader-page) {
   flex-wrap: wrap;
 }
 
+.reader-save-feedback {
+  position: fixed;
+  z-index: 80;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  max-width: calc(100vw - 2rem);
+  border: 1px solid #cddbcf;
+  border-radius: 999px;
+  background: #fff;
+  padding: .65rem .9rem;
+  color: #163b2b;
+  box-shadow: 0 8px 28px rgb(16 36 68 / 14%);
+  font-size: .8rem;
+  font-weight: 650;
+}
+
+.reader-save-retry {
+  border: 0;
+  border-radius: 999px;
+  background: #0b2447;
+  padding: .35rem .7rem;
+  color: #fff;
+  cursor: pointer;
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.reader-shell .reader-save-status {
+  display: none !important;
+}
+
+.reader-save-feedback:has(.reader-save-retry) {
+  border-color: #e7b27d;
+  color: #773b08;
+}
+
+html.dark .reader-save-feedback {
+  border-color: #365a4b;
+  background: #10233f;
+  color: #ecf2e7;
+}
+
 @media (max-width: 700px) {
+  .reader-save-feedback {
+    right: 8px;
+    bottom: 5.25rem;
+    left: 8px;
+    justify-content: space-between;
+    border-radius: 14px;
+  }
+
   .reader-shell .reader-quick-drawing-tools {
     top: auto !important;
     right: 8px !important;

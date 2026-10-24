@@ -25,7 +25,7 @@ export async function PUT(request: Request) {
   const bookId = Number(body.bookId)
   const currentPage = Number(body.currentPage)
   const totalPages = body.totalPages == null ? null : Number(body.totalPages)
-  if (!Number.isInteger(bookId) || !Number.isInteger(currentPage) || currentPage < 1 || (totalPages !== null && (!Number.isInteger(totalPages) || totalPages < 1))) {
+  if (!Number.isInteger(bookId) || !Number.isInteger(currentPage) || currentPage < 1 || (totalPages !== null && (!Number.isInteger(totalPages) || totalPages < 1 || currentPage > totalPages))) {
     return NextResponse.json({ error: 'Invalid reading progress.' }, { status: 400 })
   }
   const { data, error } = await supabase.from('reading_progress').upsert({ user_id: user.id, book_id: bookId, current_page: currentPage, total_pages: totalPages, updated_at: new Date().toISOString() }, { onConflict: 'user_id,book_id' }).select('*').single()

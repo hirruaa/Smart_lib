@@ -27,6 +27,7 @@ const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, v
 export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdfUrl: string; title: string }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
+  const [progressInitialized, setProgressInitialized] = useState(false)
   const [scale, setScale] = useState(1)
   const [pageWidth, setPageWidth] = useState(900)
   const [toolsOpen, setToolsOpen] = useState(false)
@@ -63,12 +64,17 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const [savingNote, setSavingNote] = useState(false)
   const [noteStatus, setNoteStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [drawingStatus, setDrawingStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [lastSaveKind, setLastSaveKind] = useState<'drawing' | 'note'>('drawing')
   const [readerError, setReaderError] = useState<string | null>(null)
   const [pdfModules, setPdfModules] = useState<PdfModules | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const pageFrameRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const brushCursorRef = useRef<HTMLDivElement | null>(null)
+  const progressWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const drawingWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const drawingSaveVersionRef = useRef(0)
+  const failedDrawingSaveRef = useRef<{ bookId: number; page: number; strokes: Stroke[] } | null>(null)
   const drawingRef = useRef<Stroke | null>(null)
   const drawingFrameRef = useRef<number | null>(null)
   const strokesRef = useRef<Stroke[]>([])
@@ -140,16 +146,23 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   }, [refreshHighlights])
 
   useEffect(() => {
+    let active = true
+    setProgressInitialized(false)
     setNumPages(null)
-    const savedPage = Number(window.localStorage.getItem(`smart-lib:last-page:${bookId}`))
-    if (Number.isInteger(savedPage) && savedPage > 0) {
-      setPageNumber(savedPage)
-    }
+    setPageNumber(1)
+    const storedPage = Number(window.localStorage.getItem(`smart-lib:last-page:${bookId}`))
+    const savedPage = Number.isInteger(storedPage) && storedPage > 0 ? storedPage : 1
     void fetch(`/api/reading-progress?book_id=${bookId}`).then((response) => response.ok ? response.json() : null).then((progress) => {
-      if (progress?.current_page) {
-        setPageNumber(Number(progress.current_page))
-      }
-    }).catch(() => undefined)
+      if (!active) return
+      const remotePage = Number(progress?.current_page)
+      setPageNumber(Number.isInteger(remotePage) && remotePage > 0 ? remotePage : savedPage)
+      setProgressInitialized(true)
+    }).catch(() => {
+      if (!active) return
+      setPageNumber(savedPage)
+      setProgressInitialized(true)
+    })
+    return () => { active = false }
   }, [bookId])
 
   useEffect(() => {
@@ -158,9 +171,20 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   }, [numPages, pageNumber])
 
   useEffect(() => {
-    window.localStorage.setItem(`smart-lib:last-page:${bookId}`, String(pageNumber))
-    void fetch('/api/reading-progress', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId, currentPage: pageNumber, totalPages: numPages }) }).catch(() => undefined)
-  }, [bookId, pageNumber, numPages])
+    if (!progressInitialized || !numPages) return
+    const currentPage = Math.max(1, Math.min(numPages, pageNumber))
+    const timeout = window.setTimeout(() => {
+      window.localStorage.setItem(`smart-lib:last-page:${bookId}`, String(currentPage))
+      progressWriteQueueRef.current = progressWriteQueueRef.current.catch(() => undefined).then(async () => {
+        await fetch('/api/reading-progress', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookId, currentPage, totalPages: numPages }),
+        })
+      })
+    }, 500)
+    return () => window.clearTimeout(timeout)
+  }, [bookId, pageNumber, numPages, progressInitialized])
 
   useEffect(() => {
     let active = true
@@ -239,7 +263,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       canvas.removeEventListener('pointermove', moveCursor)
       canvas.removeEventListener('pointerleave', hideCursor)
     }
-  }, [brushColor, brushSize, drawMode])
+  }, [brushColor, brushSize, drawMode, pageNumber])
 
   useEffect(() => {
     document.querySelectorAll<HTMLElement>('.reader-toolbar .reader-draw-button.capitalize').forEach((button) => {
@@ -250,16 +274,6 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       button.style.setProperty('--brush-preview-opacity', tool === 'marker' ? String(Math.max(.35, brushOpacity * .65)) : '1')
     })
   }, [brushColor, brushOpacity, brushSize, drawMode])
-
-  useEffect(() => {
-    document.querySelectorAll<HTMLButtonElement>('.reader-sidebar .reader-sidebar-button').forEach((button) => {
-      const label = button.textContent?.trim() ?? ''
-      if (label) {
-        button.title = label
-        button.setAttribute('aria-label', label)
-      }
-    })
-  }, [])
 
   useEffect(() => {
     const menu = document.querySelector<HTMLElement>('.reader-selection-menu')
@@ -371,11 +385,46 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown)
   }, [numPages, past, future, pageNumber, drawMode, selectedText])
 
-  function persistStrokes(next: Stroke[], previous = strokesRef.current) {
-    strokesRef.current = next; setStrokes(next); setPast((items) => [...items, previous]); setFuture([]); setDrawingStatus('saving')
-    void fetch('/api/study/drawings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId, page: pageNumber, strokes: next }) }).then((response) => setDrawingStatus(response.ok ? 'saved' : 'error')).catch(() => setDrawingStatus('error'))
+  function saveStrokes(next: Stroke[], page = pageNumber) {
+    const version = ++drawingSaveVersionRef.current
+    const snapshot = { bookId, page, strokes: next }
+    setLastSaveKind('drawing')
+    setDrawingStatus('saving')
+    drawingWriteQueueRef.current = drawingWriteQueueRef.current.catch(() => undefined).then(async () => {
+      const response = await fetch('/api/study/drawings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookId, page, strokes: next }),
+      })
+      if (!response.ok) throw new Error('Unable to save drawing changes')
+    }).then(() => {
+      if (version === drawingSaveVersionRef.current) {
+        failedDrawingSaveRef.current = null
+        setDrawingStatus('saved')
+      }
+    }).catch(() => {
+      if (version === drawingSaveVersionRef.current) {
+        failedDrawingSaveRef.current = snapshot
+        setDrawingStatus('error')
+      }
+    })
   }
-  function restoreStrokes(next: Stroke[]) { strokesRef.current = next; setStrokes(next); setDrawingStatus('saving'); void fetch('/api/study/drawings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId, page: pageNumber, strokes: next }) }).then((response) => setDrawingStatus(response.ok ? 'saved' : 'error')).catch(() => setDrawingStatus('error')) }
+  function persistStrokes(next: Stroke[], previous = strokesRef.current) {
+    strokesRef.current = next
+    setStrokes(next)
+    setPast((items) => [...items, previous])
+    setFuture([])
+    saveStrokes(next)
+  }
+  function restoreStrokes(next: Stroke[]) {
+    strokesRef.current = next
+    setStrokes(next)
+    saveStrokes(next)
+  }
+  function retryDrawingSave() {
+    const failed = failedDrawingSaveRef.current
+    if (failed) saveStrokes(failed.strokes, failed.page)
+  }
   function undo() { if (!past.length) return; const previous = past[past.length - 1]; setPast(past.slice(0, -1)); setFuture([strokesRef.current, ...future]); restoreStrokes(previous) }
   function redo() { if (!future.length) return; const next = future[0]; setFuture(future.slice(1)); setPast([...past, strokesRef.current]); restoreStrokes(next) }
 
@@ -454,6 +503,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   }, [noteDraft, noteEditorAnchor])
   async function persistNote() {
     if (!noteDraft?.text?.trim()) return
+    setLastSaveKind('note')
     setSavingNote(true); setNoteStatus('saving'); const isNew = !noteDraft.id
     const payload = { id: noteDraft.id || undefined, book_id: bookId, page: noteDraft.page ?? pageNumber, text: noteDraft.text, selection_text: noteDraft.selection_text ?? '', meta: noteDraft.meta ?? {} }
     try {
@@ -573,11 +623,18 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     return () => window.removeEventListener('mouseup', onMouseUp)
   }, [pageNumber])
   const Document = pdfModules?.Document; const Page = pdfModules?.Page
+  const saveFeedbackKind = noteStatus === 'error' ? 'note-error'
+    : drawingStatus === 'error' ? 'drawing-error'
+      : noteStatus === 'saving' ? 'note-saving'
+        : drawingStatus === 'saving' ? 'drawing-saving'
+          : lastSaveKind === 'note' && noteStatus !== 'idle' ? `note-${noteStatus}`
+            : `drawing-${drawingStatus}`
 
   return <div className={`reader-shell reader-theme-${readerTheme} min-h-[calc(100vh-3rem)]`}><div className="mx-auto max-w-7xl space-y-5">
     <div className="reader-toolbar rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/60 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-4"><a href="/dashboard" className="rounded-xl border border-paper-300 bg-paper-100 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:border-forest-700 dark:bg-forest-900 dark:text-paper-100">Dashboard</a><div><p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-pine-600 dark:text-pine-200">E-Study Room</p><h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2></div></div><div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300"><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))} disabled={pageNumber <= 1} className="px-3 py-2 disabled:opacity-40" aria-label="Previous page">Prev</button><label className="reader-page-number"><span className="sr-only">Current PDF page</span><input type="number" min={1} max={numPages ?? undefined} value={pageNumber} onChange={(event) => goToPage(Number(event.target.value))} aria-label="Go to page" /></label><span className="reader-page-total">/ {numPages ?? '...'}</span><button type="button" onClick={() => setPageNumber((page) => numPages ? Math.min(numPages, page + 1) : page + 1)} disabled={numPages ? pageNumber >= numPages : false} className="px-3 py-2 disabled:opacity-40" aria-label="Next page">Next</button></div><div className="reader-progress" aria-label="Reading progress"><span>{numPages ? Math.round((pageNumber / numPages) * 100) : 0}%</span><div className="reader-progress-track"><span style={{ width: `${numPages ? (pageNumber / numPages) * 100 : 0}%` }} /></div></div><div className="inline-flex items-center rounded-2xl border border-paper-300 bg-paper-100 dark:border-forest-700 dark:bg-forest-900"><button type="button" onClick={() => setScale((value) => Math.max(0.6, value - 0.1))} className="px-2.5 py-2" aria-label="Zoom out">-</button><button type="button" onClick={() => setScale(1)} className="px-2 py-2 font-mono">{Math.round(scale * 100)}%</button><button type="button" onClick={() => setScale((value) => Math.min(2, value + 0.1))} className="px-2.5 py-2" aria-label="Zoom in">+</button></div><button type="button" onClick={() => setScale(1)} className="reader-draw-button" title="Fit document to width">Fit</button><button type="button" onClick={() => setToolsOpen((open) => !open)} className={`reader-draw-button ${toolsOpen ? 'reader-draw-button-active' : ''}`} aria-expanded={toolsOpen} aria-controls="reader-study-tools">Study tools</button></div></div>{toolsOpen ? <div id="reader-study-tools" className="reader-tool-drawer"><div className="reader-tool-actions"><button type="button" onClick={activateNoteMode} className={`reader-draw-button ${noteMode ? 'reader-draw-button-active' : ''}`}>Add note</button>{noteMode ? <div className="reader-note-colors" aria-label="Note colors">{noteColors.map((color) => <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label="Choose note color" className={noteColor === color ? 'reader-color-swatch reader-color-swatch-active' : 'reader-color-swatch'} style={{ backgroundColor: color }} />)}</div> : null}<button type="button" onClick={() => void createHighlight()} className="reader-draw-button">Highlights</button></div><div className="mt-4 flex flex-wrap items-center gap-2 border-t border-paper-300/80 pt-3 dark:border-forest-700">{(['pen', 'marker', 'eraser'] as const).map((mode) => <button key={mode} type="button" onClick={() => setDrawMode(drawMode === mode ? null : mode)} className={`reader-draw-button capitalize ${drawMode === mode ? 'reader-draw-button-active' : ''}`}>{mode}</button>)}<button type="button" onClick={undo} disabled={!past.length} className="reader-draw-button">Undo</button><button type="button" onClick={redo} disabled={!future.length} className="reader-draw-button">Redo</button><button type="button" onClick={() => setConfirmClearDrawings(true)} disabled={!strokes.length} className="reader-draw-button">Clear page</button><span className="reader-save-status" role="status">{drawingStatus === 'saving' ? 'Saving...' : drawingStatus === 'saved' ? 'Saved' : drawingStatus === 'error' ? 'Save failed' : ''}</span>{drawMode ? <><label className="ml-2 flex items-center gap-2 text-xs">Size <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label><span className="font-mono text-xs">{brushSize}px</span></> : null}{(drawMode === 'pen' || drawMode === 'marker') ? <input type="color" value={brushColor} onChange={(event) => setBrushColor(event.target.value)} aria-label="Pen color" className="h-7 w-8" /> : null}{drawMode === 'marker' ? <label className="flex items-center gap-2 text-xs">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div></div> : null}</div>
-    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><div className="reader-sidebar-pages"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page">Prev</button><span>Page {pageNumber} / {numPages ?? "…"}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} aria-label="Next page">Next</button></div><button type="button" onClick={activateNoteMode} data-reader-tool="note" data-tooltip="Add note" className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} data-reader-tool="pen" data-tooltip="Pen" className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} data-reader-tool="highlighter" data-tooltip="Highlighter" aria-label="Highlighter" aria-pressed={drawMode === 'marker'} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Highlighter</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} data-reader-tool="eraser" data-tooltip="Eraser" className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} data-reader-tool="undo" data-tooltip="Undo" disabled={!past.length} aria-label="Undo" title="Undo last drawing action" className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} data-reader-tool="redo" data-tooltip="Redo" disabled={!future.length} aria-label="Redo" title="Redo drawing action" className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{readerError ? <p role="alert" className="reader-error">{readerError}</p> : null}{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: "{selectedText}"</p><div className="flex gap-2"><button type="button" onClick={() => void createHighlight()} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => { setNumPages(total); setReaderError(null) }} onLoadError={(error: Error) => { console.error("Unable to load the PDF document.", error); setReaderError("Unable to load this PDF. Check that the file is available, then try again.") }} onSourceError={(error: Error) => { console.error("Unable to access the PDF source.", error); setReaderError("Unable to access this PDF file.") }}><div className="reader-single-page" data-page-number={pageNumber} style={{ width: pageWidth * scale }}><Page pageNumber={pageNumber} width={pageWidth * scale} onRenderSuccess={() => requestAnimationFrame(syncCanvas)} onRenderError={(error: Error) => { console.error("Unable to render the current PDF page.", error); setReaderError("This PDF page could not be rendered.") }} /></div></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading room...</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84, 0.02, 0.98); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08, 0.015, 0.985); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">x</button></div>{note.selection_text ? <p className="reader-note-quote">"{note.selection_text}"</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => requestDeleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Previous page</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
+    <div className="reader-stage"><aside className="reader-sidebar" aria-label="Study tools"><p className="reader-sidebar-label">Study tools</p><div className="reader-sidebar-pages"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} aria-label="Previous page">Prev</button><span>Page {pageNumber} / {numPages ?? "…"}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} aria-label="Next page">Next</button></div><button type="button" onClick={activateNoteMode} data-reader-tool="note" data-tooltip="Add note" className={`reader-sidebar-button ${noteMode ? 'reader-sidebar-button-active' : ''}`}>Add note</button><button type="button" onClick={() => setDrawMode(drawMode === 'pen' ? null : 'pen')} data-reader-tool="pen" data-tooltip="Pen" className={`reader-sidebar-button ${drawMode === 'pen' ? 'reader-sidebar-button-active' : ''}`}>Pen</button><button type="button" onClick={() => setDrawMode(drawMode === 'marker' ? null : 'marker')} data-reader-tool="highlighter" data-tooltip="Highlighter" aria-label="Highlighter" aria-pressed={drawMode === 'marker'} className={`reader-sidebar-button ${drawMode === 'marker' ? 'reader-sidebar-button-active' : ''}`}>Highlighter</button><button type="button" onClick={() => setDrawMode(drawMode === 'eraser' ? null : 'eraser')} data-reader-tool="eraser" data-tooltip="Eraser" className={`reader-sidebar-button ${drawMode === 'eraser' ? 'reader-sidebar-button-active' : ''}`}>Eraser</button><button type="button" onClick={undo} data-reader-tool="undo" data-tooltip="Undo" disabled={!past.length} aria-label="Undo" title="Undo last drawing action" className="reader-sidebar-button">Undo</button><button type="button" onClick={redo} data-reader-tool="redo" data-tooltip="Redo" disabled={!future.length} aria-label="Redo" title="Redo drawing action" className="reader-sidebar-button">Redo</button></aside><div ref={workspaceRef} className="reader-workspace rounded-[2rem] border border-paper-300 bg-paper-50 p-4 shadow-xl dark:border-forest-800 dark:bg-forest-800/40"><div className="mb-4 rounded-2xl border border-paper-300 bg-paper-100/70 p-3 text-xs text-slate-600 dark:border-forest-700 dark:bg-forest-900/60 dark:text-slate-300">{noteMode ? 'Click on the page to place a note.' : 'Select text to highlight it or attach a note. Use the study tools as you read.'}</div>{readerError ? <p role="alert" className="reader-error">{readerError}</p> : null}{selectionMenuOpen && selectedText ? <div className="reader-selection-menu mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-pine-300 bg-pine-50 p-3 text-sm"><p className="min-w-0 flex-1 truncate">Selected on page {selectedPage}: "{selectedText}"</p><div className="flex gap-2"><button type="button" onClick={() => void createHighlight()} className="reader-tool-button">Highlight</button><button type="button" onClick={() => beginNewNote()} className="reader-tool-button">Add note</button><button type="button" onClick={() => { setSelectedText(null); setSelectionMenuOpen(false) }} className="reader-tool-button reader-tool-button-muted">Clear</button></div></div> : null}<div ref={pageFrameRef} className="reader-page-frame" style={{ width: pageWidth * scale }} onClick={handlePageClick}>{Document && Page ? <Document file={pdfUrl} onLoadSuccess={({ numPages: total }: { numPages: number }) => { setNumPages(total); setReaderError(null) }} onLoadError={(error: Error) => { console.error("Unable to load the PDF document.", error); setReaderError("Unable to load this PDF. Check that the file is available, then try again.") }} onSourceError={(error: Error) => { console.error("Unable to access the PDF source.", error); setReaderError("Unable to access this PDF file.") }}><div className="reader-single-page" data-page-number={pageNumber} style={{ width: pageWidth * scale }}><Page pageNumber={pageNumber} width={pageWidth * scale} onRenderSuccess={() => requestAnimationFrame(syncCanvas)} onRenderError={(error: Error) => { console.error("Unable to render the current PDF page.", error); setReaderError("This PDF page could not be rendered.") }} /></div></Document> : <div className="grid min-h-[500px] place-items-center text-sm text-slate-500">Loading reading room...</div>}<div className="reader-highlight-layer" aria-label="Saved highlights">{visibleHighlights.flatMap((highlight) => highlight.rects.map((rect, index) => <span key={`${highlight.id}-${index}`} className="reader-highlight" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, backgroundColor: highlight.color || highlightColors[0] }} />))}</div><canvas ref={canvasRef} className={`reader-drawing-canvas ${drawMode ? 'reader-drawing-canvas-active' : ''}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} /><div className="reader-note-layer" aria-label="Page notes">{visibleNotes.map((note, index) => { const x = clamp(note.meta?.x ?? 0.84, 0.02, 0.98); const y = clamp(note.meta?.y ?? 0.12 + index * 0.08, 0.015, 0.985); const expanded = expandedNoteId === note.id; return <div key={note.id} className="reader-note-anchor" style={{ left: `${x * 100}%`, top: `${y * 100}%` }}><button type="button" className="reader-note-pin" style={{ backgroundColor: note.meta?.color ?? noteColors[0] }} onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDraggingNoteId(note.id) }} onPointerMove={(event) => { if (draggingNoteId === note.id) updateNotePosition(note, event.clientX, event.clientY) }} onPointerUp={(event) => { if (draggingNoteId === note.id) { setDraggingNoteId(null); void saveNotePosition(note, event.clientX, event.clientY) } }} onClick={() => setExpandedNoteId(expanded ? null : note.id)} aria-label={`Open note on page ${pageNumber}`} title={(note.text ?? 'Note').slice(0, 80)}>N</button>{expanded ? <div className="reader-note-bubble" style={{ '--note-color': note.meta?.color ?? noteColors[0] } as React.CSSProperties}><div className="flex items-start justify-between gap-2"><strong>{note.meta?.title || 'Study note'}</strong><button type="button" onClick={() => setExpandedNoteId(null)} aria-label="Collapse note">x</button></div>{note.selection_text ? <p className="reader-note-quote">"{note.selection_text}"</p> : null}<p className="mt-2 whitespace-pre-wrap text-xs leading-5">{note.text || 'Empty note'}</p><div className="mt-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setNoteDraft(note)} className="text-xs font-bold">Edit</button><button type="button" onClick={() => requestDeleteNote(note.id)} className="text-xs font-bold text-rose-700">Delete</button></div></div> : null}</div> })}</div></div>{drawMode === 'pen' || drawMode === 'marker' ? <div className="reader-quick-drawing-tools" aria-label="Quick drawing options"><span className="reader-quick-drawing-label">{drawMode === 'marker' ? 'Marker' : 'Pen'} options</span><div className="reader-quick-color-list">{drawingColors.map((color) => <button key={color.value} type="button" onClick={() => setBrushColor(color.value)} className={`reader-quick-color ${brushColor === color.value ? 'reader-quick-color-active' : ''}`} style={{ backgroundColor: color.value }} aria-label={`${color.name} ${drawMode}`} title={`${color.name} ${drawMode}`} />)}</div><div className="reader-size-presets" aria-label={`${drawMode} size presets`}>{(drawMode === 'marker' ? markerSizes : penSizes).map((size) => <button key={size} type="button" onClick={() => setBrushSize(size)} className={`reader-size-preset ${brushSize === size ? 'reader-size-preset-active' : ''}`} aria-label={`${size} pixel ${drawMode}`} title={`${size}px`}> <span style={{ width: `${Math.max(5, Math.min(18, size / 2))}px`, height: `${Math.max(5, Math.min(18, size / 2))}px` }} /></button>)}</div><label className="reader-quick-size">Fine <input type="range" min={drawMode === 'marker' ? 8 : 1} max={drawMode === 'marker' ? 32 : 10} value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><span>{brushSize}px</span></label>{drawMode === 'marker' ? <label className="reader-quick-size">Opacity <input type="range" min="0.2" max="1" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} /></label> : null}</div> : null}<div className="reader-page-navigation" aria-label="Page navigation"><button type="button" onClick={() => goToPage(pageNumber - 1)} disabled={pageNumber <= 1} className="reader-page-navigation-button">Previous page</button><span>Page {pageNumber} of {numPages ?? '...'}</span><button type="button" onClick={() => goToPage(pageNumber + 1)} disabled={numPages ? pageNumber >= numPages : false} className="reader-page-navigation-button">Next page</button></div>{readerError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{readerError}</p> : null}</div></div>
   </div>
+  {drawingStatus !== 'idle' || noteStatus !== 'idle' ? <div className="reader-save-feedback" role="status" aria-live="polite"><span>{saveFeedbackKind === 'drawing-saving' ? 'Saving annotations…' : saveFeedbackKind === 'drawing-saved' ? 'Annotations saved' : saveFeedbackKind === 'drawing-error' ? 'Couldn’t save annotations' : saveFeedbackKind === 'note-saving' ? 'Saving note…' : saveFeedbackKind === 'note-saved' ? 'Note saved' : 'Couldn’t save note'}</span>{saveFeedbackKind === 'drawing-error' ? <button type="button" onClick={retryDrawingSave} className="reader-save-retry">Retry</button> : saveFeedbackKind === 'note-error' && noteDraft ? <button type="button" onClick={() => void persistNote()} className="reader-save-retry">Retry</button> : null}</div> : null}
   {noteDraft ? <div className="study-panel-backdrop" role="presentation"><section className="reader-note-editor" role="dialog" aria-modal="true" aria-labelledby="note-editor-title"><div className="flex items-center justify-between"><h2 id="note-editor-title">{noteDraft.id ? 'Edit note' : 'New page note'}</h2><button type="button" onClick={() => setNoteDraft(null)} aria-label="Close note editor">x</button></div><label className="mt-5 block text-xs font-bold uppercase tracking-[0.16em]">Title<input value={noteDraft.meta?.title ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), title: event.target.value } })} className="reader-editor-input" placeholder="Optional title" /></label><label className="mt-4 block text-xs font-bold uppercase tracking-[0.16em]">Your note<textarea autoFocus value={noteDraft.text ?? ''} onChange={(event) => setNoteDraft({ ...noteDraft, text: event.target.value })} className="reader-editor-input min-h-32" placeholder="Write what you want to remember..." /></label>{noteDraft.selection_text ? <div className="mt-3 rounded-xl bg-paper-100 p-3 text-xs text-slate-600">Selected text: "{noteDraft.selection_text}"</div> : null}<div className="mt-4 flex items-center gap-2"><span className="text-xs font-bold">Color</span>{noteColors.map((color) => <button key={color} type="button" aria-label={`Use ${color} note color`} onClick={() => setNoteDraft({ ...noteDraft, meta: { ...(noteDraft.meta ?? {}), color } })} className={`h-6 w-6 rounded-full border-2 ${noteDraft.meta?.color === color ? 'border-forest-900' : 'border-transparent'}`} style={{ backgroundColor: color }} />)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNoteDraft(null)} className="reader-tool-button reader-tool-button-muted">Cancel</button><button type="button" onClick={() => void persistNote()} disabled={savingNote || !noteDraft.text?.trim()} className="reader-tool-button">{savingNote ? 'Saving...' : 'Save note'}</button></div></section></div> : null}
     <ActionModal open={confirmDeleteNoteId !== null} title="Delete study note?" description="This note will be permanently removed." confirmLabel="Delete note" tone="danger" onClose={() => setConfirmDeleteNoteId(null)} onConfirm={() => { const id = confirmDeleteNoteId; setConfirmDeleteNoteId(null); if (id !== null) void deleteNote(id) }} />
   <ActionModal open={confirmClearDrawings} title="Clear drawings?" description="All drawings on this page will be permanently removed." confirmLabel="Clear drawings" tone="danger" onClose={() => setConfirmClearDrawings(false)} onConfirm={() => { setConfirmClearDrawings(false); persistStrokes([]) }} />

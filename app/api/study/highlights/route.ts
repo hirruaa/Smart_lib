@@ -41,7 +41,8 @@ export async function POST(req: Request) {
   const parsedPage = page == null ? null : positiveInteger(page, 100000)
   const parsedNoteId = note_id == null ? null : positiveInteger(note_id)
   const allowedColors = new Set(['yellow', 'green', 'blue', 'pink', 'purple'])
-  const selectedColor = typeof color === 'string' && allowedColors.has(color) ? color : 'yellow'
+  const validColor = color == null || (typeof color === 'string' && (allowedColors.has(color) || /^#[\da-f]{6}$/i.test(color)))
+  const selectedColor = color == null ? 'yellow' : color
   const selectionText = meta && typeof meta === 'object' && !Array.isArray(meta) && 'selection_text' in meta
     ? boundedText((meta as { selection_text?: unknown }).selection_text, 10000)
     : undefined
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
     return ['x', 'y', 'width', 'height'].every((key) => typeof item[key] === 'number' && Number.isFinite(item[key]) && Math.abs(item[key] as number) <= 100000)
   })
   const safeMeta = meta && typeof meta === 'object' && !Array.isArray(meta) ? meta : {}
-  if ((book_id != null && !parsedBookId) || (page != null && !parsedPage) || (note_id != null && !parsedNoteId) || !validRects || (selectionText === null) || JSON.stringify(safeMeta).length > 12000) {
+  if ((book_id != null && !parsedBookId) || (page != null && !parsedPage) || (note_id != null && !parsedNoteId) || !validColor || !validRects || (selectionText === null) || JSON.stringify(safeMeta).length > 12000) {
     return NextResponse.json({ error: 'Invalid highlight data.' }, { status: 400 })
   }
   const payload: any = {
