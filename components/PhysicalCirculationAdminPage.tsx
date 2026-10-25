@@ -586,16 +586,22 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const condition = returnConditions[loanId] ?? 'available'
     if (condition === 'lost' || condition === 'damaged') {
       const draft = lostFineDrafts[loanId] ?? { amount: '', reason: '' }
-      if ((condition === 'damaged' || condition === 'lost') && !draft.reason.trim()) {
+      const amount = condition === 'lost' ? Number(draft.amount) : 0
+      if (!draft.reason.trim()) {
         setError(condition === 'lost' ? 'Record an inspection note describing the lost item.' : 'Record an inspection note describing the damage.')
+        setBusy(false)
+        return
+      }
+      if (condition === 'lost' && (!draft.amount.trim() || !Number.isFinite(amount) || amount <= 0 || amount > 100000)) {
+        setError('Enter a staff-assessed lost-item charge greater than 0 and no more than 100,000.')
         setBusy(false)
         return
       }
       const { data, error: actionError } = await getSupabase().rpc('admin_inspect_physical_return', {
         p_request_id: loanId,
         p_copy_condition: condition,
-        p_assessed_amount: 0,
-        p_assessment_reason: condition === 'damaged' || condition === 'lost' ? draft.reason.trim() : null,
+        p_assessed_amount: amount,
+        p_assessment_reason: draft.reason.trim(),
       })
       if (actionError) setError(actionError.message)
       else {
@@ -606,7 +612,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         setMessage(saved.status === 'lost' && condition !== 'lost'
           ? 'This loan reached the 30-day overdue threshold and was classified as lost. Review the open case to assess it.'
           : condition === 'lost'
-            ? 'Book marked lost and an open case was created. Decide on a replacement assessment from the case.'
+            ? 'Book marked lost and the replacement assessment was recorded.'
             : 'Return recorded as damaged. The copy is unavailable until staff resolves its damage assessment.')
       }
       setBusy(false)
@@ -720,8 +726,6 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const condition = returnConditions[loanId] ?? 'available'
     if (condition === 'damaged' || condition === 'lost') {
       setLostFineDrafts((current) => ({ ...current, [loanId]: current[loanId] ?? { amount: '', reason: '' } }))
-    }
-    if (condition === 'damaged') {
       setLostFineLoanId(loanId)
       return
     }
@@ -1355,19 +1359,28 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     </div>
     <ActionModal
         open={lostFineLoanId !== null}
-        title="Record damaged return"
+        title={lostFineLoanId !== null && returnConditions[lostFineLoanId] === 'lost' ? 'Open lost-item case' : 'Record damaged return'}
         description={lostFineLoanId !== null ? returnConditions[lostFineLoanId] === 'damaged'
           ? `${bookName(loans.find((loan) => loan.id === lostFineLoanId)?.book_id ?? 0)} will be returned to inventory as damaged. No standard damage fee is configured; enter the staff-assessed amount and inspection note, or enter 0 if no charge applies.`
-          : `${bookName(loans.find((loan) => loan.id === lostFineLoanId)?.book_id ?? 0)} will be marked lost. ` : undefined}
-        confirmLabel="Save inspection"
+          : `${bookName(loans.find((loan) => loan.id === lostFineLoanId)?.book_id ?? 0)} will be marked lost and assessed now. The charge will appear as a separate unpaid transaction.` : undefined}
+        confirmLabel={lostFineLoanId !== null && returnConditions[lostFineLoanId] === 'lost' ? 'Mark lost and assess' : 'Save inspection'}
         busy={busy}
-        confirmDisabled={lostFineLoanId !== null && !lostFineDrafts[lostFineLoanId]?.reason.trim()}
+        confirmDisabled={lostFineLoanId !== null && (!lostFineDrafts[lostFineLoanId]?.reason.trim()
+          || (returnConditions[lostFineLoanId] === 'lost' && (!lostFineDrafts[lostFineLoanId]?.amount.trim()
+            || !Number.isFinite(Number(lostFineDrafts[lostFineLoanId]?.amount))
+            || Number(lostFineDrafts[lostFineLoanId]?.amount) <= 0
+            || Number(lostFineDrafts[lostFineLoanId]?.amount) > 100000)))}
         onClose={() => { if (lostFineLoanId !== null) setReturnConditions((current) => ({ ...current, [lostFineLoanId]: 'available' })); setLostFineLoanId(null) }}
         onConfirm={() => { if (lostFineLoanId !== null) void executeCloseLoan(lostFineLoanId) }}
       >
         {lostFineLoanId !== null ? <div className="grid gap-3">
           <p className="text-sm font-medium">Borrower: {memberName(loans.find((loan) => loan.id === lostFineLoanId)?.student_id ?? '')}</p>
-          <label className="text-sm font-medium">Inspection note<textarea required maxLength={500} rows={3} value={lostFineDrafts[lostFineLoanId]?.reason ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [lostFineLoanId]: { ...(current[lostFineLoanId] ?? { amount: '', reason: '' }), reason: event.target.value } }))} placeholder="Describe the damage and repair needed" className={`${input} mt-1`} /></label>
+          {returnConditions[lostFineLoanId] === 'lost' ? <label className="text-sm font-medium">Staff-assessed replacement charge (PHP)
+            <input type="number" required min="0.01" max="100000" step="0.01" inputMode="decimal" value={lostFineDrafts[lostFineLoanId]?.amount ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [lostFineLoanId]: { ...(current[lostFineLoanId] ?? { amount: '', reason: '' }), amount: event.target.value } }))} placeholder="Enter the assessed amount" className={`${input} mt-1`} />
+          </label> : null}
+          <label className="text-sm font-medium">{returnConditions[lostFineLoanId] === 'lost' ? 'Assessment reason and inspection note' : 'Inspection note'}
+            <textarea required maxLength={500} rows={3} value={lostFineDrafts[lostFineLoanId]?.reason ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [lostFineLoanId]: { ...(current[lostFineLoanId] ?? { amount: '', reason: '' }), reason: event.target.value } }))} placeholder={returnConditions[lostFineLoanId] === 'lost' ? 'Explain the lost-item assessment' : 'Describe the damage and repair needed'} className={`${input} mt-1`} />
+          </label>
         </div> : null}
       </ActionModal>
     <ActionModal
@@ -1439,9 +1452,6 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           else if (action?.type === 'reject') void executeRejectRequest(action.id)
         }}
       >
-        {pendingAction?.type === 'close' && returnConditions[pendingAction.id] === 'lost' ? <label className="mt-4 block text-sm font-medium">Inspection note
-          <textarea required maxLength={500} rows={3} value={lostFineDrafts[pendingAction.id]?.reason ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [pendingAction.id]: { ...(current[pendingAction.id] ?? { amount: '', reason: '' }), reason: event.target.value } }))} placeholder="Describe how the item was reported lost" className={`${input} mt-1`} />
-        </label> : null}
       </ActionModal>
     <ActionModal
       open={fineWaiver !== null}

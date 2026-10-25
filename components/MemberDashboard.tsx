@@ -1229,18 +1229,28 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         <aside id="member-navigation" className={`dashboard-sidebar student-sidebar ${sidebarOpen ? 'dashboard-sidebar-open sidebar-open' : ''}`}>
           <div className="student-sidebar-header">
             <BrandLogo className="student-brand" iconSize="sm" />
-            <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <MenuIcon />}</button>
+            <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-controls="member-navigation" aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} /></svg>}</button>
           </div>
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label={`${memberType === 'faculty' ? 'Faculty' : 'Student'} workspace`}>
-            <a className={activeSidebarItem === 'overview' ? 'active' : ''} href="#overview" aria-label="Overview" title={sidebarCollapsed ? 'Overview' : undefined} onClick={() => { setActiveSidebarItem('overview'); setSidebarOpen(false) }}><DashboardIcon /><span>Overview</span></a>
-            <a className={activeSidebarItem === 'catalog' ? 'active' : ''} href="#explore" aria-label="Catalog" title={sidebarCollapsed ? 'Catalog' : undefined} onClick={() => { setActiveSidebarItem('catalog'); setSidebarOpen(false) }}><BookIcon /><span>Catalog</span></a>
-            <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-            <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Transactions" title={sidebarCollapsed ? 'Transactions' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Transactions</span></button>
-            {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
-            <button type="button" onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span aria-hidden="true">▣</span><span>Scan book QR</span></button>
+            <div className="student-nav-group">
+              <p className="student-nav-group-label">Library</p>
+              <a className={activeSidebarItem === 'overview' ? 'active' : ''} href="#overview" aria-current={activeSidebarItem === 'overview' ? 'page' : undefined} aria-label="Overview" title={sidebarCollapsed ? 'Overview' : undefined} onClick={() => { setActiveSidebarItem('overview'); setSidebarOpen(false) }}><DashboardIcon /><span>Overview</span></a>
+              <a className={activeSidebarItem === 'catalog' ? 'active' : ''} href="#explore" aria-current={activeSidebarItem === 'catalog' ? 'page' : undefined} aria-label="Catalog" title={sidebarCollapsed ? 'Catalog' : undefined} onClick={() => { setActiveSidebarItem('catalog'); setSidebarOpen(false) }}><BookIcon /><span>Catalog</span></a>
+            </div>
+            <div className="student-nav-group">
+              <p className="student-nav-group-label">Your activity</p>
+              <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
+              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Transactions" title={sidebarCollapsed ? 'Transactions' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Transactions</span></button>
+            </div>
+            <div className="student-nav-group">
+              <p className="student-nav-group-label">Tools</p>
+              {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
+              <button type="button" aria-label="Scan book QR" title={sidebarCollapsed ? 'Scan book QR' : undefined} onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span className="student-nav-qr-icon" aria-hidden="true">▣</span><span>Scan book QR</span></button>
+            </div>
           </nav>
           <div className="student-sidebar-footer">
+            <p className="student-nav-group-label">Account</p>
             <div className="student-theme-control"><ThemeToggle /></div>
             <button type="button" onClick={() => setProfileOpen(true)}><ProfileIcon /><span>Profile</span></button>
             <button type="button" onClick={handleLogout}><LogoutIcon /><span>Sign out</span></button>

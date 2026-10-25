@@ -226,13 +226,14 @@ html.dark .admin-theme-control { color: #e1e8e2; }
 html.dark .admin-nav-group-label { color: #9aaa9f; }
 html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; color: #f5f1e8; }
 
-.student-layout { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: 28px; align-items: start; }
-.student-sidebar { position: sticky; top: 20px; display: flex; min-height: calc(100vh - 40px); flex-direction: column; border-right: 1px solid #e2ded4; padding: 10px 18px 18px 4px; }
+.student-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
+.student-sidebar { position: sticky; top: 20px; display: flex; min-height: calc(100vh - 40px); flex-direction: column; border: 1px solid #e2ded4; border-radius: 24px; background: #fcfbf7; padding: 22px 16px 18px; box-shadow: 0 18px 42px rgba(61, 52, 39, .06); }
 .student-layout.sidebar-collapsed { grid-template-columns: 78px minmax(0, 1fr); }
-.student-layout.sidebar-collapsed .student-sidebar { align-items: center; padding-right: 8px; }
+.student-layout.sidebar-collapsed .student-sidebar { align-items: center; padding: 54px 10px 16px; }
 .student-layout.sidebar-collapsed .student-brand > span:last-child,
 .student-layout.sidebar-collapsed .student-sidebar-label,
 .student-layout.sidebar-collapsed .student-nav span,
+.student-layout.sidebar-collapsed .student-nav-group-label,
 .student-layout.sidebar-collapsed .student-sidebar-footer span,
 .student-layout.sidebar-collapsed .student-theme-control span { display: none; }
 .student-layout.sidebar-collapsed .student-brand > div:last-child { display: none; }
@@ -240,18 +241,22 @@ html.dark .admin-sidebar-toggle { border-color: #63736a; background: #39453d; co
 .student-layout.sidebar-collapsed .student-sidebar-footer button { justify-content: center; }
 .student-layout.sidebar-collapsed .student-nav { gap: 11px; }
 .student-layout.sidebar-collapsed .student-nav { margin-top: 14px; }
+.student-layout.sidebar-collapsed .student-nav-group { gap: 8px; }
 .student-layout.sidebar-collapsed .student-nav a,
 .student-layout.sidebar-collapsed .student-sidebar-footer button { width: 46px; min-height: 44px; padding: 12px; }
 .student-layout.sidebar-collapsed .student-sidebar-footer { gap: 10px; }
 .student-brand { display: flex; align-items: center; gap: 10px; color: #242a28; font-size: 16px; font-weight: 750; letter-spacing: -.03em; }
 .student-brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: #263f3a; color: #f5f1e8; }
 .student-brand-mark svg { width: 17px; height: 17px; }
-.student-sidebar-label { margin: 48px 10px 12px; color: #9b9b91 !important; font-size: 10px; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; }
-.student-nav { display: grid; gap: 7px; }
+.student-sidebar-label { margin: 28px 10px 14px; color: #9b9b91 !important; font-size: 10px; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; }
+.student-nav { display: grid; gap: 16px; }
+.student-nav-group { display: grid; gap: 5px; }
+.student-nav-group-label { margin: 0 10px 3px; color: #747873; font-size: 10px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
 .student-nav a, .student-nav button, .student-sidebar-footer button { display: flex; width: 100%; align-items: center; gap: 13px; border: 0; border-radius: 11px; background: transparent; padding: 11px 12px; color: #52635c; font: inherit; font-size: 13px; font-weight: 650; text-align: left; transition: background .2s ease, color .2s ease; }
 .student-nav a svg, .student-nav button svg, .student-sidebar-footer svg { width: 17px; height: 17px; flex: 0 0 auto; }
 .student-nav a:hover, .student-nav a.active, .student-nav button:hover { background: #dde5de; color: #263f3a; }
 .student-sidebar-footer { display: grid; gap: 6px; margin-top: auto; border-top: 1px solid #e2ded4; padding-top: 16px; }
+.student-sidebar-footer > .student-nav-group-label { margin-top: 0; }
 .student-sidebar-footer button { width: 100%; cursor: pointer; }
 .student-sidebar-footer button:hover { background: #f0ece3; color: #263f3a; }
 .student-sidebar-header { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 6px; }
@@ -2479,6 +2484,7 @@ html[data-theme] .student-shell .student-nav button:hover { background: var(--th
 html[data-theme] .student-shell .student-sidebar-footer { border-color: var(--theme-border) !important; }
 html[data-theme] .student-shell .student-sidebar-footer button:hover { background: var(--theme-accent-pale) !important; color: var(--theme-text) !important; }
 html[data-theme] .student-shell .student-sidebar-toggle { border-color: var(--theme-border) !important; background: var(--theme-panel) !important; color: var(--theme-text) !important; box-shadow: 0 4px 14px var(--theme-shadow) !important; }
+html[data-theme] .student-shell .student-nav-group-label { color: var(--theme-muted) !important; }
 
 html[data-theme] .student-shell .assistant-panel,
 html[data-theme] .student-shell .assistant-chat-panel,
@@ -4390,6 +4396,25 @@ html[data-theme] .admin-shell .admin-sidebar,
 html[data-theme] .admin-shell .admin-metrics-grid > div,
 html[data-theme] .admin-shell .admin-overview-grid > div {
   box-shadow: 0 8px 24px var(--theme-shadow) !important;
+}
+html[data-theme] [role="presentation"]:has(> [role="dialog"][aria-modal="true"]) {
+  background: rgba(11, 36, 71, .48) !important;
+  backdrop-filter: blur(3px);
+}
+html[data-theme] [role="dialog"][aria-modal="true"] {
+  border-color: var(--theme-border) !important;
+  background: var(--theme-panel) !important;
+  color: var(--theme-text) !important;
+  box-shadow: 0 18px 48px var(--theme-shadow) !important;
+}
+html[data-theme] [role="dialog"][aria-modal="true"] :is(input, textarea, select) {
+  border-color: var(--theme-border) !important;
+  background: var(--theme-panel-soft) !important;
+  color: var(--theme-text) !important;
+}
+html[data-theme] [role="dialog"][aria-modal="true"] :is(input, textarea, select)::placeholder {
+  color: var(--theme-muted) !important;
+  opacity: 1;
 }
 html[data-theme] .admin-shell button[class*="bg-slate-900"],
 html[data-theme] .admin-shell button[class*="bg-sky-500"],

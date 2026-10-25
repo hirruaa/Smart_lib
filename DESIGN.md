@@ -27,6 +27,8 @@ Use blue and green as the stable foundation. Gold is a highlight, not a large ba
 ## Layout and interaction
 
 - Put the most common role-specific task first. Keep high-frequency actions reachable from the overview when they can be completed safely there.
+- Keep dashboard navigation predictable across roles: use the college seal and workspace name, short labeled groups, a clear active page, and account/theme actions at the bottom. Collapsed desktop navigation must retain accessible names and tooltips; mobile navigation should open as a dismissible drawer with a visible close action.
+- Give modal dialogs a shared themed surface, border, shadow, text, field, and backdrop treatment. Light mode uses the white panel token; dark mode uses the dark panel token. Prefer `BaseModal`/`ActionModal` for new dialogs, and make existing custom dialogs follow the same tokens.
 - Give each piece of information one clear home. Link to its source page instead of duplicating full tables, catalogs, activity feeds, or payment histories on overview pages.
 - Prefer a compact, well-labeled table for staff records and a focused list for member activity. On narrow screens, reflow records into readable stacked rows rather than forcing horizontal overflow.
 - Use cards to group related information, not as decoration around every control. Avoid nested cards and repeated card grids when a heading, divider, or compact row gives clearer hierarchy.
@@ -56,4 +58,3 @@ Use blue and green as the stable foundation. Gold is a highlight, not a large ba
 3. Follow this document and reuse existing components and tokens.
 4. Inspect loading, empty, error, selected, disabled, and dark-mode states, as applicable.
 5. Keep existing behavior and data permissions intact when making visual changes.
-

@@ -1402,7 +1402,7 @@ export default function AdminPage() {
           <div className="admin-sidebar-brand mb-8 space-y-3">
             <div className="admin-sidebar-brand-row">
               <BrandLogo className="admin-brand-logo" iconSize="sm" subtitle="Admin workspace" />
-              <button type="button" className="admin-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-label={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{sidebarOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d="M4 6h16M4 12h16M4 18h16" />}</svg></button>
+              <button type="button" className="admin-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-controls="admin-navigation" aria-label={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'} title={sidebarOpen ? 'Close admin navigation' : sidebarCollapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{sidebarOpen ? <path d="m6 6 12 12M18 6 6 18" /> : <path d={sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} />}</svg></button>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-600 dark:text-sky-300">Admin Menu</p>
@@ -1413,7 +1413,7 @@ export default function AdminPage() {
             {navGroups.map((group) => <div key={group.label} className="admin-nav-group">
               <p className="admin-nav-group-label">{group.label}</p>
               <div className="space-y-1">
-                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { navigateToSection(item.section); setSidebarOpen(false) }} aria-label={item.label} title={sidebarCollapsed ? item.label : undefined} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
+                {group.items.map((item) => <button key={item.section} type="button" onClick={() => { navigateToSection(item.section); setSidebarOpen(false) }} aria-current={section === item.section ? 'page' : undefined} aria-label={item.label} title={sidebarCollapsed ? item.label : undefined} className={`admin-nav-button w-full text-left rounded-2xl px-4 py-3 text-sm font-medium transition ${section === item.section ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/80'}`}><span className="admin-nav-icon"><AdminNavIcon section={item.section} /></span><span>{item.label}</span></button>)}
               </div>
             </div>)}
           </nav>
