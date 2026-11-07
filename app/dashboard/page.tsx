@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 import { Skeleton } from '@/components/skeletons'
+import { dashboardPathForRole } from '@/utils/roles'
 
 function normalizeRole(value: unknown): 'admin' | 'librarian' | 'student' | 'faculty' | null {
   const raw = String(value ?? '').trim().toLowerCase()
@@ -17,7 +17,6 @@ function normalizeRole(value: unknown): 'admin' | 'librarian' | 'student' | 'fac
 }
 
 export default function DashboardPage() {
-  const router = useRouter()
   const [authError, setAuthError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -28,9 +27,13 @@ export default function DashboardPage() {
     async function checkAuth() {
       try {
         const { data: { user }, error: authLookupError } = await supabase.auth.getUser()
+        if (authLookupError?.name === 'AuthSessionMissingError' || (!authLookupError && !user)) {
+          window.location.replace('/login')
+          return
+        }
         if (authLookupError) throw authLookupError
         if (!user) {
-          router.replace('/login')
+          window.location.replace('/login')
           return
         }
 
@@ -48,8 +51,7 @@ export default function DashboardPage() {
         }
 
         const section = window.location.hash
-        const dashboardPath = role === 'admin' || role === 'librarian' ? '/dashboard/admin' : role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student'
-        router.replace(`${dashboardPath}${section}`)
+        window.location.replace(`${dashboardPathForRole(role)}${section}`)
       } catch (error) {
         if (active) {
           setAuthError(error instanceof Error
@@ -63,7 +65,7 @@ export default function DashboardPage() {
 
     void checkAuth()
     return () => { active = false }
-  }, [router])
+  }, [])
 
   return (
     authError

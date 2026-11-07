@@ -24,7 +24,20 @@ const penSizes = [2, 4, 6, 8]
 const markerSizes = [10, 16, 24, 32]
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
-export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdfUrl: string; title: string }) {
+async function persistReadingProgress(bookId: number, currentPage: number, totalPages: number) {
+  try {
+    const response = await fetch('/api/reading-progress', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookId, currentPage, totalPages }),
+    })
+    if (!response.ok) console.error('Reading progress save failed:', response.status)
+  } catch (error) {
+    console.error('Reading progress could not be saved.', error)
+  }
+}
+
+export default function EReader({ bookId, pdfUrl, title, initialPage, onDraftChange }: { bookId: number; pdfUrl: string; title: string; initialPage?: number; onDraftChange?: (hasDraft: boolean) => void }) {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(1)
   const [progressInitialized, setProgressInitialized] = useState(false)
@@ -78,8 +91,17 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
   const drawingRef = useRef<Stroke | null>(null)
   const drawingFrameRef = useRef<number | null>(null)
   const strokesRef = useRef<Stroke[]>([])
+  const latestProgressRef = useRef({ pageNumber, numPages, progressInitialized })
   const visibleNotes = useMemo(() => notes.filter((note) => Number(note.page) === pageNumber), [notes, pageNumber])
   const visibleHighlights = useMemo(() => highlights.filter((highlight) => Number(highlight.page) === pageNumber), [highlights, pageNumber])
+
+  useLayoutEffect(() => {
+    latestProgressRef.current = { pageNumber, numPages, progressInitialized }
+  }, [pageNumber, numPages, progressInitialized])
+
+  useEffect(() => {
+    onDraftChange?.(Boolean(noteDraft))
+  }, [noteDraft, onDraftChange])
 
   useEffect(() => {
     let mounted = true
@@ -149,7 +171,10 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       setHighlights(Array.isArray(studyData?.highlights) ? studyData.highlights : [])
       const progress = studyData?.progress
       const remotePage = Number(progress?.current_page)
-      setPageNumber(Number.isInteger(remotePage) && remotePage > 0 ? remotePage : savedPage)
+      const requestedPage = Number(initialPage)
+      setPageNumber(Number.isInteger(requestedPage) && requestedPage > 0
+        ? requestedPage
+        : Number.isInteger(remotePage) && remotePage > 0 ? remotePage : savedPage)
       setProgressInitialized(true)
     }).catch(() => {
       if (!active) return
@@ -157,7 +182,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       setProgressInitialized(true)
     })
     return () => { active = false }
-  }, [bookId])
+  }, [bookId, initialPage])
 
   useEffect(() => {
     if (!numPages) return
@@ -170,15 +195,22 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
     const timeout = window.setTimeout(() => {
       window.localStorage.setItem(`smart-lib:last-page:${bookId}`, String(currentPage))
       progressWriteQueueRef.current = progressWriteQueueRef.current.catch(() => undefined).then(async () => {
-        await fetch('/api/reading-progress', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookId, currentPage, totalPages: numPages }),
-        })
+        await persistReadingProgress(bookId, currentPage, numPages)
       })
     }, 500)
     return () => window.clearTimeout(timeout)
   }, [bookId, pageNumber, numPages, progressInitialized])
+
+  useEffect(() => () => {
+    const progress = latestProgressRef.current
+    const totalPages = progress.numPages
+    if (!progress.progressInitialized || !totalPages) return
+    const currentPage = Math.max(1, Math.min(totalPages, progress.pageNumber))
+    window.localStorage.setItem(`smart-lib:last-page:${bookId}`, String(currentPage))
+    progressWriteQueueRef.current = progressWriteQueueRef.current.catch(() => undefined).then(async () => {
+      await persistReadingProgress(bookId, currentPage, totalPages)
+    })
+  }, [bookId])
 
   useEffect(() => {
     let active = true
@@ -509,6 +541,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
       }
       const saved = await response.json()
       setNotes((items) => isNew ? [saved, ...items] : items.map((item) => item.id === saved.id ? saved : item))
+      window.dispatchEvent(new Event('smart-lib:study-data-changed'))
       setExpandedNoteId(saved.id)
       setNoteDraft(null)
       setNoteStatus('saved')
@@ -529,6 +562,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
         return
       }
       setNotes((items) => items.filter((item) => item.id !== id))
+      window.dispatchEvent(new Event('smart-lib:study-data-changed'))
       setExpandedNoteId(null)
       setReaderError(null)
     } catch (error) {
@@ -550,6 +584,7 @@ export default function EReader({ bookId, pdfUrl, title }: { bookId: number; pdf
         return
       }
       await refreshHighlights()
+      window.dispatchEvent(new Event('smart-lib:study-data-changed'))
       setSelectedText(null)
       setSelectedPage(null)
       setSelectedRects([])

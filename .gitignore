@@ -1,8 +1,14 @@
 node_modules/
 .next/
+.next-validation-build/
+.next-validation-dev/
+.next-validation/
+.tsupgrader/
 out/
 dist/
 coverage/
+test-results/
+playwright-report/
 .vercel/
 
 .env
@@ -25,6 +31,7 @@ yarn-debug.log*
 pnpm-debug.log*
 .turbo/
 .cache/
+*.tsbuildinfo
 
 .DS_Store
 Thumbs.db

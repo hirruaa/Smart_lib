@@ -1,11 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
 import { getSupabase } from '@/utils/supabase/client'
 import BrandLogo from '@/components/BrandLogo'
 import PasswordInput from '@/components/PasswordInput'
+import { dashboardPathForRole } from '@/utils/roles'
 
 type AuthMode = 'login' | 'forgot'
 
@@ -15,7 +15,6 @@ function getAuthOrigin() {
 }
 
 export default function AuthForm() {
-  const router = useRouter()
   const [mode, setMode] = useState<AuthMode>('login')
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
@@ -55,12 +54,26 @@ export default function AuthForm() {
             return
           }
         }
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+
+        let defaultPath = '/dashboard'
+        if (user) {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .maybeSingle()
+          if (profileError) throw profileError
+          defaultPath = dashboardPathForRole(profile?.role)
+        }
+
         const requestedPath = new URLSearchParams(window.location.search).get('next')
         const parsedNext = requestedPath ? new URL(requestedPath, window.location.origin) : null
         const nextPath = parsedNext?.origin === window.location.origin
           ? `${parsedNext.pathname}${parsedNext.search}${parsedNext.hash}`
-          : '/dashboard'
-        router.replace(nextPath)
+          : defaultPath
+        window.location.assign(nextPath)
       }
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : 'An unexpected authentication error occurred.')

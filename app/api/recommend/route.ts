@@ -16,48 +16,6 @@ type CatalogSearchRow = {
   rank: number
 }
 
-const BUILTIN_LIBRARY_KNOWLEDGE = `
-[MARY THE QUEEN COLLEGE OF QUEZON CITY - SMART LIB KNOWLEDGE BASE]
-
-1. USER ROLES & ACCESS HIERARCHY:
-- System Administrator: Highest-level role with absolute platform control, responsible for system-wide configuration, accessing audit logs, and exclusively handling the creation and provisioning of all new user accounts (students, faculty, librarians).
-- Librarian: Management role controlling day-to-day library operations, including physical and digital catalog inventory, loan approvals, physical return inspections, fine resolution and waivers, and point distribution, but is strictly restricted from creating or deleting member accounts.
-- Faculty: Elevated end-user role allowing members to borrow physical and digital materials with extended loan durations or higher point allowances, while also granting them the ability to submit academic materials or course contributions for librarian review.
-- Student: Standard end-user role restricted to personal account activities, including browsing catalogs, checking out books, reading digital e-books, interacting with the AI assistant, tracking personal active loans, and earning or spending reward points.
-
-2. OVERDUE FINES & PENALTY POLICY:
-- Late Return Fee: Overdue physical book loans incur a daily late fee (standard default: ₱10.00 per school day overdue, or as configured by library administration) until the physical book is checked in at the desk.
-- Clearance Impact: Any unpaid overdue fine or unreturned book automatically places an academic clearance hold on the student's records, graduation clearance, and future borrowing privileges.
-- Settling Fines: Members pay fines at the library circulation desk or cashier. Librarians record the payment in the system and issue an official receipt with a receipt number. Librarians can also waive fines under valid institutional justifications.
-
-3. WHAT TO DO WHEN A BOOK IS LOST:
-- Step 1 (Immediate Notification): The borrower must immediately notify the library circulation desk or librarian. Reporting a lost book immediately freezes accumulating daily overdue fees.
-- Step 2 (Incident Assessment): The librarian performs an assessment where the borrower is given two standard options:
-  a) Pay the assessed replacement charge (the acquisition cost of the book plus a standard administrative processing fee), OR
-  b) Provide an exact replacement copy of the lost title in brand-new, acceptable condition (same ISBN/edition).
-- Step 3 (Payment & Clearance): Once the replacement charge or replacement copy is submitted and any pending late fees are settled, staff record the resolution, issue an official cashier receipt, and lift all clearance holds.
-
-4. WHAT TO DO WHEN A BOOK IS DAMAGED:
-- Physical return inspection: All physical returns are inspected at the circulation desk (graded: Good, Fair, Minor Damage, or Severe Damage).
-- Normal wear: Light wear from normal academic reading is excused.
-- Severe damage: Defaced pages, missing covers, or liquid damage incur a repair fee or full replacement cost as assessed by the librarian.
-
-5. PHYSICAL BOOK BORROWING & LOAN DURATIONS:
-- How to Borrow: Members search the catalog, select an available physical book, and choose a duration: 1, 3, 5, 7, 14, or 30 days.
-- Pickup: Visit the circulation desk with your school ID. A librarian confirms the request and scans the physical book copy QR label to complete checkout.
-- Return: Return the book to the circulation desk on or before the due date for staff inspection.
-
-6. DIGITAL CATALOG & E-BOOK READING:
-- Instant Browser Reader: Digital e-books can be read directly in the web browser with page navigation, zoom, and search capabilities.
-- Free Access titles: Can be unlocked immediately at 0 points cost for 1, 3, 7, 14, or 30 days.
-- Points Access titles: Unlocked by spending student reward points for the selected duration period.
-- Digital loans expire automatically when duration ends, with no late fees. Members can also return or renew them online.
-
-7. REWARD POINTS & ACADEMIC CONTRIBUTIONS:
-- How to Earn: Students and faculty earn points by uploading academic contributions (lecture notes, study materials, research papers, or contributed books) that are reviewed and approved by librarians, or through special administrator recognition.
-- How to Spend: Reward points are used to unlock premium/points-based digital e-books in the catalog.
-`
-
 const assistantSearchFillers = new Set([
   'a', 'an', 'and', 'about', 'are', 'book', 'books', 'can', 'could', 'find',
   'for', 'give', 'help', 'i', 'in', 'looking', 'me', 'need', 'of', 'on',
@@ -70,7 +28,7 @@ function getIntent(query: string): AssistantIntent {
   if (/(my|i currently have|active|borrowed|my loan|my due|my account|my status|my clearance|my books|i have)/i.test(q) && /(book|books|loan|due|borrow|expire|renew|return)/i.test(q)) {
     return 'loans'
   }
-  if (/(recommend|suggest|find books|search book|looking for book|materials about|resources on|books on|titles by|reading list)/i.test(q) && !/(lost|fine|damage|penalty|how much|policy|rule|role|clearance|hours|what to do|procedure)/i.test(q)) {
+  if (/(recommend|suggest|find (?:books?|resources?)|search (?:for )?(?:books?|resources?)|looking for (?:books?|resources?)|(?:books?|resources?|materials) (?:about|on|for)|titles by|reading list)/i.test(q) && !/(lost|fine|damage|penalty|how much|policy|rule|role|clearance|hours|what to do|procedure)/i.test(q)) {
     return 'search'
   }
   if (/(research paper|academic study|thesis sources|journal articles|literature review)/i.test(q)) {
@@ -148,23 +106,31 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Sign in to use the library assistant.' }, { status: 401 })
     }
-    const { data: memberProfile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
-    const memberRole = ['admin', 'librarian', 'faculty', 'student'].includes(memberProfile?.role ?? '')
-      ? memberProfile?.role
-      : 'student'
+    const { data: memberProfile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
+    if (profileError || !memberProfile) {
+      console.error('Library assistant could not load member role:', profileError)
+      return NextResponse.json({ error: 'Your library profile could not be verified. Please try again.' }, { status: 503 })
+    }
+    const memberRole = memberProfile.role
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json({ error: 'The AI assistant is not configured. Ask the administrator to add GEMINI_API_KEY.' }, { status: 503 })
     }
 
     let policyText = ''
     let frontDeskFallback = 'the Mary the Queen College Library circulation desk'
+    let policySettingsUnavailable = false
     try {
-      const { data: assistantSettings } = await supabase.from('library_assistant_settings')
+      const { data: assistantSettings, error: settingsError } = await supabase.from('library_assistant_settings')
         .select('librarian_name, policy_text, front_desk_fallback').eq('id', true).maybeSingle()
+      if (settingsError) throw settingsError
       if (assistantSettings?.policy_text?.trim()) policyText = assistantSettings.policy_text.trim()
       if (assistantSettings?.front_desk_fallback?.trim()) frontDeskFallback = assistantSettings.front_desk_fallback.trim()
-    } catch {
-      // Safe fallback when custom settings table is not present
+    } catch (error) {
+      policySettingsUnavailable = true
+      console.error('Library assistant policy settings could not be loaded:', error)
+    }
+    if (intent === 'policy' && policySettingsUnavailable) {
+      return NextResponse.json({ error: 'Library policy settings are temporarily unavailable. Please contact the library desk.' }, { status: 503 })
     }
 
     const previousUserQuery = [...history].reverse().find((message) => message.role === 'user')?.content
@@ -178,7 +144,7 @@ export async function POST(req: Request) {
     const catalogPromise = shouldSearchCatalog
       ? supabase.rpc('search_books', { p_query: catalogQuery, p_limit: 10 })
       : Promise.resolve({ data: [], error: null })
-    const loanPromise = intent === 'loans'
+    const digitalLoanPromise = intent === 'loans'
       ? supabase
         .from('borrow_requests')
         .select('status, due_date, books(title, author)')
@@ -186,24 +152,45 @@ export async function POST(req: Request) {
         .order('request_date', { ascending: false })
         .limit(20)
       : Promise.resolve({ data: [], error: null })
+    const physicalLoanPromise = intent === 'loans'
+      ? supabase
+        .from('physical_book_requests')
+        .select('status, due_date, books(title, author)')
+        .eq('student_id', user.id)
+        .order('requested_at', { ascending: false })
+        .limit(20)
+      : Promise.resolve({ data: [], error: null })
 
-    const [rpc, loanResult] = await Promise.all([catalogPromise, loanPromise])
+    const [rpc, digitalLoanResult, physicalLoanResult] = await Promise.all([catalogPromise, digitalLoanPromise, physicalLoanPromise])
     let results: CatalogSearchRow[] = []
     if (shouldSearchCatalog) {
-      if (!rpc.error) {
-        results = filterRelevantCatalogRows(catalogQuerySource, (rpc.data ?? []) as CatalogSearchRow[])
+      if (rpc.error) {
+        console.error('Library assistant catalog search failed:', rpc.error)
+        return NextResponse.json({ error: 'Catalog search is temporarily unavailable. Please try again.' }, { status: 503 })
       }
+      results = filterRelevantCatalogRows(catalogQuerySource, (rpc.data ?? []) as CatalogSearchRow[])
     }
 
     let loans: Array<Record<string, unknown>> = []
     if (intent === 'loans') {
-      if (!loanResult.error) {
-        loans = (loanResult.data ?? []).map((loan) => ({
+      if (digitalLoanResult.error || physicalLoanResult.error) {
+        console.error('Library assistant loan lookup failed:', digitalLoanResult.error ?? physicalLoanResult.error)
+        return NextResponse.json({ error: 'Your loan details are temporarily unavailable. Please try again.' }, { status: 503 })
+      }
+      loans = [
+        ...(digitalLoanResult.data ?? []).map((loan) => ({
+          type: 'Digital access',
           status: loan.status,
           due_date: loan.due_date,
           books: loan.books,
-        }))
-      }
+        })),
+        ...(physicalLoanResult.data ?? []).map((loan) => ({
+          type: 'Physical circulation',
+          status: loan.status,
+          due_date: loan.due_date,
+          books: loan.books,
+        })),
+      ]
     }
 
     const catalogContext = results.map(({ id, title, author, category, description, available_copies }) => ({
@@ -239,14 +226,13 @@ export async function POST(req: Request) {
         geminiMessages,
         [
           'You are the Smart Lib AI Assistant for Mary the Queen College of Quezon City.',
-          'You are an intelligent, friendly, proactive, and comprehensive academic library assistant.',
-          'Always directly, clearly, and helpfully answer any user concern — including how much overdue fines cost, what to do when a book is lost, borrowing durations, account clearance, user roles, points, or general library inquiries.',
-          'Do NOT act merely as a search bar. When a user asks a question, explain the answer thoroughly, step-by-step, with reassuring and actionable guidance.',
-          BUILTIN_LIBRARY_KNOWLEDGE,
-          'When users ask for book recommendations or specific subjects, suggest titles and describe why they fit.',
-          'When users ask about their active borrowings or personal loans, summarize their records from currentUserLoans accurately.',
-          'For physical title inventory, availability, or shelf location queries, you can call the search_physical_inventory tool.',
-          `If a member needs in-person assistance, physical fee payment, or physical book pickups/returns, warmly advise them to visit ${frontDeskFallback} during campus library hours.`,
+          'Be friendly, concise, and useful. Treat the live context and configured library policy as the only authoritative source for library-specific facts.',
+          'Never invent fines, due-date rules, replacement requirements, clearance effects, payment methods, loan durations, account permissions, library hours, or staff contacts. If the configured policy does not answer a policy question, say that you cannot verify it and direct the member to the library desk.',
+          'For book discovery, recommend only titles present in the supplied catalog results. Explain relevance using their title, author, category, or description, and do not claim a title is available unless the supplied data says so.',
+          'When asked about personal loans, use only currentUserLoans. Do not infer loans or account status from conversation history.',
+          'For physical inventory, availability, or location questions, use search_physical_inventory and report only its returned matches.',
+          `For in-person assistance, physical payments, or pickups and returns, direct the member to ${frontDeskFallback}.`,
+          policyText ? `Configured library policy:\n${policyText}` : 'No verified policy text is configured. Do not answer policy-specific questions from general assumptions.',
         ].join('\n\n'),
         [{ name: 'search_physical_inventory', description: 'Find active physical or hybrid titles with current availability and recorded shelf locations.', parameters: { type: 'OBJECT', properties: { query: { type: 'STRING', description: 'Title, author, ISBN, or category.' } }, required: ['query'] } }],
         {

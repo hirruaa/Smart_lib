@@ -1,26 +1,30 @@
-﻿'use client'
+'use client'
 
-import { ChangeEvent, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, FormEvent, Fragment, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
 import { getSupabase } from '@/utils/supabase/client'
 import { AdminPhysicalSkeleton } from '@/components/skeletons/AdminDashboardSkeleton'
+import BrandLogo from '@/components/BrandLogo'
 import ResultModal from '@/components/ResultModal'
 import ActionModal from '@/components/ActionModal'
 import BaseModal from '@/components/BaseModal'
 import BookAssistant from '@/components/BookAssistant'
 import SearchableMemberSelect from '@/components/SearchableMemberSelect'
+import StaffMemberEnrollmentModal from '@/components/StaffMemberEnrollmentModal'
+import StaffCashPointTopUpModal from '@/components/StaffCashPointTopUpModal'
+import { LibrarianDailyRecord, LibrarianShiftCloseout, LibrarianWorkQueue } from '@/components/LibrarianDeskReports'
 import { generateCatalogIsbn } from '@/utils/isbn'
 import { PHYSICAL_LOAN_DURATION_OPTIONS } from '@/utils/libraryContracts'
 import { isAdminRole, isStaffRole } from '@/utils/roles'
 
-type Book = { id: number; title: string; author: string; category: string; isbn: string | null; description?: string | null; catalog_type: string; cover_image_url: string | null; is_archived: boolean }
+type Book = { id: number; title: string; author: string; category: string; discipline?: string | null; genre?: string | null; isbn: string | null; description?: string | null; catalog_type: string; cover_image_url: string | null; is_archived: boolean }
 type Copy = { id: number; book_id: number; copy_code: string; qr_token: string; status: string; location: string | null; section: string | null; shelf_number: string | null; row_number: string | null; position_number: string | null }
 type Option = { id: number; book_id: number; duration_days: number; fee_amount: number; is_active: boolean }
 type Loan = {
   id: number; student_id: string; book_id: number; copy_id: number | null; duration_days: number
   fee_amount: number; payment_method: string; payment_status: string; transaction_reference: string | null
-  payment_proof_path: string | null; status: string; requested_at: string; checked_out_at: string | null
+  status: string; requested_at: string; checked_out_at: string | null
   due_date: string | null; returned_at: string | null; receipt_number: string | null
   reservation_expires_at: string | null; incident_type: 'lost' | 'damage' | null; incident_status: 'open' | 'resolved' | 'withdrawn' | null
   incident_note: string | null; incident_assessed_amount: number | null; incident_assessed_at: string | null; incident_resolved_at: string | null; incident_resolved_by: string | null
@@ -31,16 +35,41 @@ type LoanHistory = {
   checked_out_at: string; due_date: string; returned_at: string | null
   return_condition: string | null; receipt_number: string | null
 }
-type Profile = { id: string; email: string; full_name: string | null; role: string }
+type Profile = { id: string; email: string; full_name: string | null; role: string; institutional_id?: string | null; student_photo_path?: string | null }
 type PrintPayment = { id: number; student_id: string; amount: number; description: string; receipt_number: string; created_at: string }
+type PhysicalRenewal = { id: number; request_id: number; student_id: string; copy_id: number; duration_days: number; previous_due_date: string; new_due_date: string; fee_amount: number; amount_received: number; receipt_number: string; created_at: string }
+type RenewalDraft = { loanId: number; durationDays: number; amountPaid: string; notes: string }
 type AvailabilityAlertEntry = { student_id: string; book_id: number; created_at: string }
-type PhysicalFine = { id: number; physical_book_request_id: number; student_id: string; amount: number; status: string; fine_type: 'late_fee' | 'lost_item' | 'damage' | 'other'; created_at: string; paid_at?: string | null; refunded_at?: string | null; refund_due_at?: string | null; refund_reason?: string | null; fine_reason?: string | null; waiver_reason?: string | null; receipt_number?: string | null }
-type FinanceReceipt = { kind: 'fine'; fine: PhysicalFine } | { kind: 'checkout'; loan: LoanHistory } | { kind: 'print'; payment: PrintPayment }
+type PhysicalFine = { id: number; physical_book_request_id: number; student_id: string; amount: number; status: string; fine_type: 'late_fee' | 'lost_item' | 'damage' | 'other'; created_at: string; paid_at?: string | null; waived_at?: string | null; refunded_at?: string | null; refund_due_at?: string | null; refund_reason?: string | null; fine_reason?: string | null; waiver_reason?: string | null; receipt_number?: string | null }
+type FinanceReceipt = { kind: 'fine'; fine: PhysicalFine } | { kind: 'checkout'; loan: LoanHistory } | { kind: 'renewal'; renewal: PhysicalRenewal } | { kind: 'print'; payment: PrintPayment }
 type LibraryHoliday = { holiday_date: string; name: string }
-type RequestQueueFilter = 'all' | 'pending' | 'awaiting_payment' | 'ready' | 'availability_alerts'
+type LibraryPolicySettings = {
+  id: number
+  fine_grace_days: number
+  late_fee_per_day: number
+  late_fee_cap: number
+  lost_after_days: number
+  faculty_lesson_reward_points: number
+  policy_notice: string
+  updated_at: string
+}
+type RequestQueueFilter = 'all' | 'cash_requests' | 'legacy_online' | 'availability_alerts'
 
 const panel = 'rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900'
 const input = 'w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950'
+const normalizeInstitutionalIdInput = (value: string) => {
+  const digits = value.replace(/\D/g, '').slice(0, 9)
+  return digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits
+}
+const normalizeDeskSearch = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]/g, '')
+const isNameSubsequence = (query: string, value: string) => {
+  let queryIndex = 0
+  for (const character of value) {
+    if (character === query[queryIndex]) queryIndex += 1
+    if (queryIndex === query.length) return true
+  }
+  return false
+}
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
 const fineTypeLabel = (type: PhysicalFine['fine_type']) => type === 'late_fee' ? 'Late return' : type === 'lost_item' ? 'Lost item' : type === 'damage' ? 'Damage assessment' : 'Other charge'
 const titleGroupKey = (book: Pick<Book, 'title' | 'author' | 'category'>) =>
@@ -50,15 +79,34 @@ const titleGroupKey = (book: Pick<Book, 'title' | 'author' | 'category'>) =>
 type CirculationPanel = 'requests' | 'checkedOut' | 'history' | 'lost' | 'print' | 'addBook'
 type CirculationActionRequest = { panel: CirculationPanel; token: number; caseId?: number; requestId?: number } | null
 
-export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnly = false, overviewOnly = false, catalogOnly = false, policyOnly = false, finesOnly = false, requestedPanel = null, active = true, onClose, onOpenLostCase, onOpenFines }: { initialPanel?: CirculationPanel; requestsOnly?: boolean; overviewOnly?: boolean; catalogOnly?: boolean; policyOnly?: boolean; finesOnly?: boolean; requestedPanel?: CirculationActionRequest; active?: boolean; onClose?: () => void; onOpenLostCase?: (caseId: number) => void; onOpenFines?: () => void }) {
+function MemberDeskSurface({ asModal, open, onClose, children }: { asModal: boolean; open: boolean; onClose: () => void; children: ReactNode }) {
+  if (!asModal) return children
+  return <BaseModal open={open} title="Find a member" eyebrow="Circulation desk" description="Verify the member’s physical ID, then manage checkout, returns, or renewals." onClose={onClose} size="lg" layer="background">{children}</BaseModal>
+}
+
+export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnly = false, overviewOnly = false, catalogOnly = false, policyOnly = false, finesOnly = false, librarianWorkspaceOnly = false, requestedPanel = null, active = true, onClose, onOpenLostCase, onOpenFines }: { initialPanel?: CirculationPanel; requestsOnly?: boolean; overviewOnly?: boolean; catalogOnly?: boolean; policyOnly?: boolean; finesOnly?: boolean; librarianWorkspaceOnly?: boolean; requestedPanel?: CirculationActionRequest; active?: boolean; onClose?: () => void; onOpenLostCase?: (caseId: number) => void; onOpenFines?: () => void }) {
   const router = useRouter()
   const [isAdmin, setIsAdmin] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const [memberDeskOpen, setMemberDeskOpen] = useState(false)
+  const [memberEnrollmentOpen, setMemberEnrollmentOpen] = useState(false)
+  const [topUpMember, setTopUpMember] = useState<Profile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [copies, setCopies] = useState<Copy[]>([])
   const [options, setOptions] = useState<Option[]>([])
   const [loans, setLoans] = useState<Loan[]>([])
   const [loanHistory, setLoanHistory] = useState<LoanHistory[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [deskMemberQuery, setDeskMemberQuery] = useState('')
+  const [deskMemberId, setDeskMemberId] = useState('')
+  const [deskSuggestionIndex, setDeskSuggestionIndex] = useState(0)
+  const [deskIdCardPresented, setDeskIdCardPresented] = useState(false)
+  const [deskCopyQuery, setDeskCopyQuery] = useState('')
+  const [deskIssueDurationDays, setDeskIssueDurationDays] = useState('14')
+  const [deskSelectedReturnIds, setDeskSelectedReturnIds] = useState<number[]>([])
+  const [deskReturnsProcessing, setDeskReturnsProcessing] = useState(false)
+  const [deskPhotoUploading, setDeskPhotoUploading] = useState(false)
+  const deskSearchRef = useRef<HTMLInputElement>(null)
   const [availabilityAlerts, setAvailabilityAlerts] = useState<AvailabilityAlertEntry[]>([])
   const [physicalFines, setPhysicalFines] = useState<PhysicalFine[]>([])
   const [printPayments, setPrintPayments] = useState<PrintPayment[]>([])
@@ -67,11 +115,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [qrImages, setQrImages] = useState<Record<string, string>>({})
   const [copyForm, setCopyForm] = useState({ bookId: '', quantity: '1', prefix: '', location: '' })
   const [newPhysicalBook, setNewPhysicalBook] = useState({
-    title: '', author: '', category: '', isbn: '', description: '', quantity: '1', prefix: '', location: '', coverImageUrl: '',
+    title: '', author: '', category: '', genre: '', isbn: '', description: '', quantity: '1', prefix: '', location: '', coverImageUrl: '',
   })
   const [coverFile, setCoverFile] = useState<File | null>(null)
   const [optionForm, setOptionForm] = useState({ bookId: '', fees: Object.fromEntries(PHYSICAL_LOAN_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
   const [holidayForm, setHolidayForm] = useState({ date: '', name: '' })
+  const [policySettings, setPolicySettings] = useState<LibraryPolicySettings | null>(null)
+  const [policyDraft, setPolicyDraft] = useState({ fineGraceDays: '2', lateFeePerDay: '5', lateFeeCap: '500', lostAfterDays: '30', facultyLessonRewardPoints: '25', policyNotice: '' })
   const [returnConditions, setReturnConditions] = useState<Record<number, 'available' | 'damaged' | 'lost'>>({})
   const [selectedLostCaseId, setSelectedLostCaseId] = useState<number | null>(null)
   const [lostResolution, setLostResolution] = useState<Record<number, 'available' | 'damaged' | 'withdrawn'>>({})
@@ -87,16 +137,21 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [fineWaiver, setFineWaiver] = useState<{ id: number; reason: string } | null>(null)
+  const [fineWaiver, setFineWaiver] = useState<{ id: number; reasonCategory: string; justification: string } | null>(null)
   const [finePaymentConfirmation, setFinePaymentConfirmation] = useState<PhysicalFine | null>(null)
   const [fineRefundConfirmation, setFineRefundConfirmation] = useState<{ fine: PhysicalFine; reason: string } | null>(null)
   const [fineSearch, setFineSearch] = useState('')
   const [fineStatusFilter, setFineStatusFilter] = useState<'all' | 'needs_action' | 'pending' | 'pending_verification' | 'unpaid' | 'paid' | 'waived' | 'refund_due' | 'refunded'>('all')
   const [financeSort, setFinanceSort] = useState<{ key: 'date' | 'amount'; direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' })
   const [financeReceipt, setFinanceReceipt] = useState<FinanceReceipt | null>(null)
+  const [physicalRenewals, setPhysicalRenewals] = useState<PhysicalRenewal[]>([])
+  const [renewalDraft, setRenewalDraft] = useState<RenewalDraft | null>(null)
   const [lostFineDrafts, setLostFineDrafts] = useState<Record<number, { amount: string; reason: string }>>({})
   const [lostFineLoanId, setLostFineLoanId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [policySettingsError, setPolicySettingsError] = useState('')
+  const [reloadToken, setReloadToken] = useState(0)
   const [openPanel, setOpenPanel] = useState<CirculationPanel | null>(null)
   const [policyModalOpen, setPolicyModalOpen] = useState(false)
   const [newPhysicalBookOpen, setNewPhysicalBookOpen] = useState(false)
@@ -110,10 +165,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [requestSearch, setRequestSearch] = useState('')
   const [requestStatus, setRequestStatus] = useState<RequestQueueFilter>('all')
   const [requestPage, setRequestPage] = useState(1)
+  const [checkedOutSearch, setCheckedOutSearch] = useState('')
+  const [returnActionRequestId, setReturnActionRequestId] = useState<number | null>(null)
   const [copyDetailsBookId, setCopyDetailsBookId] = useState<number | null>(null)
+  const [selectedCopyId, setSelectedCopyId] = useState<number | null>(null)
   const [manageBook, setManageBook] = useState<Book | null>(null)
   const [editingBook, setEditingBook] = useState<Book | null>(null)
-  const [editBookForm, setEditBookForm] = useState({ title: '', author: '', category: '', isbn: '', description: '' })
+  const [editBookForm, setEditBookForm] = useState({ title: '', author: '', category: '', genre: '', isbn: '', description: '' })
   const [locationDrafts, setLocationDrafts] = useState<Record<number, { section: string; shelf: string; row: string; position: string }>>({})
   const [pendingAction, setPendingAction] = useState<{ type: 'checkout' | 'close' | 'reject'; id: number } | { type: 'archiveBook' | 'deleteBook'; id: number; title: string; archived: boolean } | { type: 'archiveMany' | 'deleteMany'; ids: number[] } | null>(null)
 
@@ -136,19 +194,34 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [processingRequestId, setProcessingRequestId] = useState<number | null>(null)
   const [checkoutLoan, setCheckoutLoan] = useState<Loan | null>(null)
   const [checkoutNotes, setCheckoutNotes] = useState('')
+  const [renewalProcessing, setRenewalProcessing] = useState(false)
   const lastLoadedAt = useRef<number | null>(null)
 
   const load = async () => {
     const supabase = getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError) {
+      setLoadError(`Unable to verify your library session: ${authError.message}`)
+      setLoading(false)
+      return
+    }
     if (!user) { router.replace('/login'); return }
     const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
-    if (profileError || !isStaffRole(profile?.role)) { router.replace('/unauthorized'); return }
+    if (profileError) {
+      setLoadError(`Unable to verify library staff access: ${profileError.message}`)
+      setLoading(false)
+      return
+    }
+    if (librarianWorkspaceOnly && isAdminRole(profile?.role)) {
+      router.replace('/dashboard/admin')
+      return
+    }
+    if (!isStaffRole(profile?.role)) { router.replace('/unauthorized'); return }
     setIsAdmin(isAdminRole(profile?.role))
     if (!catalogOnly) {
       const { error: fineRefreshError } = await supabase.rpc('calculate_overdue_fines')
       if (fineRefreshError) {
-        setError(`Unable to refresh overdue fines: ${fineRefreshError.message}`)
+        setLoadError(`Unable to refresh overdue fines: ${fineRefreshError.message}`)
         setLoading(false)
         return
       }
@@ -164,20 +237,26 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         error: null,
       }
     })()
-    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult] = await Promise.all([
-      supabase.from('books').select('id,title,author,category,isbn,description,catalog_type,cover_image_url,is_archived').order('title'),
+    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, renewalResult, policyResult] = await Promise.all([
+      supabase.from('books').select('id,title,author,category,discipline,genre,isbn,description,catalog_type,cover_image_url,is_archived').order('title'),
       copyResultPromise,
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').order('book_id').order('duration_days'),
-      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,payment_proof_path,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at,incident_type,incident_status,incident_note,incident_assessed_amount,incident_assessed_at,incident_resolved_at,incident_resolved_by').order('requested_at', { ascending: false }),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at,incident_type,incident_status,incident_note,incident_assessed_amount,incident_assessed_at,incident_resolved_at,incident_resolved_by').order('requested_at', { ascending: false }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_loan_history').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,status,checked_out_at,due_date,returned_at,return_condition,receipt_number').order('checked_out_at', { ascending: false }),
-      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('profiles').select('id,email,full_name,role').in('role', ['student', 'faculty']),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('profiles').select('id,email,full_name,role,institutional_id,student_photo_path').in('role', ['student', 'faculty']),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_waitlist').select('student_id,book_id,created_at').order('created_at', { ascending: true }),
-      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('fines').select('id,physical_book_request_id,student_id,amount,status,fine_type,created_at,paid_at,refund_due_at,refunded_at,refund_reason,fine_reason,waiver_reason,receipt_number').not('physical_book_request_id', 'is', null).order('created_at', { ascending: false }),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('fines').select('id,physical_book_request_id,student_id,amount,status,fine_type,created_at,paid_at,waived_at,refund_due_at,refunded_at,refund_reason,fine_reason,waiver_reason,receipt_number').not('physical_book_request_id', 'is', null).order('created_at', { ascending: false }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('library_holidays').select('holiday_date,name').order('holiday_date', { ascending: true }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('library_print_payments').select('id,student_id,amount,description,receipt_number,created_at').order('created_at', { ascending: false }),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_renewals').select('id,request_id,student_id,copy_id,duration_days,previous_due_date,new_due_date,fee_amount,amount_received,receipt_number,created_at').order('created_at', { ascending: false }),
+      supabase.from('library_policy_settings').select('id,fine_grace_days,late_fee_per_day,late_fee_cap,lost_after_days,faculty_lesson_reward_points,policy_notice,updated_at').eq('id', 1).single(),
     ])
-    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult].find((result) => result.error)
-    if (failed?.error) setError(`Unable to load physical circulation: ${failed.error.message}`)
+    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, renewalResult].find((result) => result.error)
+    if (failed?.error) {
+      setLoadError(`Unable to load physical circulation: ${failed.error.message}`)
+      setLoading(false)
+      return
+    }
     setBooks((bookResult.data ?? []) as Book[])
     setCopies((copyResult.data ?? []) as Copy[])
     setOptions((optionResult.data ?? []) as Option[])
@@ -188,14 +267,81 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setPhysicalFines((fineResult.data ?? []) as PhysicalFine[])
     setHolidays((holidayResult.data ?? []) as LibraryHoliday[])
     setPrintPayments((printPaymentResult.data ?? []) as PrintPayment[])
+    setPhysicalRenewals((renewalResult.data ?? []) as PhysicalRenewal[])
+    if (policyResult.error || !policyResult.data) {
+      setPolicySettings(null)
+      setPolicySettingsError(`Enforceable policy settings are unavailable. Apply the policy migration before editing them. ${policyResult.error?.message ?? ''}`.trim())
+    } else {
+      const savedPolicy = policyResult.data as LibraryPolicySettings
+      setPolicySettings(savedPolicy)
+      setPolicySettingsError('')
+      setPolicyDraft({
+        fineGraceDays: String(savedPolicy.fine_grace_days),
+        lateFeePerDay: String(savedPolicy.late_fee_per_day),
+        lateFeeCap: String(savedPolicy.late_fee_cap),
+        lostAfterDays: String(savedPolicy.lost_after_days),
+        facultyLessonRewardPoints: String(savedPolicy.faculty_lesson_reward_points),
+        policyNotice: savedPolicy.policy_notice,
+      })
+    }
     lastLoadedAt.current = Date.now()
+    setLoadError('')
     setLoading(false)
   }
 
   useEffect(() => {
     if (!active) return
-    if (lastLoadedAt.current === null || Date.now() - lastLoadedAt.current >= 60_000) void load()
-  }, [active, router])
+    if (lastLoadedAt.current === null || Date.now() - lastLoadedAt.current >= 60_000) {
+      void load().catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : 'Unexpected error'
+        console.error(`[SmartLib] Physical circulation load failed: ${message}`)
+        setLoadError(`Unable to load physical circulation: ${message}`)
+        setLoading(false)
+      })
+    }
+  }, [active, reloadToken, router])
+
+  useEffect(() => {
+    if (!active || profiles.length === 0) return
+    const url = new URL(window.location.href)
+    const requestedMemberId = url.searchParams.get('topup')
+    if (!requestedMemberId) return
+    const member = profiles.find((candidate) => candidate.id === requestedMemberId)
+    if (!member || !['student', 'faculty'].includes(member.role)) {
+      setError('That member could not be opened for a points top-up.')
+    } else {
+      setTopUpMember(member)
+    }
+    url.searchParams.delete('topup')
+    window.history.replaceState(window.history.state, '', url.toString())
+  }, [active, profiles])
+
+  const retryLoad = () => {
+    lastLoadedAt.current = null
+    setLoadError('')
+    setError('')
+    setLoading(true)
+    setReloadToken((token) => token + 1)
+  }
+
+  useEffect(() => {
+    const focusSearch = () => {
+      if (librarianWorkspaceOnly && !isAdmin) setMemberDeskOpen(true)
+      window.setTimeout(() => deskSearchRef.current?.focus(), 0)
+    }
+    window.addEventListener('dashboard:focus-student-id', focusSearch)
+    if (new URLSearchParams(window.location.search).has('focusStudentId')) {
+      focusSearch()
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+    return () => window.removeEventListener('dashboard:focus-student-id', focusSearch)
+  }, [isAdmin, librarianWorkspaceOnly])
+
+  useEffect(() => {
+    if (!memberDeskOpen || !librarianWorkspaceOnly || isAdmin) return
+    const frame = window.requestAnimationFrame(() => deskSearchRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [memberDeskOpen, librarianWorkspaceOnly, isAdmin])
 
   useEffect(() => {
     if (!active) return
@@ -204,7 +350,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     let channel: ReturnType<typeof supabase.channel> | null = null
     const refreshRequests = async () => {
       const { data, error: refreshError } = await supabase.from('physical_book_requests')
-        .select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,payment_proof_path,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at')
+        .select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at,incident_type,incident_status,incident_note,incident_assessed_amount,incident_assessed_at,incident_resolved_at,incident_resolved_by')
         .order('requested_at', { ascending: false })
       if (refreshError) setError(`Unable to refresh physical requests: ${refreshError.message}`)
       else setLoans((data ?? []) as Loan[])
@@ -299,6 +445,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
   }, [active, initialPanel, requestedPanel?.token, requestedPanel?.caseId, requestedPanel?.requestId])
 
+  useEffect(() => {
+    if (finesOnly) return
+    const requested = new URLSearchParams(window.location.search).get('panel')
+    if (requested === 'requests' || requested === 'checkedOut' || requested === 'lost') {
+      setOpenPanel(requested)
+    }
+  }, [finesOnly])
+
   const submitCopyForm = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy(true); setError(''); setMessage('')
@@ -349,6 +503,47 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       }
       setBusy(false)
     }
+
+  const saveLibraryPolicy = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const fineGraceDays = Number(policyDraft.fineGraceDays)
+    const lateFeePerDay = Number(policyDraft.lateFeePerDay)
+    const lateFeeCap = Number(policyDraft.lateFeeCap)
+    const lostAfterDays = Number(policyDraft.lostAfterDays)
+    const facultyLessonRewardPoints = Number(policyDraft.facultyLessonRewardPoints)
+    if (![fineGraceDays, lateFeePerDay, lateFeeCap, lostAfterDays, facultyLessonRewardPoints].every(Number.isFinite)) {
+      setError('Enter valid numbers for every policy setting.')
+      return
+    }
+
+    setBusy(true); setError(''); setMessage('')
+    const { data, error: saveError } = await getSupabase().rpc('admin_update_library_policy', {
+      p_fine_grace_days: fineGraceDays,
+      p_late_fee_per_day: lateFeePerDay,
+      p_late_fee_cap: lateFeeCap,
+      p_lost_after_days: lostAfterDays,
+      p_faculty_lesson_reward_points: facultyLessonRewardPoints,
+      p_policy_notice: policyDraft.policyNotice,
+    })
+    if (saveError) {
+      setError(`Unable to save library policy: ${saveError.message}`)
+    } else if (!data) {
+      setError('The policy update returned no saved settings. Refresh and verify the database before continuing.')
+    } else {
+      const saved = data as LibraryPolicySettings
+      setPolicySettings(saved)
+      setPolicyDraft({
+        fineGraceDays: String(saved.fine_grace_days),
+        lateFeePerDay: String(saved.late_fee_per_day),
+        lateFeeCap: String(saved.late_fee_cap),
+        lostAfterDays: String(saved.lost_after_days),
+        facultyLessonRewardPoints: String(saved.faculty_lesson_reward_points),
+        policyNotice: saved.policy_notice,
+      })
+      setMessage('Policy saved. Fine and lost-item rules apply to new physical requests; existing loans keep their saved policy.')
+    }
+    setBusy(false)
+  }
 
   const recordFinePayment = async () => {
       if (!finePaymentConfirmation) return
@@ -404,11 +599,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }
 
   const waivePhysicalFine = async () => {
-    if (!fineWaiver || !fineWaiver.reason.trim()) return
+    if (!fineWaiver || !fineWaiver.reasonCategory || !fineWaiver.justification.trim()) return
     setBusy(true); setError(''); setMessage('')
     const { error: waiverError } = await getSupabase().rpc('admin_waive_physical_fine', {
       p_fine_id: fineWaiver.id,
-      p_reason: fineWaiver.reason.trim(),
+      p_reason_category: fineWaiver.reasonCategory,
+      p_justification: fineWaiver.justification.trim(),
     })
     if (waiverError) setError(`Unable to waive physical fine: ${waiverError.message}`)
     else {
@@ -490,6 +686,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       setError('Only an administrator can add a new title to the physical catalog.')
       return
     }
+    if (!newPhysicalBook.category.trim() && !newPhysicalBook.genre.trim()) {
+      setError('Enter a discipline or genre for the physical title.')
+      return
+    }
     const formElement = event.currentTarget
     setBusy(true); setError(''); setMessage('')
     const supabase = getSupabase()
@@ -517,7 +717,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const { error: saveError } = await supabase.rpc('admin_create_physical_book', {
       p_title: newPhysicalBook.title.trim(),
       p_author: newPhysicalBook.author.trim(),
-      p_category: newPhysicalBook.category.trim(),
+      p_category: newPhysicalBook.category.trim() || newPhysicalBook.genre.trim(),
+      p_discipline: newPhysicalBook.category.trim() || null,
+      p_genre: newPhysicalBook.genre.trim() || null,
       p_isbn: newPhysicalBook.isbn.trim() || null,
       p_description: newPhysicalBook.description.trim() || null,
       p_cover_image_url: coverUrl,
@@ -532,7 +734,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         else setError(saveError.message)
       } else setError(saveError.message)
     } else {
-      setNewPhysicalBook({ title: '', author: '', category: '', isbn: '', description: '', quantity: '1', prefix: '', location: '', coverImageUrl: '' })
+      setNewPhysicalBook({ title: '', author: '', category: '', genre: '', isbn: '', description: '', quantity: '1', prefix: '', location: '', coverImageUrl: '' })
       setCoverFile(null)
       formElement.reset()
       await load()
@@ -566,10 +768,17 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   }
 
   const executeCheckout = async (loanId: number, paidAmount = Number(loans.find((loan) => loan.id === loanId)?.fee_amount ?? 0), notes = '') => {
+    const checkoutMemberId = loans.find((loan) => loan.id === loanId)?.student_id ?? ''
+    if (!deskIdentityMatches(checkoutMemberId)) {
+      setError('Search for the borrower and confirm their physical institutional ID before checkout.')
+      return
+    }
     setProcessingRequestId(loanId)
     setBusy(true); setError(''); setMessage('')
     try {
-      const { error: actionError } = await getSupabase().rpc('admin_confirm_physical_checkout', { p_request_id: loanId, p_amount_paid: paidAmount, p_payment_notes: notes.trim() || null })
+      const { error: actionError } = await getSupabase().rpc('admin_confirm_physical_checkout', {
+        p_request_id: loanId, p_amount_paid: paidAmount, p_payment_notes: notes.trim() || null, p_id_card_presented: true,
+      })
       if (actionError) throw new Error(actionError.message)
       await load()
       setMessage('Payment confirmed and physical checkout recorded. Digital receipt issued to the borrower.')
@@ -581,7 +790,158 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
   }
 
+  const openRenewal = (loan: Loan) => {
+    if (loan.status !== 'checked_out') {
+      setError('Only an active checked-out loan can be renewed.')
+      return
+    }
+    if (!deskIdentityMatches(loan.student_id)) {
+      setError('Search for the borrower and confirm their physical institutional ID before renewal.')
+      return
+    }
+    if (selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0) {
+      setError('Resolve overdue or lost physical loans and clear unpaid fines before renewing.')
+      return
+    }
+    const availableOptions = options
+      .filter((option) => option.book_id === loan.book_id && option.is_active)
+      .sort((a, b) => a.duration_days - b.duration_days)
+    if (!availableOptions.length) {
+      setError('No active renewal periods and fees are configured for this title.')
+      return
+    }
+    const option = availableOptions[0]
+    setRenewalDraft({
+      loanId: loan.id,
+      durationDays: option.duration_days,
+      amountPaid: Number(option.fee_amount).toFixed(2),
+      notes: '',
+    })
+    setError('')
+  }
+
+  const executeRenewal = async () => {
+    if (!renewalDraft) return
+    const loan = loans.find((item) => item.id === renewalDraft.loanId)
+    const option = options.find((item) => item.book_id === loan?.book_id
+      && item.duration_days === renewalDraft.durationDays && item.is_active)
+    const amountPaid = Number(renewalDraft.amountPaid)
+    if (!loan || loan.status !== 'checked_out' || !option) {
+      setError('Choose an active loan and a configured renewal period.')
+      return
+    }
+    if (!deskIdentityMatches(loan.student_id)) {
+      setError('Search for the borrower and confirm their physical institutional ID before renewal.')
+      return
+    }
+    if (selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0) {
+      setError('Resolve overdue or lost physical loans and clear unpaid fines before renewing.')
+      return
+    }
+    if (!Number.isFinite(amountPaid) || amountPaid < 0 || Math.round(amountPaid * 100) !== Math.round(Number(option.fee_amount) * 100)) {
+      setError('Amount received must match the configured fee for the selected renewal period.')
+      return
+    }
+
+    setRenewalProcessing(true)
+    setProcessingRequestId(loan.id)
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const { data, error: actionError } = await getSupabase().rpc('admin_renew_physical_loan', {
+        p_request_id: loan.id,
+        p_duration_days: option.duration_days,
+        p_amount_paid: amountPaid,
+        p_payment_notes: renewalDraft.notes.trim() || null,
+        p_id_card_presented: true,
+      })
+      if (actionError) throw new Error(actionError.message)
+      const savedRenewal = data as PhysicalRenewal
+      await load()
+      setRenewalDraft(null)
+      setMessage(`Loan renewed for ${savedRenewal.duration_days} days. PHP ${Number(savedRenewal.amount_received).toFixed(2)} received; new due date ${new Date(savedRenewal.new_due_date).toLocaleDateString()}. Receipt ${savedRenewal.receipt_number}.`)
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to renew the physical loan.')
+    } finally {
+      setRenewalProcessing(false)
+      setProcessingRequestId(null)
+      setBusy(false)
+    }
+  }
+
+  const issueDeskCopy = async () => {
+    if (!selectedDeskMember || !deskIdCardPresented) {
+      setError('Look up the member and confirm their physical institutional ID before issuing a loan.')
+      return
+    }
+    if (selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0 || selectedDeskMemberLoans.length >= 3) {
+      setError('Resolve the member’s overdue items, unpaid fines, or borrowing limit before issuing another book.')
+      return
+    }
+    const copy = copies.find((item) => item.copy_code.toLocaleLowerCase() === deskCopyQuery.trim().toLocaleLowerCase())
+    if (!copy) {
+      setError('Enter an accession tag and select a matching physical copy.')
+      return
+    }
+    if (copy.status !== 'available') {
+      setError(`${copy.copy_code} is ${copy.status}; choose an available copy instead.`)
+      return
+    }
+    const durationDays = Number(deskIssueDurationDays)
+    const option = options.find((item) => item.book_id === copy.book_id && item.duration_days === durationDays && item.is_active)
+    if (!option) {
+      setError('Choose an active loan period configured for this title.')
+      return
+    }
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const { data, error: issueError } = await getSupabase().rpc('admin_issue_physical_copy', {
+        p_student_id: selectedDeskMember.id,
+        p_copy_code: copy.copy_code,
+        p_duration_days: durationDays,
+        p_amount_paid: Number(option.fee_amount),
+        p_payment_notes: null,
+        p_id_card_presented: true,
+      })
+      if (issueError) throw new Error(issueError.message)
+      await load()
+      setDeskCopyQuery('')
+      setDeskSelectedReturnIds([])
+      const issuedLoan = data as Loan
+      setMessage(`${copy.copy_code} issued to ${selectedDeskMember.full_name || selectedDeskMember.email}. Due ${new Date(issuedLoan.due_date ?? '').toLocaleDateString()}; receipt ${issuedLoan.receipt_number ?? 'recorded'}.`)
+    } catch (issueError) {
+      setError(issueError instanceof Error ? issueError.message : 'Unable to issue this physical copy.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const returnDeskLoans = async () => {
+    if (!selectedDeskMember || !deskIdentityMatches(selectedDeskMember.id) || !deskSelectedReturnIds.length) return
+    setDeskReturnsProcessing(true); setError(''); setMessage('')
+    try {
+      const { data, error: returnError } = await getSupabase().rpc('admin_return_physical_loans', {
+        p_student_id: selectedDeskMember.id,
+        p_request_ids: deskSelectedReturnIds,
+        p_id_card_presented: true,
+      })
+      if (returnError) throw new Error(returnError.message)
+      const returnedCount = Number(data)
+      await load()
+      setDeskSelectedReturnIds([])
+      setMessage(`${returnedCount} physical ${returnedCount === 1 ? 'copy' : 'copies'} returned and marked available.`)
+    } catch (returnError) {
+      setError(returnError instanceof Error ? returnError.message : 'Unable to record the selected returns.')
+    } finally {
+      setDeskReturnsProcessing(false)
+    }
+  }
+
   const executeCloseLoan = async (loanId: number) => {
+    const returnMemberId = loans.find((loan) => loan.id === loanId)?.student_id ?? ''
+    if (!deskIdentityMatches(returnMemberId)) {
+      setError('Search for the borrower and confirm their physical institutional ID before completing the return.')
+      return
+    }
     setBusy(true); setError(''); setMessage('')
     const condition = returnConditions[loanId] ?? 'available'
     if (condition === 'lost' || condition === 'damaged') {
@@ -602,12 +962,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         p_copy_condition: condition,
         p_assessed_amount: amount,
         p_assessment_reason: draft.reason.trim(),
+        p_id_card_presented: true,
       })
       if (actionError) setError(actionError.message)
       else {
         setLostFineLoanId(null)
         setLostFineDrafts((current) => ({ ...current, [loanId]: { amount: '', reason: '' } }))
         await load()
+        setDeskSelectedReturnIds((current) => current.filter((id) => id !== loanId))
         const saved = data as Loan
         setMessage(saved.status === 'lost' && condition !== 'lost'
           ? 'This loan reached the 30-day overdue threshold and was classified as lost. Review the open case to assess it.'
@@ -620,10 +982,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
     const { data, error: actionError } = await getSupabase().rpc('admin_inspect_physical_return', {
       p_request_id: loanId, p_copy_condition: condition, p_assessed_amount: 0, p_assessment_reason: null,
+      p_id_card_presented: true,
     })
     if (actionError) setError(actionError.message)
     else {
       await load()
+      setDeskSelectedReturnIds((current) => current.filter((id) => id !== loanId))
       const saved = data as Loan
       setMessage(saved.status === 'lost'
         ? 'This loan reached the 30-day overdue threshold and was classified as lost. Review the open case to assess it.'
@@ -721,6 +1085,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     if (!loan) return
     setCheckoutLoan(loan)
     setCheckoutNotes('')
+    const member = profiles.find((profile) => profile.id === loan.student_id)
+    setDeskMemberId(member?.id ?? '')
+    setDeskMemberQuery(member?.institutional_id || member?.full_name || member?.email || '')
+    setDeskIdCardPresented(false)
   }
   const closeLoan = (loanId: number) => {
     const condition = returnConditions[loanId] ?? 'available'
@@ -731,14 +1099,33 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
     setPendingAction({ type: 'close', id: loanId })
   }
+  const selectDeskMember = (member: Profile) => {
+    setDeskMemberId(member.id)
+    setDeskMemberQuery(member.institutional_id || member.full_name || member.email)
+    setDeskSuggestionIndex(0)
+    setDeskIdCardPresented(false)
+    setDeskCopyQuery('')
+    setDeskSelectedReturnIds([])
+  }
+  const uploadDeskMemberPhoto = async (file: File) => {
+    if (!selectedDeskMember) return
+    const formData = new FormData()
+    formData.set('photo', file)
+    setDeskPhotoUploading(true)
+    setError('')
+    const response = await fetch(`/api/admin/students/${selectedDeskMember.id}/photo`, { method: 'POST', body: formData })
+    const result = await response.json().catch(() => null)
+    if (!response.ok) setError(result?.error || 'Unable to save the member photo.')
+    else {
+      setProfiles((current) => current.map((member) => member.id === selectedDeskMember.id
+        ? { ...member, student_photo_path: `${selectedDeskMember.id}/headshot` }
+        : member))
+      setMessage('Member photo uploaded to private library storage.')
+    }
+    setDeskPhotoUploading(false)
+  }
   const rejectRequest = (loanId: number) => setPendingAction({ type: 'reject', id: loanId })
   const resolveLostLoan = (loanId: number) => setSelectedLostCaseId(loanId)
-
-  const openProof = async (path: string) => {
-    const { data, error: proofError } = await getSupabase().storage.from('physical-payment-proofs').createSignedUrl(path, 60)
-    if (proofError) setError(`Unable to open payment proof: ${proofError.message}`)
-    else if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
-  }
 
   const saveBookDetails = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -746,7 +1133,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setBusy(true); setError(''); setMessage('')
     const { error: saveError } = await getSupabase().rpc('admin_update_physical_book', {
       p_book_id: editingBook.id, p_title: editBookForm.title, p_author: editBookForm.author,
-      p_category: editBookForm.category, p_isbn: editBookForm.isbn || null, p_description: editBookForm.description || null,
+      p_category: editBookForm.category || editBookForm.genre, p_discipline: editBookForm.category || null,
+      p_genre: editBookForm.genre || null, p_isbn: editBookForm.isbn || null, p_description: editBookForm.description || null,
     })
     if (saveError) setError(saveError.message)
     else { setEditingBook(null); await load(); setMessage('Physical book details updated.') }
@@ -798,12 +1186,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const filteredWaitingLoans = useMemo(() => {
     const query = requestSearch.trim().toLowerCase()
     return queueLoans.filter((loan) => {
-      const awaitingPayment = loan.payment_status !== 'paid'
-      const ready = loan.payment_status === 'paid'
       const matchesStatus = requestStatus === 'all'
-        || requestStatus === loan.status
-        || (requestStatus === 'awaiting_payment' && awaitingPayment)
-        || (requestStatus === 'ready' && ready)
+        || (requestStatus === 'cash_requests' && loan.payment_method === 'cash')
+        || (requestStatus === 'legacy_online' && loan.payment_method !== 'cash')
       const searchable = [bookName(loan.book_id), memberName(loan.student_id), loan.payment_method, loan.payment_status, loan.transaction_reference, String(loan.id)]
         .filter(Boolean).join(' ').toLowerCase()
       return matchesStatus && (!query || searchable.includes(query))
@@ -820,6 +1205,15 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setRequestPage(1)
   }, [requestSearch, requestStatus])
   const activeLoans = loans.filter((loan) => loan.status === 'checked_out' || loan.status === 'return_pending')
+  const visibleActiveLoans = useMemo(() => {
+    const query = checkedOutSearch.trim().toLocaleLowerCase()
+    if (!query) return activeLoans
+    return activeLoans.filter((loan) => {
+      const member = profiles.find((profile) => profile.id === loan.student_id)
+      return [String(loan.id), member?.institutional_id, member?.full_name, member?.email, bookName(loan.book_id)]
+        .filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+    })
+  }, [activeLoans, checkedOutSearch, profiles, books])
   const lostLoans = loans.filter((loan) => loan.status === 'lost')
   const incidentCases = loans.filter((loan) => loan.incident_type !== null)
   const openIncidentCases = incidentCases.filter((loan) => loan.incident_status === 'open' || (loan.incident_status === null && (loan.status === 'lost' || loan.incident_type === 'damage')))
@@ -885,6 +1279,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const selectedActiveCatalogIds = selectedCatalogIds.filter((id) => books.some((book) => book.id === id && !book.is_archived))
   const selectedArchivedCatalogIds = selectedCatalogIds.filter((id) => books.some((book) => book.id === id && book.is_archived))
   const detailCopies = copies.filter((copy) => copy.book_id === copyDetailsBookId)
+  const selectedCopy = selectedCopyId === null ? null : copies.find((copy) => copy.id === selectedCopyId) ?? null
+  const selectedCopyHistory = selectedCopy
+    ? loanHistory.filter((loan) => loan.copy_id === selectedCopy.id).sort((a, b) => Date.parse(b.checked_out_at) - Date.parse(a.checked_out_at))
+    : []
+  const selectedCopyCurrentLoan = selectedCopy
+    ? loans.find((loan) => loan.copy_id === selectedCopy.id && (loan.status === 'checked_out' || loan.status === 'return_pending')) ?? null
+    : null
   const historyBookRows = useMemo(() => {
     const query = historySearch.trim().toLowerCase()
     const groupedBooks = new Map<string, Book[]>()
@@ -920,6 +1321,73 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const groupedBookIds = books.filter((book) => titleGroupKey(book) === titleGroupKey(selectedBook)).map((book) => book.id)
     return loanHistory.filter((loan) => groupedBookIds.includes(loan.book_id))
   })()
+  const selectedDeskMember = profiles.find((member) => member.id === deskMemberId) ?? null
+  const deskIdentityMatches = (memberId: string) => Boolean(deskIdCardPresented && selectedDeskMember?.id === memberId)
+  const deskCopySuggestions = useMemo(() => {
+    const query = deskCopyQuery.trim().toLocaleLowerCase()
+    if (!query) return []
+    return copies
+      .filter((copy) => copy.copy_code.toLocaleLowerCase().includes(query))
+      .sort((a, b) => Number(b.status === 'available') - Number(a.status === 'available') || a.copy_code.localeCompare(b.copy_code))
+      .slice(0, 8)
+  }, [copies, deskCopyQuery])
+  const deskSelectedCopy = copies.find((copy) => copy.copy_code.toLocaleLowerCase() === deskCopyQuery.trim().toLocaleLowerCase()) ?? null
+  const deskSelectedCopyBook = deskSelectedCopy ? books.find((book) => book.id === deskSelectedCopy.book_id) ?? null : null
+  const deskSelectedCopyOptions = deskSelectedCopy
+    ? options.filter((option) => option.book_id === deskSelectedCopy.book_id && option.is_active).sort((a, b) => a.duration_days - b.duration_days)
+    : []
+  useEffect(() => {
+    if (!deskSelectedCopy) return
+    const activeOptions = options
+      .filter((option) => option.book_id === deskSelectedCopy.book_id && option.is_active)
+      .sort((a, b) => a.duration_days - b.duration_days)
+    if (activeOptions.length && !activeOptions.some((option) => option.duration_days === Number(deskIssueDurationDays))) {
+      setDeskIssueDurationDays(String(activeOptions[0].duration_days))
+    }
+  }, [deskSelectedCopy?.book_id, options, deskIssueDurationDays])
+  const deskMemberSuggestions = useMemo(() => {
+    const query = normalizeDeskSearch(deskMemberQuery)
+    if (!query) return []
+    return profiles
+      .map((member) => {
+        const id = normalizeDeskSearch(member.institutional_id ?? '')
+        const name = normalizeDeskSearch(member.full_name ?? '')
+        const email = normalizeDeskSearch(member.email)
+        const exactId = id === query
+        const idPrefix = id.startsWith(query)
+        const exactName = name === query
+        const directMatch = id.includes(query) || name.includes(query) || email.includes(query)
+        const fuzzyMatch = query.length >= 4 && isNameSubsequence(query, name)
+        return { member, score: exactId ? 0 : idPrefix ? 1 : exactName ? 2 : directMatch ? 3 : 4, matches: directMatch || fuzzyMatch }
+      })
+      .filter((entry) => entry.matches)
+      .sort((a, b) => a.score - b.score || (a.member.full_name ?? a.member.email).localeCompare(b.member.full_name ?? b.member.email))
+      .slice(0, 8)
+      .map((entry) => entry.member)
+  }, [deskMemberQuery, profiles])
+  const selectedDeskMemberLoans = selectedDeskMember
+    ? loans.filter((loan) => loan.student_id === selectedDeskMember.id && ['checked_out', 'return_pending'].includes(loan.status))
+    : []
+  const selectedDeskMemberUnpaid = selectedDeskMember
+    ? physicalFines.filter((fine) => fine.student_id === selectedDeskMember.id && fine.status === 'unpaid').reduce((total, fine) => total + Number(fine.amount), 0)
+    : 0
+  const selectedDeskMemberUnpaidFines = selectedDeskMember
+    ? physicalFines.filter((fine) => fine.student_id === selectedDeskMember.id && fine.status === 'unpaid')
+    : []
+  const selectedDeskMemberOverdue = Boolean(selectedDeskMember && loans.some((loan) =>
+    loan.student_id === selectedDeskMember.id
+      && (loan.status === 'lost' || (['checked_out', 'return_pending'].includes(loan.status) && Boolean(loan.due_date && new Date(loan.due_date).getTime() < Date.now())))))
+  const deskEligibility = !selectedDeskMember ? null
+    : selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0 ? 'BLOCKED'
+      : selectedDeskMemberLoans.length >= 3 ? 'MAX LOANS REACHED'
+        : 'ELIGIBLE'
+  const renewalLoan = renewalDraft ? loans.find((loan) => loan.id === renewalDraft.loanId) ?? null : null
+  const renewalOptions = renewalLoan
+    ? options.filter((option) => option.book_id === renewalLoan.book_id && option.is_active).sort((a, b) => a.duration_days - b.duration_days)
+    : []
+  const selectedRenewalOption = renewalDraft
+    ? renewalOptions.find((option) => option.duration_days === renewalDraft.durationDays) ?? null
+    : null
   const financeRows = useMemo(() => {
     const rows = [
       ...queueLoans.map((loan) => ({
@@ -945,6 +1413,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         amount: Number(loan.fee_amount), status: loan.payment_status, receiptNumber: loan.receipt_number,
         source: { kind: 'checkout' as const, loan },
       })),
+      ...physicalRenewals.map((renewal) => ({
+        id: `renewal-${renewal.id}`, date: renewal.created_at,
+        member: profiles.find((item) => item.id === renewal.student_id)?.full_name || profiles.find((item) => item.id === renewal.student_id)?.email || 'Member',
+        description: `Physical loan renewal · ${books.find((book) => book.id === loans.find((loan) => loan.id === renewal.request_id)?.book_id)?.title ?? 'Physical book'} · ${copyCode(renewal.copy_id)} · ${renewal.duration_days} days`,
+        amount: Number(renewal.amount_received), status: 'paid', receiptNumber: renewal.receipt_number,
+        source: { kind: 'renewal' as const, renewal },
+      })),
       ...printPayments.map((payment) => ({
         id: `print-${payment.id}`, date: payment.created_at, member: profiles.find((item) => item.id === payment.student_id)?.full_name || profiles.find((item) => item.id === payment.student_id)?.email || 'Member',
         description: `Print service · ${payment.description}`, amount: Number(payment.amount), status: 'paid', receiptNumber: payment.receipt_number,
@@ -963,7 +1438,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           : a.amount - b.amount
         return financeSort.direction === 'asc' ? comparison : -comparison
       })
-  }, [queueLoans, physicalFines, loans, loanHistory, printPayments, profiles, books, fineSearch, fineStatusFilter, copies, financeSort])
+  }, [queueLoans, physicalFines, loans, loanHistory, physicalRenewals, printPayments, profiles, books, fineSearch, fineStatusFilter, copies, financeSort])
   const openOptionEditor = (bookId: number) => {
     const existing = options.filter((option) => option.book_id === bookId)
     setOptionForm({
@@ -972,40 +1447,348 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     })
     setOptionFormOpen(true)
   }
+  const focusDeskRequest = (requestId: number) => {
+    setRequestSearch(String(requestId))
+    setRequestStatus('all')
+    setRequestPage(1)
+    setOpenPanel('requests')
+  }
+  const focusDeskReturn = (requestId: number) => {
+    setCheckedOutSearch(String(requestId))
+    setReturnActionRequestId(requestId)
+    const member = profiles.find((profile) => profile.id === loans.find((loan) => loan.id === requestId)?.student_id)
+    setDeskMemberId(member?.id ?? '')
+    setDeskIdCardPresented(false)
+    setDeskMemberQuery(member?.institutional_id || member?.full_name || '')
+    setOpenPanel(null)
+    if (librarianWorkspaceOnly && !isAdmin) setMemberDeskOpen(true)
+    else window.setTimeout(() => {
+      document.getElementById('desk-member-verification')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      deskSearchRef.current?.focus()
+    }, 0)
+  }
+  const focusDeskIncident = (requestId: number) => {
+    setLostCaseView('open')
+    setLostSearch(String(requestId))
+    setSelectedLostCaseId(requestId)
+    setOpenPanel('lost')
+  }
+  const closeMemberDesk = () => {
+    setMemberDeskOpen(false)
+    setDeskMemberId('')
+    setDeskMemberQuery('')
+    setDeskIdCardPresented(false)
+    setDeskCopyQuery('')
+    setDeskSelectedReturnIds([])
+    setReturnActionRequestId(null)
+  }
+  const onMemberInvited = async (email: string, username: string) => {
+    setMessage(`Invitation sent to ${email}. Username: ${username}.`)
+    await load()
+  }
+  const handleLogout = async () => {
+    setSigningOut(true)
+    setError('')
+    try {
+      const { error: signOutError } = await getSupabase().auth.signOut()
+      if (signOutError) throw signOutError
+      router.replace('/login')
+    } catch (cause) {
+      setError(cause instanceof Error ? `Unable to sign out: ${cause.message}` : 'Unable to sign out. Please try again.')
+      setSigningOut(false)
+    }
+  }
+  const openLibrarianPanel = (nextPanel: 'requests' | 'checkedOut' | 'lost') => {
+    if (finesOnly) {
+      router.push(`/dashboard/admin/physical?panel=${nextPanel}`)
+      return
+    }
+    setOpenPanel(nextPanel)
+  }
+  const openInventory = () => {
+    if (finesOnly) {
+      router.push('/dashboard/admin/physical#physical-catalog')
+      return
+    }
+    document.getElementById('physical-catalog')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const librarianSidebarVisible = !isAdmin && (librarianWorkspaceOnly || finesOnly)
   if (loading && (overviewOnly || catalogOnly || policyOnly || finesOnly)) return null
   if (loading) return <AdminPhysicalSkeleton />
 
-  return <main className={`physical-staff-shell ${requestsOnly ? 'physical-requests-only contents' : overviewOnly ? 'contents' : catalogOnly || policyOnly || finesOnly ? 'min-h-full px-4 py-6 text-slate-900 dark:text-slate-100 sm:px-6' : 'min-h-screen bg-slate-50 px-4 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:px-8'}`}>
-    <div className="mx-auto max-w-6xl space-y-6">
+  return <main className={`physical-staff-shell ${librarianSidebarVisible ? 'physical-librarian-workspace' : ''} ${requestsOnly ? 'physical-requests-only contents' : overviewOnly ? 'contents' : catalogOnly || policyOnly || finesOnly ? `min-h-full px-4 py-6 text-slate-900 dark:text-slate-100 sm:px-6 ${librarianSidebarVisible ? 'librarian-workspace-page' : ''}` : 'min-h-screen bg-slate-50 px-4 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:px-8'}`}>
+    <div className={`mx-auto max-w-6xl ${librarianSidebarVisible ? 'librarian-dashboard-layout' : 'space-y-6'}`}>
+      {librarianSidebarVisible ? <aside className="librarian-sidebar">
+        <div className="librarian-sidebar-brand"><BrandLogo className="librarian-dashboard-brand" iconSize="md" subtitle="Library services" /><span>LIBRARIAN</span></div>
+        <nav className="librarian-desk-navigation" aria-label="Librarian desk navigation">
+          <button type="button" aria-current={!finesOnly ? 'page' : undefined} onClick={() => { setOpenPanel(null); router.push('/dashboard/admin/physical') }}>Desk</button>
+          <button type="button" onClick={() => openLibrarianPanel('requests')}>Requests <span>{queueLoans.length}</span></button>
+          <button type="button" onClick={() => openLibrarianPanel('checkedOut')}>Checked out <span>{activeLoans.length}</span></button>
+          <button type="button" onClick={() => openLibrarianPanel('lost')}>Lost items <span>{openIncidentCases.length}</span></button>
+          <button type="button" aria-current={finesOnly ? 'page' : undefined} onClick={() => router.push('/dashboard/admin/physical/finance')}>Daily records</button>
+          <button type="button" onClick={openInventory}>Inventory</button>
+          <button type="button" onClick={() => router.push('/profile')}>Profile</button>
+          <button type="button" className="librarian-desk-sign-out" disabled={signingOut} onClick={() => void handleLogout()}>
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
+        </nav>
+      </aside> : null}
       <div className={requestsOnly ? 'physical-requests-result' : undefined}>
         <ResultModal
-          open={Boolean(error || message)}
-          status={error ? 'error' : 'success'}
-          message={error || message}
-          onClose={() => { setError(''); setMessage('') }}
+          open={Boolean(error)}
+          status="error"
+          message={error}
+          onClose={() => setError('')}
         />
+        {message ? <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
+          <p>{message}</p>
+          <button type="button" aria-label="Dismiss success message" onClick={() => setMessage('')} className="shrink-0 rounded-lg px-2 py-1 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900">×</button>
+        </div> : null}
+        {loadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">
+          <p>{loadError}</p>
+          <button type="button" onClick={retryLoad} className="shrink-0 rounded-lg border border-rose-700 px-3 py-1.5 font-semibold hover:bg-rose-100 dark:border-rose-300 dark:hover:bg-rose-900">Retry</button>
+        </div> : null}
       </div>
 
       {!requestsOnly && !overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <>
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Library desk</p><h1 className="mt-1 text-2xl font-semibold">Circulation overview</h1><p className="mt-1 text-sm text-slate-500">Review requests, active loans, exceptions, and receipts from here.</p></div>
-          {isAdmin ? <button type="button" onClick={() => setNewPhysicalBookOpen(true)} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-600">Add physical book</button> : null}
-        </header>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Requests to review</p><strong className="mt-2 block text-2xl">{queueLoans.length}</strong></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Checked out</p><strong className="mt-2 block text-2xl">{activeLoans.length}</strong></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lost items</p><strong className="mt-2 block text-2xl">{lostLoans.length}</strong></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Unpaid fines</p><strong className="mt-2 block text-2xl">{physicalFines.filter((fine) => fine.status === 'unpaid').length}</strong></div>
-        </div>
+        {isAdmin ? <>
+          <header className="flex flex-wrap items-end justify-between gap-4">
+            <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Library operations</p><h1 className="mt-1 text-2xl font-semibold">Circulation overview</h1><p className="mt-1 text-sm text-slate-500">Review requests, active loans, exceptions, and receipts from here.</p></div>
+            <button type="button" onClick={() => setNewPhysicalBookOpen(true)} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-600">Add physical book</button>
+          </header>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Requests to review</p><strong className="mt-2 block text-2xl">{queueLoans.length}</strong></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Checked out</p><strong className="mt-2 block text-2xl">{activeLoans.length}</strong></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lost items</p><strong className="mt-2 block text-2xl">{lostLoans.length}</strong></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Unpaid fines</p><strong className="mt-2 block text-2xl">{physicalFines.filter((fine) => fine.status === 'unpaid').length}</strong></div>
+          </div>
+        </> : <>
+          <header className="librarian-dashboard-hero">
+            <div className="librarian-dashboard-heading">
+              <div>
+                <p className="librarian-dashboard-eyebrow">Staff workspace</p>
+                <h1>Librarian desk</h1>
+                <p>Verify members, check out and return books, and resolve circulation requests.</p>
+              </div>
+              <div className="librarian-dashboard-actions">
+                <button type="button" onClick={() => setMemberEnrollmentOpen(true)} className="librarian-dashboard-secondary-action">Create member account</button>
+                <button type="button" onClick={() => setMemberDeskOpen(true)} className="librarian-dashboard-primary-action">Find member / start checkout</button>
+              </div>
+            </div>
+          </header>
+        </>}
       </> : null}
 
-      {!overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <div className="physical-queue-nav flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/60" role="toolbar" aria-label="Physical circulation actions">
+      {!requestsOnly && !overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <>
+        {isAdmin ? <>
+          <LibrarianWorkQueue
+            loans={loans}
+            members={profiles}
+            bookName={bookName}
+            onOpenRequest={focusDeskRequest}
+            onOpenReturn={focusDeskReturn}
+            onReviewIncident={focusDeskIncident}
+          />
+          <LibrarianShiftCloseout
+            history={loanHistory}
+            fines={physicalFines}
+            renewals={physicalRenewals}
+            printPayments={printPayments}
+          />
+        </> : <div className="librarian-bento-grid">
+          <LibrarianWorkQueue
+            loans={loans}
+            members={profiles}
+            bookName={bookName}
+            onOpenRequest={focusDeskRequest}
+            onOpenReturn={focusDeskReturn}
+            onReviewIncident={focusDeskIncident}
+          />
+        </div>}
+      </> : null}
+
+      {!overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <MemberDeskSurface asModal={librarianWorkspaceOnly && !isAdmin} open={memberDeskOpen} onClose={closeMemberDesk}>
+        <section id="desk-member-verification" className={`${panel} space-y-4 scroll-mt-6 ${librarianWorkspaceOnly && !isAdmin ? 'librarian-member-desk-content' : ''}`} aria-labelledby="desk-member-verification-title">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="desk-member-verification-title" className="text-lg font-semibold">Find a student or faculty member</h2><p className="mt-1 text-sm text-slate-500">Enter their institutional ID number, or search by name. Open the profile and verify the physical ID card before recording circulation.</p></div>
+          <span className="rounded-full border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 dark:border-slate-700">Shortcut: / or Ctrl+K</span>
+        </div>
+        <div className="relative max-w-2xl">
+          <label htmlFor="physical-student-id-search" className="text-sm font-medium">Student / member ID or name</label>
+          <input
+            ref={deskSearchRef}
+            id="physical-student-id-search"
+            autoComplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={!deskMemberId && deskMemberSuggestions.length > 0}
+            aria-controls="desk-member-suggestions"
+            aria-activedescendant={deskMemberSuggestions[deskSuggestionIndex] ? `desk-member-option-${deskMemberSuggestions[deskSuggestionIndex].id}` : undefined}
+            value={deskMemberQuery}
+            onChange={(event) => {
+              const value = event.target.value
+              setDeskMemberQuery(/[a-z]/i.test(value) ? value : normalizeInstitutionalIdInput(value))
+              setDeskMemberId('')
+              setDeskIdCardPresented(false)
+              setDeskCopyQuery('')
+              setDeskSelectedReturnIds([])
+              setDeskSuggestionIndex(0)
+            }}
+            onKeyDown={(event) => {
+              if (!deskMemberSuggestions.length) return
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setDeskSuggestionIndex((index) => (index + 1) % deskMemberSuggestions.length)
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setDeskSuggestionIndex((index) => (index - 1 + deskMemberSuggestions.length) % deskMemberSuggestions.length)
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                selectDeskMember(deskMemberSuggestions[deskSuggestionIndex])
+              } else if (event.key === 'Escape') {
+                setDeskMemberQuery('')
+                setDeskMemberId('')
+              }
+            }}
+            placeholder="Enter a 9-digit institutional ID"
+            className={`${input} mt-1`}
+          />
+          {!deskMemberId && deskMemberSuggestions.length ? <ul id="desk-member-suggestions" role="listbox" className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+            {deskMemberSuggestions.map((member, index) => <li key={member.id}>
+              <button type="button" id={`desk-member-option-${member.id}`} role="option" aria-selected={index === deskSuggestionIndex} onMouseEnter={() => setDeskSuggestionIndex(index)} onClick={() => selectDeskMember(member)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left ${index === deskSuggestionIndex ? 'bg-sky-50 dark:bg-slate-800' : ''}`}>
+                <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-200 text-xs font-semibold dark:bg-slate-700">{member.student_photo_path ? <img src={`/api/admin/students/${member.id}/photo`} alt="" className="h-full w-full object-cover" /> : (member.full_name || member.email).slice(0, 1).toUpperCase()}</span>
+                <span className="min-w-0"><strong className="block truncate text-sm">{member.full_name || member.email}</strong><span className="block truncate text-xs text-slate-500">{member.institutional_id || 'No institutional ID'} · {member.role}</span></span>
+              </button>
+            </li>)}
+          </ul> : null}
+          {!deskMemberId && deskMemberQuery && deskMemberSuggestions.length === 0 ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">No member matched. Search by a different name or ID.</p> : null}
+        </div>
+        {selectedDeskMember ? <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/60 sm:grid-cols-[auto_1fr]">
+          <div className="flex flex-col items-center gap-2">
+            <div className="grid h-32 w-32 place-items-center overflow-hidden rounded-xl border border-slate-300 bg-white text-2xl font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+              {selectedDeskMember.student_photo_path
+                ? <img src={`/api/admin/students/${selectedDeskMember.id}/photo`} alt={`Headshot of ${selectedDeskMember.full_name || selectedDeskMember.email}`} className="h-full w-full object-cover" />
+                : (selectedDeskMember.full_name || selectedDeskMember.email).slice(0, 1).toUpperCase()}
+            </div>
+            {isAdmin ? <label className="cursor-pointer text-center text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300">{deskPhotoUploading ? 'Uploading…' : selectedDeskMember.student_photo_path ? 'Replace headshot' : 'Upload headshot'}
+              <input type="file" accept="image/jpeg,image/png,image/webp" disabled={deskPhotoUploading} className="sr-only" onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) void uploadDeskMemberPhoto(file)
+                event.target.value = ''
+              }} />
+            </label> : null}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold">{selectedDeskMember.full_name || selectedDeskMember.email}</h3>
+              {deskEligibility ? <span className={`rounded-full px-3 py-1 text-xs font-bold ${deskEligibility === 'ELIGIBLE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : deskEligibility === 'BLOCKED' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'}`}>{deskEligibility}</span> : null}
+              {selectedDeskMember.role === 'student' || selectedDeskMember.role === 'faculty'
+                ? <button type="button" onClick={() => setTopUpMember(selectedDeskMember)} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/30">Record cash top-up</button>
+                : null}
+            </div>
+            <dl className="mt-2 grid gap-x-5 gap-y-1 text-sm sm:grid-cols-2"><div><dt className="text-xs text-slate-500">Institutional ID</dt><dd className="font-medium">{selectedDeskMember.institutional_id || 'Not recorded'}</dd></div><div><dt className="text-xs text-slate-500">Email / role</dt><dd className="break-all font-medium">{selectedDeskMember.email} · {selectedDeskMember.role}</dd></div><div><dt className="text-xs text-slate-500">Active physical loans</dt><dd className="font-medium">{selectedDeskMemberLoans.length} / 3</dd></div><div><dt className="text-xs text-slate-500">Unpaid fines</dt><dd className="font-medium">PHP {selectedDeskMemberUnpaid.toFixed(2)}</dd></div></dl>
+            <label className="mt-4 flex items-start gap-2 text-sm font-medium"><input type="checkbox" checked={deskIdCardPresented} onChange={(event) => setDeskIdCardPresented(event.target.checked)} className="mt-0.5" /><span>I confirm the member presented their physical institutional ID card and I visually matched it to the photo.</span></label>
+          </div>
+          {!isAdmin ? <div className="mt-4 space-y-4 sm:col-span-2">
+            {selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0 || selectedDeskMemberLoans.length >= 3
+              ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200" role="status">
+                <strong>New loans are blocked.</strong>
+                <ul className="mt-1 list-inside list-disc">
+                  {selectedDeskMemberOverdue ? <li>Return overdue or resolve lost physical items.</li> : null}
+                  {selectedDeskMemberUnpaid > 0 ? <li>Collect or resolve PHP {selectedDeskMemberUnpaid.toFixed(2)} in unpaid physical fines.</li> : null}
+                  {selectedDeskMemberLoans.length >= 3 ? <li>The three-book active loan limit is reached.</li> : null}
+                </ul>
+              </div>
+              : <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">No overdue items or unpaid physical fines. {selectedDeskMemberLoans.length} of 3 active loans.</p>}
+
+            {selectedDeskMemberUnpaidFines.length ? <div>
+              <h4 className="text-sm font-semibold">Unpaid physical charges</h4>
+              <ul className="mt-2 space-y-2">
+                {selectedDeskMemberUnpaidFines.map((fine) => <li key={fine.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 px-3 py-2 text-sm dark:border-rose-900">
+                  <span>{fineTypeLabel(fine.fine_type)}{fine.fine_reason ? ` · ${fine.fine_reason}` : ''}</span>
+                  <strong>PHP {Number(fine.amount).toFixed(2)}</strong>
+                </li>)}
+              </ul>
+              <button type="button" onClick={() => onOpenFines ? onOpenFines() : router.push('/dashboard/admin/physical/finance')} className="mt-2 text-sm font-semibold text-sky-700 underline dark:text-sky-300">Open fines and payment records</button>
+            </div> : null}
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <h4 className="text-sm font-semibold">Issue a physical copy</h4>
+              <p className="mt-1 text-xs text-slate-500">Enter the accession tag printed on the book, such as JAVA-03. No scanner is needed.</p>
+              <div className="relative mt-3 max-w-xl">
+                <label htmlFor="desk-copy-accession" className="text-sm font-medium">Physical copy accession tag</label>
+                <input id="desk-copy-accession" value={deskCopyQuery} onChange={(event) => setDeskCopyQuery(event.target.value)} placeholder="Type a copy tag, e.g. JAVA-03" autoComplete="off" className={`${input} mt-1`} />
+                {deskCopyQuery && deskCopySuggestions.length ? <ul role="listbox" aria-label="Matching physical copies" className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                  {deskCopySuggestions.map((copy) => <li key={copy.id}>
+                    <button type="button" role="option" aria-selected={deskSelectedCopy?.id === copy.id} onClick={() => setDeskCopyQuery(copy.copy_code)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                      <span><strong>{copy.copy_code}</strong> · {bookName(copy.book_id)}</span>
+                      <span className={copy.status === 'available' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>{copy.status}</span>
+                    </button>
+                  </li>)}
+                </ul> : null}
+              </div>
+              {deskSelectedCopy ? <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-950">
+                <p><strong>{deskSelectedCopy.copy_code}</strong> · {deskSelectedCopyBook?.title ?? 'Physical title'} · <span className="capitalize">{deskSelectedCopy.status}</span></p>
+                {deskSelectedCopy.status === 'available' ? deskSelectedCopyOptions.length ? <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <label className="text-sm font-medium">Loan period
+                    <select value={deskIssueDurationDays} onChange={(event) => setDeskIssueDurationDays(event.target.value)} className={`${input} mt-1`}>
+                      {deskSelectedCopyOptions.map((option) => <option key={option.id} value={option.duration_days}>{option.duration_days} days · PHP {Number(option.fee_amount).toFixed(2)}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" disabled={busy || !deskIdCardPresented || deskEligibility !== 'ELIGIBLE'} onClick={() => void issueDeskCopy()} className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600">Issue loan</button>
+                  {!deskIdCardPresented ? <span className="text-xs text-amber-700 dark:text-amber-300">Verify the member’s physical ID above first.</span> : null}
+                </div> : <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">No loan periods are configured for this title.</p>
+                  : <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">This copy cannot be issued. Choose a copy marked available.</p>}
+              </div> : deskCopyQuery && deskCopySuggestions.length === 0 ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">No physical copy tag matches. Check the accession number and try again.</p> : null}
+            </div>
+
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><h4 className="text-sm font-semibold">Active physical loans</h4><p className="text-xs text-slate-500">Select several books for a clean return, or handle one item as damaged.</p></div>
+                {selectedDeskMemberLoans.length ? <button type="button" disabled={busy || deskReturnsProcessing || !deskIdentityMatches(selectedDeskMember.id) || !deskSelectedReturnIds.length} onClick={() => void returnDeskLoans()} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600">{deskReturnsProcessing ? 'Recording returns…' : `Mark ${deskSelectedReturnIds.length || ''} selected returned`}</button> : null}
+              </div>
+              {selectedDeskMemberLoans.length ? <ul className="mt-2 space-y-2">
+                {selectedDeskMemberLoans.map((loan) => {
+                  const dueTime = loan.due_date ? new Date(loan.due_date).getTime() : null
+                  const overdue = dueTime !== null && dueTime < Date.now()
+                  const copy = copies.find((item) => item.id === loan.copy_id)
+                  return <li key={loan.id} className="grid gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                    <input type="checkbox" aria-label={`Select ${copy?.copy_code ?? bookName(loan.book_id)} for return`} checked={deskSelectedReturnIds.includes(loan.id)} disabled={!deskIdentityMatches(selectedDeskMember.id) || loan.incident_type !== null} onChange={(event) => setDeskSelectedReturnIds((current) => event.target.checked ? [...current, loan.id] : current.filter((id) => id !== loan.id))} />
+                    <div className="min-w-0 text-sm">
+                      <strong>{bookName(loan.book_id)}</strong> · {copy?.copy_code ?? 'Copy unavailable'}
+                      <p className={overdue ? 'text-rose-700 dark:text-rose-300' : 'text-slate-500'}>{overdue ? 'Overdue' : loan.status === 'return_pending' ? 'Return requested' : 'Checked out'} · Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : 'date unavailable'}</p>
+                      {loan.incident_type ? <p className="text-amber-700 dark:text-amber-300">Open {loan.incident_type} case: {loan.incident_note || 'inspection required'}</p> : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={busy || !deskIdentityMatches(selectedDeskMember.id) || loan.status !== 'checked_out'} onClick={() => openRenewal(loan)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-700">Extend due date</button>
+                      <button type="button" disabled={busy || !deskIdentityMatches(selectedDeskMember.id)} onClick={() => { setReturnConditions((current) => ({ ...current, [loan.id]: 'available' })); setPendingAction({ type: 'close', id: loan.id }) }} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-700">Mark returned</button>
+                      <button type="button" disabled={busy || !deskIdentityMatches(selectedDeskMember.id)} onClick={() => { setReturnConditions((current) => ({ ...current, [loan.id]: 'damaged' })); setLostFineDrafts((current) => ({ ...current, [loan.id]: current[loan.id] ?? { amount: '', reason: '' } })); setLostFineLoanId(loan.id) }} className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-900 dark:text-amber-200">Return as damaged</button>
+                    </div>
+                  </li>
+                })}
+              </ul> : <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 dark:border-slate-700">No active physical loans for this member.</p>}
+              {!deskIdCardPresented && selectedDeskMemberLoans.length ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Confirm the member’s physical ID above to enable return and renewal actions.</p> : null}
+            </div>
+          </div> : null}
+        </div> : null}
+        {returnActionRequestId !== null && selectedDeskMember && deskIdentityMatches(loans.find((loan) => loan.id === returnActionRequestId)?.student_id ?? '')
+          ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+            <p className="text-sm">Member ID confirmed. Continue to the return inspection for <strong>{bookName(loans.find((loan) => loan.id === returnActionRequestId)?.book_id ?? 0)}</strong>.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { setOpenPanel('checkedOut'); setReturnActionRequestId(null) }} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white dark:bg-emerald-600">Continue to return</button>
+              <button type="button" onClick={() => setReturnActionRequestId(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Cancel</button>
+            </div>
+          </div>
+          : null}
+        </section>
+      </MemberDeskSurface> : null}
+
+      {!librarianWorkspaceOnly && !overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <div className="physical-queue-nav flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/60" role="toolbar" aria-label="Physical circulation actions">
         {!requestsOnly ? <button type="button" onClick={() => setOpenPanel('requests')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Requests <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-200">{queueLoans.length}</span></button> : null}
         <button type="button" onClick={() => setOpenPanel('checkedOut')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Checked out <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{activeLoans.length}</span></button>
         <button type="button" onClick={() => setOpenPanel('history')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Loan history</button>
         <button type="button" onClick={() => setOpenPanel('lost')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Lost items <span className="ml-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-800 dark:bg-rose-950 dark:text-rose-200">{openIncidentCases.length}</span></button>
-        {!requestsOnly ? <button type="button" onClick={() => setOpenPanel('print')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Print payments &amp; receipts</button> : null}
-        {!isAdmin && !requestsOnly ? <button type="button" onClick={() => setPolicyModalOpen(true)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Fine payments</button> : null}
+        {!requestsOnly ? <button type="button" onClick={() => onOpenFines ? onOpenFines() : router.push('/dashboard/admin/physical/finance')} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Financial ledger / fines</button> : null}
       </div> : null}
 
       {newPhysicalBookOpen && isAdmin ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setNewPhysicalBookOpen(false) }}><form onSubmit={(event) => void submitPhysicalBook(event)} className={`${panel} max-h-[90vh] w-full max-w-4xl space-y-3 overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="add-physical-book-title">
@@ -1013,7 +1796,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm font-medium">Title<input required maxLength={300} value={newPhysicalBook.title} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, title: event.target.value })} className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Author<input required maxLength={200} value={newPhysicalBook.author} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, author: event.target.value })} className={`${input} mt-1`} /></label>
-          <label className="text-sm font-medium">Category<input required maxLength={120} value={newPhysicalBook.category} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, category: event.target.value })} placeholder="e.g. Biology" className={`${input} mt-1`} /></label>
+          <label className="text-sm font-medium">Discipline (optional if genre is set)<input maxLength={120} value={newPhysicalBook.category} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, category: event.target.value })} placeholder="e.g. Biology" className={`${input} mt-1`} /></label>
+          <label className="text-sm font-medium">Genre (optional if discipline is set)<input maxLength={120} value={newPhysicalBook.genre} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, genre: event.target.value })} placeholder="e.g. Reference" className={`${input} mt-1`} /></label>
           <div><label className="text-sm font-medium">ISBN (optional)<input maxLength={32} value={newPhysicalBook.isbn} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateNewBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">System-generated IDs are for internal catalog use; use the publisher”™s ISBN for official records.</p></div>
           <label className="text-sm font-medium">Copy-code prefix<input required maxLength={32} pattern="[A-Za-z0-9_-]+" value={newPhysicalBook.prefix} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, prefix: event.target.value })} placeholder="e.g. BIO101" className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Number of copies<input required type="number" min="1" max="100" value={newPhysicalBook.quantity} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, quantity: event.target.value })} className={`${input} mt-1`} /></label>
@@ -1046,22 +1830,82 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
 
       {policyOnly && isAdmin ? <section className={panel}>
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><h1 className="text-xl font-semibold">Borrowing policy &amp; fine calendar</h1><p className="mt-1 text-sm text-slate-500">Review the current rules and manage public holiday dates used by overdue calculations.</p></div>
+          <div><h1 className="text-xl font-semibold">Borrowing policy &amp; fine calendar</h1><p className="mt-1 text-sm text-slate-500">Set enforceable physical-loan rules, member notices, faculty lesson rewards, and public holiday dates.</p></div>
           <button type="button" onClick={() => setPolicyModalOpen(true)} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Edit policy &amp; holidays</button>
         </div>
-        <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">Each physical title can offer 1, 3, 5, 7, 14, and 30-day loans with separate checkout fees. Overdue charges start after a 2-day grace period at ₱5 per chargeable day, capped at ₱500 per item. Sundays and listed holidays are excluded; items overdue for 30 consecutive days are marked lost.</p>
+        <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">{policySettings ? `Each physical title can offer 1, 3, 5, 7, 14, and 30-day loans with separate checkout fees. Overdue charges start after a ${policySettings.fine_grace_days}-day grace period at PHP ${Number(policySettings.late_fee_per_day).toFixed(2)} per chargeable day, capped at PHP ${Number(policySettings.late_fee_cap).toFixed(2)} per item. Sundays and listed holidays are excluded; items overdue for ${policySettings.lost_after_days} consecutive days are marked lost. Approved faculty lessons earn ${policySettings.faculty_lesson_reward_points} points by default.` : policySettingsError || 'Policy settings could not be loaded.'}</p>
+        <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300">{policySettings?.policy_notice}</p>
+        <p className="mt-3 text-sm text-slate-500">Cash top-ups are fixed: 200 points / PHP 10, 500 / PHP 22, or 1,000 / PHP 40 (maximum 1,000 points per sale). Students and faculty may top up; faculty may earn the configured lesson reward. Librarians can invite students and faculty after checking school ID in person. Only administrators can add books or create staff accounts.</p>
         <p className="mt-3 text-sm text-slate-500">{holidays.length} public holiday{holidays.length === 1 ? '' : 's'} configured. Physical payments, fines, and receipts are available in Transactions.</p>
       </section> : null}
 
-      {(finesOnly || requestsOnly) && isAdmin ? <section id="physical-transactions" className={panel}>
+      {finesOnly && isAdmin ? <section id="physical-transactions" className={panel}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Library finance</p><h1 className="mt-1 text-xl font-semibold">Transactions</h1><p className="mt-1 text-sm text-slate-500">Review requests, payments, fines, and receipts together.</p></div>
-          <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{physicalFines.filter((fine) => fine.status === 'unpaid').length} unpaid fines</span>
+          <div className="flex flex-wrap items-center gap-2">{!onOpenFines ? <button type="button" onClick={() => router.push('/dashboard/admin/physical')} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Back to circulation</button> : null}<button type="button" onClick={() => setOpenPanel('print')} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Print payments &amp; receipts</button>{!onOpenFines ? <button type="button" disabled={signingOut} onClick={() => void handleLogout()} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold disabled:opacity-50 dark:border-slate-700">{signingOut ? 'Signing out…' : 'Sign out'}</button> : null}</div>
         </div>
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row"><input type="search" value={fineSearch} onChange={(event) => setFineSearch(event.target.value)} placeholder="Search member, title, receipt, or transaction..." aria-label="Search transactions" className={`${input} sm:flex-1`} /><select value={fineStatusFilter} onChange={(event) => setFineStatusFilter(event.target.value as typeof fineStatusFilter)} aria-label="Filter transactions by status" className={`${input} sm:w-48`}><option value="all">All transactions</option><option value="needs_action">Needs action</option><option value="pending">Pending requests</option><option value="pending_verification">Payment verification</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="waived">Waived</option><option value="refund_due">Refund due</option><option value="refunded">Refunded</option></select></div>
         <p className="mt-3 text-xs text-slate-500">Showing {financeRows.length} transaction{financeRows.length === 1 ? '' : 's'}.</p>
-        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-800"><tr><th className="px-3 py-3"><button type="button" onClick={() => setFinanceSort((current) => ({ key: 'date', direction: current.key === 'date' && current.direction === 'desc' ? 'asc' : 'desc' }))}>Date {financeSort.key === 'date' ? (financeSort.direction === 'desc' ? '▼' : '▲') : '↕'}</button></th><th className="px-3 py-3">Member</th><th className="px-3 py-3">Transaction</th><th className="px-3 py-3"><button type="button" onClick={() => setFinanceSort((current) => ({ key: 'amount', direction: current.key === 'amount' && current.direction === 'desc' ? 'asc' : 'desc' }))}>Amount {financeSort.key === 'amount' ? (financeSort.direction === 'desc' ? '▼' : '▲') : '↕'}</button></th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Receipt / action</th></tr></thead><tbody className="divide-y divide-slate-100 dark:divide-slate-800">{financeRows.map((row) => { const source = row.source; const loan = source.kind === 'fine' ? loans.find((item) => item.id === source.fine.physical_book_request_id) : source.kind === 'request' ? source.loan : null; const canSettle = loan?.status === 'returned' || loan?.status === 'lost'; const needsAction = source.kind === 'request' || (source.kind === 'fine' && (source.fine.status === 'unpaid' || source.fine.status === 'refund_due')); const recent = Date.now() - new Date(row.date).getTime() <= 7 * 24 * 60 * 60 * 1000; return <tr key={row.id} className={needsAction ? 'bg-emerald-50 dark:bg-emerald-950/35' : recent ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : 'bg-white dark:bg-slate-900'}><td className="whitespace-nowrap px-3 py-3">{new Date(row.date).toLocaleDateString()}</td><td className="px-3 py-3">{row.member}</td><td className="px-3 py-3">{row.description}</td><td className="whitespace-nowrap px-3 py-3">PHP {row.amount.toFixed(2)}</td><td className="px-3 py-3 capitalize">{row.status.replace(/_/g, ' ')}</td><td className="px-3 py-3"><div className="flex flex-wrap gap-2">{row.receiptNumber && source.kind !== 'request' ? <button type="button" onClick={() => setFinanceReceipt(source)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold dark:border-slate-700">View receipt</button> : null}{source.kind === 'fine' && source.fine.status === 'unpaid' ? <><button type="button" disabled={busy || !canSettle} title={canSettle ? 'Record cashier payment' : 'Return or resolve the lost item first'} onClick={() => setFinePaymentConfirmation(source.fine)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold disabled:opacity-40 dark:border-slate-700">Record payment</button><button type="button" disabled={busy || !canSettle} onClick={() => setFineWaiver({ id: source.fine.id, reason: '' })} className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:text-amber-200">Waive</button></> : null}{source.kind === 'fine' && source.fine.status === 'refund_due' ? <button type="button" disabled={busy} onClick={() => setFineRefundConfirmation({ fine: source.fine, reason: '' })} className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:text-amber-200">Record refund</button> : null}{source.kind === 'request' ? <><button type="button" disabled={processingRequestId !== null} onClick={() => checkout(source.loan.id)} className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 disabled:opacity-40 dark:border-emerald-700 dark:text-emerald-200">Review &amp; approve</button><button type="button" disabled={processingRequestId !== null} onClick={() => void rejectRequest(source.loan.id)} className="rounded-lg border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-800 disabled:opacity-40 dark:border-rose-800 dark:text-rose-200">Reject</button>{source.loan.payment_proof_path ? <button type="button" onClick={() => void openProof(source.loan.payment_proof_path!)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold dark:border-slate-700">View proof</button> : null}</> : null}</div></td></tr> })}{financeRows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">No transactions match your search.</td></tr> : null}</tbody></table></div>
+        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-800">
+              <tr>
+                <th className="px-3 py-3"><button type="button" onClick={() => setFinanceSort((current) => ({ key: 'date', direction: current.key === 'date' && current.direction === 'desc' ? 'asc' : 'desc' }))}>Date {financeSort.key === 'date' ? (financeSort.direction === 'desc' ? '▼' : '▲') : '↕'}</button></th>
+                <th className="px-3 py-3">Member</th>
+                <th className="px-3 py-3">Transaction</th>
+                <th className="px-3 py-3"><button type="button" onClick={() => setFinanceSort((current) => ({ key: 'amount', direction: current.key === 'amount' && current.direction === 'desc' ? 'asc' : 'desc' }))}>Amount {financeSort.key === 'amount' ? (financeSort.direction === 'desc' ? '▼' : '▲') : '↕'}</button></th>
+                <th className="px-3 py-3">Status</th>
+                <th className="px-3 py-3">Receipt / action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {financeRows.map((row) => {
+                const source = row.source
+                const loan = source.kind === 'fine'
+                  ? loans.find((item) => item.id === source.fine.physical_book_request_id)
+                  : source.kind === 'request' ? source.loan : null
+                const canSettle = loan?.status === 'returned' || loan?.status === 'lost'
+                const needsAction = source.kind === 'request'
+                  || (source.kind === 'fine' && (source.fine.status === 'unpaid' || source.fine.status === 'refund_due'))
+                const recent = Date.now() - new Date(row.date).getTime() <= 7 * 24 * 60 * 60 * 1000
+
+                return <tr key={row.id} className={needsAction ? 'bg-emerald-50 dark:bg-emerald-950/35' : recent ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : 'bg-white dark:bg-slate-900'}>
+                  <td className="whitespace-nowrap px-3 py-3">{new Date(row.date).toLocaleDateString()}</td>
+                  <td className="px-3 py-3">{row.member}</td>
+                  <td className="px-3 py-3">{row.description}</td>
+                  <td className="whitespace-nowrap px-3 py-3">PHP {row.amount.toFixed(2)}</td>
+                  <td className="px-3 py-3 capitalize">{row.status.replace(/_/g, ' ')}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      {row.receiptNumber && source.kind !== 'request' ? <button type="button" onClick={() => setFinanceReceipt(source)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold dark:border-slate-700">View receipt</button> : null}
+                      {source.kind === 'fine' && source.fine.status === 'unpaid' ? <>
+                        <button type="button" disabled={busy || !canSettle} title={canSettle ? 'Record cashier payment' : 'Return or resolve the lost item first'} onClick={() => setFinePaymentConfirmation(source.fine)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold disabled:opacity-40 dark:border-slate-700">Record payment</button>
+                        <button type="button" disabled={busy || !canSettle} onClick={() => setFineWaiver({ id: source.fine.id, reasonCategory: '', justification: '' })} className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:text-amber-200">Waive</button>
+                      </> : null}
+                      {source.kind === 'fine' && source.fine.status === 'refund_due' ? <button type="button" disabled={busy} onClick={() => setFineRefundConfirmation({ fine: source.fine, reason: '' })} className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:text-amber-200">Record refund</button> : null}
+                      {source.kind === 'request' ? <>
+                        {source.loan.payment_method === 'cash'
+                          ? <button type="button" disabled={processingRequestId !== null} onClick={() => checkout(source.loan.id)} className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 disabled:opacity-40 dark:border-emerald-700 dark:text-emerald-200">Review &amp; approve</button>
+                          : <span className="self-center text-xs text-amber-700 dark:text-amber-300">Legacy online request</span>}
+                        <button type="button" disabled={processingRequestId !== null} onClick={() => void rejectRequest(source.loan.id)} className="rounded-lg border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-800 disabled:opacity-40 dark:border-rose-800 dark:text-rose-200">Reject</button>
+                      </> : null}
+                    </div>
+                  </td>
+                </tr>
+              })}
+              {financeRows.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">No transactions match your search.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </section> : null}
+      {finesOnly && !isAdmin ? <LibrarianDailyRecord
+        history={loanHistory}
+        fines={physicalFines}
+        renewals={physicalRenewals}
+        printPayments={printPayments}
+        bookName={bookName}
+        memberName={memberName}
+      /> : null}
       {!requestsOnly && !overviewOnly && !catalogOnly && !policyOnly && !finesOnly && isAdmin ? <>
         <section className={`${panel} flex flex-wrap items-center justify-between gap-4`}>
           <div>
@@ -1082,6 +1926,24 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
               <button type="button" disabled={busy} onClick={() => setPolicyModalOpen(false)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-slate-700">Close</button>
             </div>
             <div className={`mt-5 grid gap-6 ${isAdmin ? 'lg:grid-cols-2' : ''}`}>
+              {isAdmin ? <form onSubmit={(event) => void saveLibraryPolicy(event)} className="space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-700 lg:col-span-2">
+                <div>
+                  <h3 className="font-semibold">Enforced rules for new physical requests</h3>
+                  <p className="mt-1 text-xs text-slate-500">Each new request stores these values. Changes do not recalculate existing loans or fines. Title-specific loan durations and checkout fees stay in the physical catalog.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <label className="text-xs font-medium">Fine grace (days)<input required type="number" min="0" max="30" step="1" value={policyDraft.fineGraceDays} onChange={(event) => setPolicyDraft((current) => ({ ...current, fineGraceDays: event.target.value }))} className={`${input} mt-1`} /></label>
+                  <label className="text-xs font-medium">Late fee per day (PHP)<input required type="number" min="0" max="1000" step="0.01" value={policyDraft.lateFeePerDay} onChange={(event) => setPolicyDraft((current) => ({ ...current, lateFeePerDay: event.target.value }))} className={`${input} mt-1`} /></label>
+                  <label className="text-xs font-medium">Fine cap per item (PHP)<input required type="number" min="0" max="100000" step="0.01" value={policyDraft.lateFeeCap} onChange={(event) => setPolicyDraft((current) => ({ ...current, lateFeeCap: event.target.value }))} className={`${input} mt-1`} /></label>
+                  <label className="text-xs font-medium">Classify lost after (days)<input required type="number" min="1" max="365" step="1" value={policyDraft.lostAfterDays} onChange={(event) => setPolicyDraft((current) => ({ ...current, lostAfterDays: event.target.value }))} className={`${input} mt-1`} /></label>
+                  <label className="text-xs font-medium">Default lesson reward (points)<input required type="number" min="0" max="100" step="1" value={policyDraft.facultyLessonRewardPoints} onChange={(event) => setPolicyDraft((current) => ({ ...current, facultyLessonRewardPoints: event.target.value }))} className={`${input} mt-1`} /></label>
+                </div>
+                <label className="block text-xs font-medium">Student-facing policy and points notice<textarea required maxLength={5000} rows={5} value={policyDraft.policyNotice} onChange={(event) => setPolicyDraft((current) => ({ ...current, policyNotice: event.target.value }))} className={`${input} mt-1`} /><span className="mt-1 block font-normal text-slate-500">{policyDraft.policyNotice.length}/5000 characters. Include the fixed top-up bundle prices and how students or faculty can earn points.</span></label>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {policySettings ? <p className="text-xs text-slate-500">Last saved {new Date(policySettings.updated_at).toLocaleString()}. Top-ups remain fixed at 200 / PHP 10, 500 / PHP 22, and 1,000 / PHP 40.</p> : <p role="status" className="text-xs text-rose-700">Policy settings are unavailable. Apply the policy migration before editing.</p>}
+                  <button type="submit" disabled={busy || !policySettings} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save policy'}</button>
+                </div>
+              </form> : null}
               {isAdmin ? <div>
                 <h3 className="font-semibold">Official public holidays</h3>
                 <form onSubmit={(event) => void submitHoliday(event)} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
@@ -1107,7 +1969,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
                     const settledLoan = loan?.status === 'returned' || loan?.status === 'lost'
                     return <li key={fine.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
                       <span><strong>{book?.title ?? 'Physical book'}</strong><span className="block text-xs font-semibold text-slate-600 dark:text-slate-300">{fineTypeLabel(fine.fine_type)}</span><span className="block text-xs text-slate-500">{member?.full_name || member?.email || 'Member'} · ₱{Number(fine.amount).toFixed(2)}</span>{fine.fine_reason ? <span className="block max-w-xl text-xs text-slate-500">{fine.fine_reason}</span> : null}</span>
-                      <div className="flex flex-wrap gap-2"><button type="button" disabled={busy || !settledLoan} title={settledLoan ? 'Record cashier payment' : 'Book must be returned or classified lost first'} onClick={() => setFinePaymentConfirmation(fine)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-40 dark:border-slate-700">Record payment</button><button type="button" disabled={busy || !settledLoan} onClick={() => setFineWaiver({ id: fine.id, reason: '' })} className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:border-amber-800 dark:text-amber-200">Waive with reason</button></div>
+                      <div className="flex flex-wrap gap-2"><button type="button" disabled={busy || !settledLoan} title={settledLoan ? 'Record cashier payment' : 'Book must be returned or classified lost first'} onClick={() => setFinePaymentConfirmation(fine)} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-40 dark:border-slate-700">Record payment</button><button type="button" disabled={busy || !settledLoan} onClick={() => setFineWaiver({ id: fine.id, reasonCategory: '', justification: '' })} className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-40 dark:border-amber-800 dark:text-amber-200">Waive with reason</button></div>
                     </li>
                   })}
                   {physicalFines.filter((fine) => fine.status === 'unpaid').length === 0 ? <li className="py-3 text-sm text-slate-500">No unpaid physical fines.</li> : null}
@@ -1124,7 +1986,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         <div className="physical-catalog-heading flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 id="physical-catalog" className="scroll-mt-6 text-xl font-semibold">Physical book catalog</h2>
-            <p className="mt-1 text-sm text-slate-500">Search titles, inspect copy-level inventory, and monitor availability.</p>
+            <p className="mt-1 text-sm text-slate-500">{isAdmin ? 'Search titles, inspect copy-level inventory, and manage catalog records.' : 'Search titles, inspect copy-level inventory, and monitor availability. Catalog edits are managed by administrators.'}</p>
           </div>
           {catalogOnly && isAdmin ? <button type="button" onClick={() => setNewPhysicalBookOpen(true)} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Add physical book</button> : null}
         </div>
@@ -1141,21 +2003,63 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           </button>
         </div>
         {isAdmin && selectedCatalogIds.length > 0 ? <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-3 text-sm dark:bg-slate-800/70"><span className="mr-auto font-medium">{selectedCatalogIds.length} catalog record{selectedCatalogIds.length === 1 ? '' : 's'} selected</span>{selectedActiveCatalogIds.length > 0 ? <button type="button" disabled={busy} onClick={() => setPendingAction({ type: 'archiveMany', ids: selectedActiveCatalogIds })} className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-50 dark:text-amber-200">Archive {selectedActiveCatalogIds.length} active</button> : null}{selectedArchivedCatalogIds.length > 0 ? <button type="button" disabled={busy} onClick={() => setPendingAction({ type: 'deleteMany', ids: selectedArchivedCatalogIds })} className="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-800 disabled:opacity-50 dark:border-rose-900 dark:text-rose-200">Delete {selectedArchivedCatalogIds.length} archived</button> : null}<button type="button" onClick={() => setSelectedCatalogIds([])} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">Clear</button></div> : null}
-        <div className="mt-4 overflow-x-auto">
+        <div className="physical-catalog-table mt-4 overflow-x-auto">
           <table className="w-full min-w-[850px] table-fixed text-left text-sm">
             <thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700">
-              <tr><th className="w-[4%] px-2 py-3"><input type="checkbox" aria-label="Select all visible physical catalog records" checked={visibleCatalogIds.length > 0 && visibleCatalogIds.every((id) => selectedCatalogIds.includes(id))} onChange={(event) => setSelectedCatalogIds((current) => event.target.checked ? Array.from(new Set([...current, ...visibleCatalogIds])) : current.filter((id) => !visibleCatalogIds.includes(id)))} /></th><th className="w-[32%] px-2 py-3 sm:px-3">Book</th><th className="w-[16%] px-2 py-3 sm:px-3">Copies</th><th className="w-[20%] px-2 py-3 sm:px-3">Shelf location</th><th className="w-[28%] px-2 py-3 sm:px-3">Actions</th></tr>
+              <tr>{isAdmin ? <th className="w-[4%] px-2 py-3"><input type="checkbox" aria-label="Select all visible physical catalog records" checked={visibleCatalogIds.length > 0 && visibleCatalogIds.every((id) => selectedCatalogIds.includes(id))} onChange={(event) => setSelectedCatalogIds((current) => event.target.checked ? Array.from(new Set([...current, ...visibleCatalogIds])) : current.filter((id) => !visibleCatalogIds.includes(id)))} /></th> : null}<th className="w-[32%] px-2 py-3 sm:px-3">Book</th><th className="w-[16%] px-2 py-3 sm:px-3">Copies</th><th className="w-[20%] px-2 py-3 sm:px-3">Shelf location</th><th className="w-[28%] px-2 py-3 sm:px-3">Actions</th></tr>
             </thead>
             <tbody>
               {visibleCatalogRows.map((row) => <Fragment key={row.key}><tr className="border-b border-slate-100 align-top dark:border-slate-800">
-                <td className="px-2 py-3"><input type="checkbox" aria-label={`Select ${row.book.title}`} checked={row.bookIds.every((id) => selectedCatalogIds.includes(id))} onChange={(event) => setSelectedCatalogIds((current) => event.target.checked ? Array.from(new Set([...current, ...row.bookIds])) : current.filter((id) => !row.bookIds.includes(id)))} /></td>
+                {isAdmin ? <td className="px-2 py-3"><input type="checkbox" aria-label={`Select ${row.book.title}`} checked={row.bookIds.every((id) => selectedCatalogIds.includes(id))} onChange={(event) => setSelectedCatalogIds((current) => event.target.checked ? Array.from(new Set([...current, ...row.bookIds])) : current.filter((id) => !row.bookIds.includes(id)))} /></td> : null}
                 <td className="break-words px-2 py-3 sm:px-3"><strong>{row.book.title}</strong>{row.book.is_archived ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">Archived</span> : null}<span className="mt-1 block text-xs text-slate-600 dark:text-slate-400">{row.book.author} · {row.book.category}</span><span className="mt-1 block text-xs capitalize text-slate-500">{row.isbnConflict ? 'ISBN needs review · ' : row.book.isbn ? `ISBN ${row.book.isbn} · ` : ''}{row.book.catalog_type}</span></td>
                 <td className="px-2 py-3 sm:px-3"><div className="flex items-baseline gap-2"><strong className="text-lg text-emerald-800 dark:text-emerald-300">{row.available}</strong><span className="text-xs text-slate-600 dark:text-slate-400">available</span></div><div className="mt-1 text-xs text-slate-600 dark:text-slate-400"><strong className="text-slate-800 dark:text-slate-200">{row.total}</strong> total <span className="mx-1 text-slate-400">·</span>{row.borrowed} borrowed</div></td>
                 <td className="break-words px-2 py-3 text-xs text-slate-600 dark:text-slate-400 sm:px-3">{row.locations || 'Location not set'}</td>
-                <td className="physical-catalog-actions px-2 py-3 sm:px-3"><div className="flex flex-wrap gap-2"><button type="button" aria-expanded={expandedCatalogKey === row.key} onClick={() => setExpandedCatalogKey((current) => current === row.key ? null : row.key)} className="whitespace-nowrap rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{expandedCatalogKey === row.key ? 'Hide copies' : 'View copies'}</button><button type="button" disabled={busy} onClick={() => setManageBook(row.book)} className="whitespace-nowrap rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Manage title</button></div></td>
-              </tr>{expandedCatalogKey === row.key ? <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/50"><td colSpan={5} className="px-3 py-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{row.copies.map((copy) => <article key={copy.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900"><div><strong>{copy.copy_code}</strong><span className="block text-slate-500">{[copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`, copy.location].filter(Boolean).join(' · ') || 'Location not set'}</span></div><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 font-semibold capitalize text-slate-700 dark:bg-slate-800 dark:text-slate-200">{copy.status}</span></article>)}{row.copies.length === 0 ? <p className="text-xs text-slate-500">No physical copies registered yet.</p> : null}</div></td></tr> : null}</Fragment>)}
+                <td className="physical-catalog-actions px-2 py-3 sm:px-3"><div className="flex flex-wrap gap-2"><button type="button" aria-expanded={expandedCatalogKey === row.key} onClick={() => setExpandedCatalogKey((current) => current === row.key ? null : row.key)} className="whitespace-nowrap rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{expandedCatalogKey === row.key ? 'Hide copies' : 'View copies'}</button>{isAdmin ? <button type="button" disabled={busy} onClick={() => setManageBook(row.book)} className="whitespace-nowrap rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Manage title</button> : null}</div></td>
+              </tr>{expandedCatalogKey === row.key ? <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/50"><td colSpan={isAdmin ? 5 : 4} className="px-3 py-3"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{row.copies.map((copy) => <article key={copy.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900"><div className="min-w-0"><button type="button" onClick={() => setSelectedCopyId(copy.id)} aria-label={`View copy details for ${copy.copy_code}`} className="font-semibold text-sky-700 underline-offset-2 hover:underline dark:text-sky-300">{copy.copy_code}</button><span className="block truncate text-slate-500">{[copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`, copy.location].filter(Boolean).join(' · ') || 'Location not set'}</span></div><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 font-semibold capitalize text-slate-700 dark:bg-slate-800 dark:text-slate-200">{copy.status}</span></article>)}{row.copies.length === 0 ? <p className="text-xs text-slate-500">No physical copies registered yet.</p> : null}</div></td></tr> : null}</Fragment>)}
             </tbody>
           </table>
+          {visibleCatalogRows.length === 0 ? <p className="py-6 text-sm text-slate-500">No physical titles match this search.</p> : null}
+        </div>
+        <div className="physical-catalog-mobile-list mt-4">
+          {visibleCatalogRows.map((row) => <article key={row.key} className="physical-catalog-mobile-card">
+            {isAdmin ? <label className="physical-catalog-mobile-select">
+              <input
+                type="checkbox"
+                aria-label={`Select ${row.book.title}`}
+                checked={row.bookIds.every((id) => selectedCatalogIds.includes(id))}
+                onChange={(event) => setSelectedCatalogIds((current) => event.target.checked ? Array.from(new Set([...current, ...row.bookIds])) : current.filter((id) => !row.bookIds.includes(id)))}
+              />
+              <span>Select title</span>
+            </label> : null}
+            <div className="physical-catalog-mobile-heading">
+              <div className="min-w-0">
+                <h3>{row.book.title}</h3>
+                {row.book.is_archived ? <span className="physical-catalog-mobile-archived">Archived</span> : null}
+                <p>{row.book.author} · {row.book.category}</p>
+                <p>{row.isbnConflict ? 'ISBN needs review · ' : row.book.isbn ? `ISBN ${row.book.isbn} · ` : ''}{row.book.catalog_type}</p>
+              </div>
+              <div className="physical-catalog-mobile-availability">
+                <strong>{row.available}</strong>
+                <span>available</span>
+              </div>
+            </div>
+            <dl className="physical-catalog-mobile-details">
+              <div><dt>Inventory</dt><dd>{row.total} total · {row.borrowed} borrowed</dd></div>
+              <div><dt>Shelf location</dt><dd>{row.locations || 'Location not set'}</dd></div>
+            </dl>
+            <div className="physical-catalog-mobile-actions">
+              <button type="button" aria-expanded={expandedCatalogKey === row.key} onClick={() => setExpandedCatalogKey((current) => current === row.key ? null : row.key)}>{expandedCatalogKey === row.key ? 'Hide copies' : 'View copies'}</button>
+              {isAdmin ? <button type="button" disabled={busy} onClick={() => setManageBook(row.book)}>Manage title</button> : null}
+            </div>
+            {expandedCatalogKey === row.key ? <div className="physical-catalog-mobile-copies">
+              {row.copies.map((copy) => <div key={copy.id}>
+                <button type="button" onClick={() => setSelectedCopyId(copy.id)} aria-label={`View copy details for ${copy.copy_code}`} className="text-left font-semibold text-sky-700 underline-offset-2 hover:underline dark:text-sky-300">{copy.copy_code}</button>
+                <span>{[copy.section, copy.shelf_number && `Shelf ${copy.shelf_number}`, copy.row_number && `Row ${copy.row_number}`, copy.position_number && `Position ${copy.position_number}`, copy.location].filter(Boolean).join(' · ') || 'Location not set'}</span>
+                <span className="physical-catalog-mobile-copy-status">{copy.status}</span>
+              </div>)}
+              {row.copies.length === 0 ? <p>No physical copies registered yet.</p> : null}
+            </div> : null}
+          </article>)}
           {visibleCatalogRows.length === 0 ? <p className="py-6 text-sm text-slate-500">No physical titles match this search.</p> : null}
         </div>
         <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
@@ -1170,9 +2074,21 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         description={manageBook ? `${manageBook.title} · ${manageBook.author}` : undefined}
         onClose={() => setManageBook(null)}
         size="md"
+        variant="drawer"
       >
         {manageBook ? <>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <section aria-label="Physical book metadata" className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Book details</h3>
+            <dl className="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2">
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">ISBN</dt><dd className="mt-1 break-all text-sm font-medium">{manageBook.isbn || 'Not listed'}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Format</dt><dd className="mt-1 text-sm font-medium capitalize">{manageBook.catalog_type}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Discipline</dt><dd className="mt-1 text-sm font-medium">{manageBook.discipline || manageBook.category || 'Not set'}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Genre</dt><dd className="mt-1 text-sm font-medium">{manageBook.genre || 'Not set'}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Catalog status</dt><dd className="mt-1 text-sm font-medium">{manageBook.is_archived ? 'Archived' : 'Active'}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Description</dt><dd className="mt-1 text-sm leading-5">{manageBook.description || 'No description has been added.'}</dd></div>
+            </dl>
+          </section>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800">
               <p className="text-xs text-slate-500 dark:text-slate-400">Copies</p>
               <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">{catalogRows.find((row) => row.book.id === manageBook.id)?.total ?? 0} registered</p>
@@ -1186,7 +2102,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setCopyDetailsBookId(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Copies &amp; QR</button>
             {isAdmin ? <button type="button" onClick={() => { const book = manageBook; const prefix = book.title.split(/[^A-Za-z0-9]+/).filter(Boolean).map((part) => part[0]).join('').toUpperCase().slice(0, 12) || 'BOOK'; setManageBook(null); setCopyForm({ bookId: String(book.id), quantity: '1', prefix, location: '' }); setCopyFormOpen(true) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Add copies</button> : null}
             <button type="button" onClick={() => { const book = manageBook; setManageBook(null); openOptionEditor(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Loan fees</button>
-            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setEditingBook(book); setEditBookForm({ title: book.title, author: book.author, category: book.category, isbn: book.isbn ?? '', description: book.description ?? '' }) }} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Edit details</button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setEditingBook(book); setEditBookForm({ title: book.title, author: book.author, category: book.discipline ?? '', genre: book.genre ?? '', isbn: book.isbn ?? '', description: book.description ?? '' }) }} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Edit details</button>
             <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'archiveBook', id: book.id, title: book.title, archived: !book.is_archived }) }} className="rounded-xl border border-rose-300 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"><span>{manageBook.is_archived ? 'Restore to catalog' : 'Archive'}</span></button>
             {isAdmin && manageBook.is_archived ? <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'deleteBook', id: book.id, title: book.title, archived: true }) }} className="rounded-xl border border-rose-400 px-4 py-3 text-sm font-semibold text-rose-800 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300">Delete permanently</button> : null}
           </div>
@@ -1221,28 +2137,28 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         </section>
       </div> : null}
 
-      {openPanel === 'requests' ? <div className="physical-requests-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setOpenPanel(null); if (!requestsOnly) onClose?.() } }}>
+      {openPanel === 'requests' ? <div className="physical-requests-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setOpenPanel(null); onClose?.() } }}>
         <section className={`${panel} max-h-[90vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="physical-requests-title">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 id="physical-requests-title" className="text-xl font-semibold">Requests and payment verification</h2>
-              <p className="mt-1 text-sm text-slate-500">Review pending requests, verify payments, and issue checkout receipts.</p>
+              <h2 id="physical-requests-title" className="text-xl font-semibold">Physical book requests</h2>
+              <p className="mt-1 text-sm text-slate-500">Review cash requests, collect payment at checkout, and issue receipts.</p>
             </div>
-            <button type="button" onClick={() => { setOpenPanel(null); if (!requestsOnly) onClose?.() }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close requests</button>
+            <button type="button" onClick={() => { setOpenPanel(null); onClose?.() }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close requests</button>
           </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">Showing {filteredWaitingLoans.length} of {queueLoans.length} pending requests.</p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input type="search" value={requestSearch} onChange={(event) => setRequestSearch(event.target.value)} placeholder="Search member, book, or request ID..." aria-label="Search physical requests" className={`${input} sm:min-w-80`} />
               <select value={requestStatus} onChange={(event) => setRequestStatus(event.target.value as RequestQueueFilter)} aria-label="Filter physical requests by operational state" className={input}>
-                <option value="all">All pending requests</option><option value="pending">Pending requests</option><option value="awaiting_payment">Awaiting payment</option><option value="ready">Ready for checkout</option><option value="availability_alerts">Availability alerts</option>
+                <option value="all">All work items</option><option value="cash_requests">Cash checkout requests</option><option value="legacy_online">Legacy online requests</option><option value="availability_alerts">Availability alerts</option>
               </select>
             </div>
           </div>
         <div className="mt-4 space-y-3">
           {visibleWaitingLoans.map((loan) => <article key={loan.id} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">Pending request · {loan.duration_days} days · ₱{Number(loan.fee_amount).toFixed(2)} · {loan.payment_method} · {loan.payment_status.replace('_', ' ')}</p>{loan.transaction_reference ? <p className="mt-1 text-xs text-slate-500">Transaction reference: {loan.transaction_reference}</p> : null}{loan.payment_proof_path ? <button type="button" onClick={() => void openProof(loan.payment_proof_path!)} className="mt-1 text-xs font-semibold text-sky-700 underline dark:text-sky-300">View uploaded payment proof</button> : null}</div>
-              <div className="flex flex-wrap gap-2"><button disabled={processingRequestId !== null} type="button" onClick={() => checkout(loan.id)} className="physical-review-action rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50">{processingRequestId === loan.id ? 'Processing...' : 'Review & approve'}</button><button disabled={processingRequestId !== null} type="button" onClick={() => void rejectRequest(loan.id)} className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">Reject request</button></div>
+            <div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">Pending request · {loan.duration_days} days · ₱{Number(loan.fee_amount).toFixed(2)} · {loan.payment_method === 'cash' ? 'Cash at desk' : 'Legacy online payment'}</p>{loan.payment_method !== 'cash' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Cannot be checked out. Reject this request and ask the member to submit a new cash request.</p> : null}</div>
+              <div className="flex flex-wrap gap-2">{loan.payment_method === 'cash' ? <button disabled={processingRequestId !== null} type="button" onClick={() => checkout(loan.id)} className="physical-review-action rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-50">{processingRequestId === loan.id ? 'Processing...' : 'Review & approve'}</button> : null}<button disabled={processingRequestId !== null} type="button" onClick={() => void rejectRequest(loan.id)} className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">Reject request</button></div>
             </div>
           </article>)}
           {visibleAvailabilityAlerts.map((entry) => <article key={`availability-alert-${entry.student_id}-${entry.book_id}`} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20"><div className="flex flex-wrap items-start justify-between gap-4"><div><strong>{bookName(entry.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(entry.student_id)}</p><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Availability alert · enabled {new Date(entry.created_at).toLocaleString()}</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">Alerts on</span></div></article>)}
@@ -1262,10 +2178,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <button type="button" onClick={() => setOpenPanel(null)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button>
           </div>
         <div className="mt-4 space-y-3">
-          {activeLoans.map((loan) => <article key={loan.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+          <label className="mt-4 block text-sm font-medium">Find an active loan<input type="search" value={checkedOutSearch} onChange={(event) => setCheckedOutSearch(event.target.value)} placeholder="Student ID, member, book, or request ID..." className={`${input} mt-1`} /></label>
+          <div className="mt-3 space-y-3">
+          {visibleActiveLoans.map((loan) => <article key={loan.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
             <div><strong>{bookName(loan.book_id)}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{memberName(loan.student_id)}</p><p className="mt-1 text-xs text-slate-500">{loan.status === 'return_pending' ? 'RETURN REQUEST · AWAITING LIBRARIAN CONFIRMATION · ' : ''}Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'} · Receipt {loan.receipt_number ?? '—'}{loan.due_date && new Date(loan.due_date) < new Date() ? ' · OVERDUE' : ''}</p></div>
-            <div className="flex flex-wrap items-end gap-2"><label className="text-xs">Inspection result<select value={returnConditions[loan.id] ?? 'available'} onChange={(event) => setReturnConditions((current) => ({ ...current, [loan.id]: event.target.value as 'available' | 'damaged' | 'lost' }))} className={`${input} mt-1`}><option value="available">Returned · good</option><option value="damaged">Returned · damaged</option><option value="lost">Not returned · lost</option></select></label><button disabled={busy} type="button" onClick={() => void closeLoan(loan.id)} className="rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{returnConditions[loan.id] === 'lost' ? 'Assess lost item' : returnConditions[loan.id] === 'damaged' ? 'Inspect damage' : loan.status === 'return_pending' ? 'Confirm good return' : 'Record good return'}</button></div>
+            <div className="flex flex-wrap items-end gap-2">{loan.status === 'checked_out' ? <button disabled={busy || processingRequestId !== null || !deskIdentityMatches(loan.student_id) || selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0} title={!deskIdentityMatches(loan.student_id) ? 'Verify this borrower’s institutional ID card first' : 'Renew at the configured fee for the selected period'} type="button" onClick={() => openRenewal(loan)} className="rounded-xl border border-emerald-300 px-3 py-2.5 text-sm font-semibold text-emerald-800 disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-200">Renew</button> : null}<label className="text-xs">Inspection result<select value={returnConditions[loan.id] ?? 'available'} onChange={(event) => setReturnConditions((current) => ({ ...current, [loan.id]: event.target.value as 'available' | 'damaged' | 'lost' }))} className={`${input} mt-1`}><option value="available">Returned · good</option><option value="damaged">Returned · damaged</option><option value="lost">Not returned · lost</option></select></label><button disabled={busy} type="button" onClick={() => void closeLoan(loan.id)} className="rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{returnConditions[loan.id] === 'lost' ? 'Assess lost item' : returnConditions[loan.id] === 'damaged' ? 'Inspect damage' : loan.status === 'return_pending' ? 'Confirm good return' : 'Record good return'}</button></div>
           </article>)}
+          {visibleActiveLoans.length === 0 ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500 dark:bg-slate-800">{activeLoans.length === 0 ? 'No checked-out copies.' : 'No active loans match this search.'}</p> : null}
+          </div>
           {activeLoans.length === 0 ? <p className="text-sm text-slate-500">No books are currently checked out.</p> : null}
         </div>
         </section>
@@ -1293,16 +2213,51 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           </div>
         </section>
       </div> : null}
+      <BaseModal
+        open={selectedCopy !== null}
+        title={selectedCopy ? `Copy details · ${selectedCopy.copy_code}` : 'Copy details'}
+        eyebrow="Physical inventory"
+        description={selectedCopy ? `${bookName(selectedCopy.book_id)} · Copy record #${selectedCopy.id}` : undefined}
+        onClose={() => setSelectedCopyId(null)}
+        size="lg"
+        layer="foreground"
+      >
+        {selectedCopy ? <>
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800"><dt className="text-xs text-slate-500 dark:text-slate-400">Current status</dt><dd className="mt-1 font-semibold capitalize">{selectedCopy.status.replace('_', ' ')}</dd></div>
+            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800"><dt className="text-xs text-slate-500 dark:text-slate-400">Shelf location</dt><dd className="mt-1 font-semibold">{[selectedCopy.section, selectedCopy.shelf_number && `Shelf ${selectedCopy.shelf_number}`, selectedCopy.row_number && `Row ${selectedCopy.row_number}`, selectedCopy.position_number && `Position ${selectedCopy.position_number}`, selectedCopy.location].filter(Boolean).join(' · ') || 'Not set'}</dd></div>
+          </dl>
+          {selectedCopyCurrentLoan ? <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+            <h3 className="text-sm font-semibold">Current borrower</h3>
+            <p className="mt-1 text-sm">{memberName(selectedCopyCurrentLoan.student_id)}</p>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{selectedCopyCurrentLoan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : 'Checked out'} · Due {selectedCopyCurrentLoan.due_date ? new Date(selectedCopyCurrentLoan.due_date).toLocaleDateString() : '—'}</p>
+          </section> : <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">No active borrower. Checkout, return, and incident workflows update this copy’s status.</p>}
+          <section className="mt-5">
+            <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Circulation history</h3><span className="text-xs text-slate-500">{selectedCopyHistory.length} record{selectedCopyHistory.length === 1 ? '' : 's'}</span></div>
+            {selectedCopyHistory.length ? <ol className="mt-3 space-y-2">{selectedCopyHistory.map((loan) => <li key={loan.id} className="rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2"><strong>{memberName(loan.student_id)}</strong><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold capitalize dark:bg-slate-800">{loan.status.replace('_', ' ')}</span></div>
+              <p className="mt-1 text-xs text-slate-500">Checked out {new Date(loan.checked_out_at).toLocaleDateString()} · Due {new Date(loan.due_date).toLocaleDateString()}{loan.returned_at ? ` · Returned ${new Date(loan.returned_at).toLocaleDateString()}` : ''}</p>
+              <p className="mt-1 text-xs text-slate-500">{loan.return_condition ? `Return condition: ${loan.return_condition}` : `${loan.duration_days} days`} · Receipt {loan.receipt_number ?? '—'}</p>
+            </li>)}</ol> : <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-800">No completed checkout records for this copy yet.</p>}
+          </section>
+          {qrImages[selectedCopy.qr_token] ? <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+            <a href={qrImages[selectedCopy.qr_token]} target="_blank" rel="noreferrer" className="text-sm font-semibold text-sky-700 underline dark:text-sky-300">Open QR label</a>
+            <a href={qrImages[selectedCopy.qr_token]} download={`${selectedCopy.copy_code}-qr.png`} className="text-sm font-semibold text-sky-700 underline dark:text-sky-300">Download QR</a>
+            <button type="button" onClick={() => printQrLabels([selectedCopy])} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Print QR</button>
+          </div> : null}
+        </> : null}
+      </BaseModal>
+
       {copyDetailsBookId !== null ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCopyDetailsBookId(null) }}>
         <section className={`${panel} physical-copies-dialog max-h-[90vh] w-full max-w-4xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="copy-details-title">
           <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 id="copy-details-title" className="text-xl font-semibold">Copies for {bookName(copyDetailsBookId)}</h2><p className="mt-1 text-sm text-slate-500">Open, download, or print a QR label for any copy.</p></div><div className="flex gap-2"><button type="button" disabled={!detailCopies.some((copy) => qrImages[copy.qr_token])} onClick={() => printQrLabels(detailCopies)} className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Print all labels</button><button type="button" onClick={() => setCopyDetailsBookId(null)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div></div>
-          <div className="mt-4 overflow-hidden"><table className="w-full table-fixed text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[14%] px-2 py-3 sm:px-3">Copy</th><th className="w-[18%] px-2 py-3 sm:px-3">QR label</th><th className="w-[34%] px-2 py-3 sm:px-3">Location</th><th className="w-[12%] px-2 py-3 sm:px-3">Status</th><th className="w-[22%] px-2 py-3 sm:px-3">Actions</th></tr></thead><tbody>{detailCopies.map((copy) => { const draft = locationDrafts[copy.id] ?? { section: copy.section ?? '', shelf: copy.shelf_number ?? '', row: copy.row_number ?? '', position: copy.position_number ?? '' }; return <tr key={copy.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3 font-semibold sm:px-3">{copy.copy_code}</td><td className="px-2 py-3 sm:px-3">{qrImages[copy.qr_token] ? <a href={qrImages[copy.qr_token]} target="_blank" rel="noreferrer" aria-label={`Open QR image for ${copy.copy_code}`}><img src={qrImages[copy.qr_token]} alt={`QR label for ${copy.copy_code}`} className="h-12 w-12 rounded border border-slate-200 bg-white p-1 sm:h-16 sm:w-16 dark:border-slate-700" /></a> : <span className="text-xs text-slate-500">Generating...</span>}</td><td className="px-2 py-3 sm:px-3"><div className="grid grid-cols-2 gap-1"><input aria-label={`${copy.copy_code} section`} placeholder="Section" value={draft.section} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, section: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} shelf`} placeholder="Shelf" value={draft.shelf} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, shelf: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} row`} placeholder="Row" value={draft.row} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, row: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} position`} placeholder="Position" value={draft.position} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, position: event.target.value } })} className={`${input} min-w-0`} /></div></td><td className="break-words px-2 py-3 capitalize sm:px-3">{copy.status}</td><td className="px-2 py-3 sm:px-3"><div className="flex flex-col gap-2">{qrImages[copy.qr_token] ? <><a href={qrImages[copy.qr_token]} download={`${copy.copy_code}-qr.png`} className="text-xs font-semibold text-sky-700 underline dark:text-sky-300">Download QR</a><button type="button" onClick={() => printQrLabels([copy])} className="rounded-lg border border-slate-300 px-2 py-1 text-left text-xs font-semibold dark:border-slate-700">Print QR</button></> : <span className="text-xs text-slate-500">QR generating</span>}<button type="button" disabled={busy} onClick={() => void saveCopyLocation(copy)} className="rounded-lg border border-slate-300 px-2 py-1 text-left text-xs font-semibold disabled:opacity-50 dark:border-slate-700">Save location</button></div></td></tr> })}</tbody></table></div>
+          <div className="mt-4 overflow-hidden"><table className="w-full table-fixed text-left text-sm"><thead className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700"><tr><th className="w-[14%] px-2 py-3 sm:px-3">Copy</th><th className="w-[18%] px-2 py-3 sm:px-3">QR label</th><th className="w-[34%] px-2 py-3 sm:px-3">Location</th><th className="w-[12%] px-2 py-3 sm:px-3">Status</th><th className="w-[22%] px-2 py-3 sm:px-3">Actions</th></tr></thead><tbody>{detailCopies.map((copy) => { const draft = locationDrafts[copy.id] ?? { section: copy.section ?? '', shelf: copy.shelf_number ?? '', row: copy.row_number ?? '', position: copy.position_number ?? '' }; return <tr key={copy.id} className="border-b border-slate-100 align-top dark:border-slate-800"><td className="break-words px-2 py-3 sm:px-3"><button type="button" onClick={() => setSelectedCopyId(copy.id)} aria-label={`View copy details for ${copy.copy_code}`} className="font-semibold text-sky-700 underline-offset-2 hover:underline dark:text-sky-300">{copy.copy_code}</button></td><td className="px-2 py-3 sm:px-3">{qrImages[copy.qr_token] ? <a href={qrImages[copy.qr_token]} target="_blank" rel="noreferrer" aria-label={`Open QR image for ${copy.copy_code}`}><img src={qrImages[copy.qr_token]} alt={`QR label for ${copy.copy_code}`} className="h-12 w-12 rounded border border-slate-200 bg-white p-1 sm:h-16 sm:w-16 dark:border-slate-700" /></a> : <span className="text-xs text-slate-500">Generating...</span>}</td><td className="px-2 py-3 sm:px-3"><div className="grid grid-cols-2 gap-1"><input aria-label={`${copy.copy_code} section`} placeholder="Section" value={draft.section} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, section: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} shelf`} placeholder="Shelf" value={draft.shelf} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, shelf: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} row`} placeholder="Row" value={draft.row} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, row: event.target.value } })} className={`${input} min-w-0`} /><input aria-label={`${copy.copy_code} position`} placeholder="Position" value={draft.position} onChange={(event) => setLocationDrafts({ ...locationDrafts, [copy.id]: { ...draft, position: event.target.value } })} className={`${input} min-w-0`} /></div></td><td className="break-words px-2 py-3 capitalize sm:px-3">{copy.status}</td><td className="px-2 py-3 sm:px-3"><div className="flex flex-col gap-2">{qrImages[copy.qr_token] ? <><a href={qrImages[copy.qr_token]} download={`${copy.copy_code}-qr.png`} className="text-xs font-semibold text-sky-700 underline dark:text-sky-300">Download QR</a><button type="button" onClick={() => printQrLabels([copy])} className="rounded-lg border border-slate-300 px-2 py-1 text-left text-xs font-semibold dark:border-slate-700">Print QR</button></> : <span className="text-xs text-slate-500">QR generating</span>}<button type="button" disabled={busy} onClick={() => void saveCopyLocation(copy)} className="rounded-lg border border-slate-300 px-2 py-1 text-left text-xs font-semibold disabled:opacity-50 dark:border-slate-700">Save location</button></div></td></tr> })}</tbody></table></div>
         </section>
       </div> : null}
       {editingBook ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingBook(null) }}>
         <form onSubmit={(event) => void saveBookDetails(event)} className={`${panel} max-h-[90vh] w-full max-w-2xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="edit-physical-book-title">
           <div className="flex items-start justify-between gap-4"><div><h2 id="edit-physical-book-title" className="text-xl font-semibold">Edit physical book</h2><p className="mt-1 text-sm text-slate-500">Update the catalog details connected to this title.</p></div><button type="button" onClick={() => setEditingBook(null)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Title<input required maxLength={300} value={editBookForm.title} onChange={(event) => setEditBookForm({ ...editBookForm, title: event.target.value })} className={`${input} mt-1`} /></label><label className="text-sm font-medium">Author<input required maxLength={200} value={editBookForm.author} onChange={(event) => setEditBookForm({ ...editBookForm, author: event.target.value })} className={`${input} mt-1`} /></label><label className="text-sm font-medium">Category<input required maxLength={120} value={editBookForm.category} onChange={(event) => setEditBookForm({ ...editBookForm, category: event.target.value })} className={`${input} mt-1`} /></label><div><label className="text-sm font-medium">ISBN<input maxLength={32} value={editBookForm.isbn} onChange={(event) => setEditBookForm({ ...editBookForm, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateEditBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">Internal catalog ID, not a publisher-assigned ISBN.</p></div></div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Discipline<input maxLength={120} value={editBookForm.category} onChange={(event) => setEditBookForm({ ...editBookForm, category: event.target.value })} className={`${input} mt-1`} /></label><label className="text-sm font-medium">Genre<input maxLength={120} value={editBookForm.genre} onChange={(event) => setEditBookForm({ ...editBookForm, genre: event.target.value })} className={`${input} mt-1`} /></label><div><label className="text-sm font-medium">ISBN<input maxLength={32} value={editBookForm.isbn} onChange={(event) => setEditBookForm({ ...editBookForm, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateEditBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">Internal catalog ID, not a publisher-assigned ISBN.</p></div></div>
           <label className="mt-3 block text-sm font-medium">Description<textarea maxLength={3000} rows={4} value={editBookForm.description} onChange={(event) => setEditBookForm({ ...editBookForm, description: event.target.value })} className={`${input} mt-1`} /></label>
           <button disabled={busy} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save details'}</button>
         </form>
@@ -1369,12 +2324,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           || (returnConditions[lostFineLoanId] === 'lost' && (!lostFineDrafts[lostFineLoanId]?.amount.trim()
             || !Number.isFinite(Number(lostFineDrafts[lostFineLoanId]?.amount))
             || Number(lostFineDrafts[lostFineLoanId]?.amount) <= 0
-            || Number(lostFineDrafts[lostFineLoanId]?.amount) > 100000)))}
+            || Number(lostFineDrafts[lostFineLoanId]?.amount) > 100000))
+          || !deskIdentityMatches(loans.find((loan) => loan.id === lostFineLoanId)?.student_id ?? ''))}
         onClose={() => { if (lostFineLoanId !== null) setReturnConditions((current) => ({ ...current, [lostFineLoanId]: 'available' })); setLostFineLoanId(null) }}
         onConfirm={() => { if (lostFineLoanId !== null) void executeCloseLoan(lostFineLoanId) }}
       >
         {lostFineLoanId !== null ? <div className="grid gap-3">
           <p className="text-sm font-medium">Borrower: {memberName(loans.find((loan) => loan.id === lostFineLoanId)?.student_id ?? '')}</p>
+          <p className="text-xs text-slate-500">{deskIdentityMatches(loans.find((loan) => loan.id === lostFineLoanId)?.student_id ?? '') ? 'Institutional ID presentation confirmed.' : 'Search for this borrower, visually verify their institutional ID card, and confirm the check before saving.'}</p>
           {returnConditions[lostFineLoanId] === 'lost' ? <label className="text-sm font-medium">Staff-assessed replacement charge (PHP)
             <input type="number" required min="0.01" max="100000" step="0.01" inputMode="decimal" value={lostFineDrafts[lostFineLoanId]?.amount ?? ''} onChange={(event) => setLostFineDrafts((current) => ({ ...current, [lostFineLoanId]: { ...(current[lostFineLoanId] ?? { amount: '', reason: '' }), amount: event.target.value } }))} placeholder="Enter the assessed amount" className={`${input} mt-1`} />
           </label> : null}
@@ -1386,9 +2343,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     <ActionModal
       open={checkoutLoan !== null}
       title="Review physical-book request"
-      description="Verify the payment, assign the next available copy, and issue the borrower”™s receipt. Pending requests do not reserve a copy."
-      confirmLabel="Verify payment & issue receipt"
+      description="Collect the configured cash amount, assign the next available copy, and issue the borrower’s receipt. Pending requests do not reserve a copy."
+      confirmLabel="Record cash & issue receipt"
       busy={checkoutLoan !== null && processingRequestId === checkoutLoan.id}
+      confirmDisabled={checkoutLoan !== null && !deskIdentityMatches(checkoutLoan.student_id)}
       onClose={() => setCheckoutLoan(null)}
       onConfirm={() => {
         if (!checkoutLoan) return
@@ -1406,6 +2364,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Borrower
             <input readOnly value={memberName(checkoutLoan.student_id)} className={`${input} mt-1 bg-slate-100 dark:bg-slate-800`} />
           </label>
+          <p className={`text-xs sm:col-span-2 ${deskIdentityMatches(checkoutLoan.student_id) ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
+            {deskIdentityMatches(checkoutLoan.student_id) ? 'Institutional ID presented and photo matched. This confirmation will be included in the checkout record.' : 'Find this borrower in the desk identity check and confirm that their physical institutional ID card matches the profile photo.'}
+          </p>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Book
             <input readOnly value={bookName(checkoutLoan.book_id)} className={`${input} mt-1 bg-slate-100 dark:bg-slate-800`} />
           </label>
@@ -1416,7 +2377,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <input readOnly aria-readonly="true" value={Number(checkoutLoan.fee_amount).toFixed(2)} className={`${input} mt-1 cursor-not-allowed bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300`} />
           </label>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Payment method
-            <input readOnly value={checkoutLoan.payment_method === 'gcash' ? 'GCash' : 'Cash'} className={`${input} mt-1 bg-slate-100 dark:bg-slate-800`} />
+            <input readOnly value="Cash at the library desk" className={`${input} mt-1 bg-slate-100 dark:bg-slate-800`} />
           </label>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Payment notes (optional)
             <textarea maxLength={500} rows={2} value={checkoutNotes} onChange={(event) => setCheckoutNotes(event.target.value)} placeholder="Verification note or exception details" className={`${input} mt-1`} />
@@ -1436,7 +2397,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         title={pendingAction?.type === 'archiveMany' ? `Archive ${pendingAction.ids.length} catalog records?` : pendingAction?.type === 'deleteMany' ? `Delete ${pendingAction.ids.length} archived records?` : pendingAction?.type === 'checkout' ? 'Confirm physical checkout?' : pendingAction?.type === 'close' ? returnConditions[pendingAction.id] === 'lost' ? 'Open lost-item case?' : confirmingReturnRequest ? 'Confirm requested return?' : 'Record physical-book return?' : pendingAction?.type === 'reject' ? 'Reject physical-book request?' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Archive this book?' : 'Restore this book?' : pendingAction?.type === 'deleteBook' ? 'Permanently delete this archived title?' : 'Resolve lost-book hold?'}
         description={pendingAction?.type === 'archiveMany' ? 'These titles will be hidden from members. Existing copies and circulation records remain available.' : pendingAction?.type === 'deleteMany' ? 'Deletion is permanent. The database will keep any selected record with loans, payments, member activity, or attached files and report why it could not be removed.' : pendingAction?.type === 'close' ? `${confirmingReturnRequest ? 'The borrower return request will be completed. ' : ''}The selected condition (${returnConditions[pendingAction.id] ?? 'available'}) will be recorded.` : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? `This title will be hidden from members. Loan history and existing records will be preserved.` : `This title will become available in the active catalog again.` : pendingAction?.type === 'deleteBook' ? `This is permanent. Deletion is allowed only when the database finds no loan, payment, member activity, or attached file.` : undefined}
         confirmLabel={pendingAction?.type === 'archiveMany' ? 'Archive selected' : pendingAction?.type === 'deleteMany' ? 'Delete eligible titles' : pendingAction?.type === 'checkout' ? 'Confirm checkout' : pendingAction?.type === 'close' ? returnConditions[pendingAction.id] === 'lost' ? 'Mark lost' : confirmingReturnRequest ? 'Confirm return' : 'Record return' : pendingAction?.type === 'reject' ? 'Reject request' : pendingAction?.type === 'archiveBook' ? pendingAction.archived ? 'Archive book' : 'Restore book' : pendingAction?.type === 'deleteBook' ? 'Permanently delete' : 'Resolve hold'}
-        confirmDisabled={pendingAction?.type === 'close' && returnConditions[pendingAction.id] === 'lost' && !lostFineDrafts[pendingAction.id]?.reason.trim()}
+        confirmDisabled={pendingAction?.type === 'close' && (
+          !deskIdentityMatches(loans.find((loan) => loan.id === pendingAction.id)?.student_id ?? '')
+          || (returnConditions[pendingAction.id] === 'lost' && !lostFineDrafts[pendingAction.id]?.reason.trim())
+        )}
         tone={pendingAction?.type === 'archiveMany' || pendingAction?.type === 'checkout' || pendingAction?.type === 'close' || (pendingAction?.type === 'archiveBook' && !pendingAction.archived) ? 'default' : 'danger'}
         busy={pendingAction?.type === 'archiveBook' || pendingAction?.type === 'deleteBook' || pendingAction?.type === 'archiveMany' || pendingAction?.type === 'deleteMany' ? busy : pendingAction !== null && (pendingAction.type === 'close' || pendingAction.type === 'checkout' || pendingAction.type === 'reject') && processingRequestId === pendingAction.id}
         onClose={() => setPendingAction(null)}
@@ -1452,18 +2416,74 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           else if (action?.type === 'reject') void executeRejectRequest(action.id)
         }}
       >
+        {pendingAction?.type === 'close' ? <p className="text-xs text-slate-500">{deskIdentityMatches(loans.find((loan) => loan.id === pendingAction.id)?.student_id ?? '') ? 'Institutional ID presentation confirmed.' : 'Search for this borrower, visually verify their institutional ID card, and confirm the check before saving.'}</p> : null}
       </ActionModal>
+    <ActionModal
+      open={renewalDraft !== null}
+      title="Renew physical loan?"
+      description={renewalLoan ? `${bookName(renewalLoan.book_id)} · ${memberName(renewalLoan.student_id)}. There is no renewal-count limit. The new due date starts on the renewal date.` : undefined}
+      confirmLabel="Confirm renewal and payment"
+      confirmDisabled={!renewalDraft || !renewalLoan || !selectedRenewalOption
+        || !deskIdentityMatches(renewalLoan.student_id)
+        || selectedDeskMemberOverdue || selectedDeskMemberUnpaid > 0
+        || !Number.isFinite(Number(renewalDraft.amountPaid))
+        || Math.round(Number(renewalDraft.amountPaid) * 100) !== Math.round(Number(selectedRenewalOption?.fee_amount ?? 0) * 100)}
+      tone="default"
+      busy={renewalProcessing}
+      onClose={() => { if (!renewalProcessing) setRenewalDraft(null) }}
+      onConfirm={() => void executeRenewal()}
+    >
+      {renewalDraft && renewalLoan ? <div className="grid gap-3">
+        <label className="block text-sm font-medium">Renewal period and fee
+          <select
+            required
+            value={String(renewalDraft.durationDays)}
+            onChange={(event) => {
+              const durationDays = Number(event.target.value)
+              const option = renewalOptions.find((entry) => entry.duration_days === durationDays)
+              setRenewalDraft((current) => current ? {
+                ...current,
+                durationDays,
+                amountPaid: option ? Number(option.fee_amount).toFixed(2) : '',
+              } : null)
+            }}
+            className={`${input} mt-1`}
+          >
+            {renewalOptions.map((option) => <option key={option.id} value={option.duration_days}>
+              {option.duration_days} days · PHP {Number(option.fee_amount).toFixed(2)}
+            </option>)}
+          </select>
+        </label>
+        <label className="block text-sm font-medium">Amount received (PHP)
+          <input required type="number" min="0" step="0.01" value={renewalDraft.amountPaid}
+            onChange={(event) => setRenewalDraft((current) => current ? { ...current, amountPaid: event.target.value } : null)}
+            className={`${input} mt-1`} />
+        </label>
+        <label className="block text-sm font-medium">Payment notes (optional)
+          <textarea maxLength={500} rows={2} value={renewalDraft.notes}
+            onChange={(event) => setRenewalDraft((current) => current ? { ...current, notes: event.target.value } : null)}
+            className={`${input} mt-1`} />
+        </label>
+        <p className="text-xs text-slate-500">
+          The borrower must present a physical institutional ID card, be free of overdue or lost loans, and have no unpaid physical-fine balance above PHP 100.
+          {deskIdentityMatches(renewalLoan.student_id) ? ' ID card presentation and photo match confirmed.' : ' Complete the desk identity check before continuing.'}
+        </p>
+      </div> : null}
+    </ActionModal>
     <ActionModal
       open={fineWaiver !== null}
       title="Waive physical fine?"
       description={fineWaiver ? `Waive ₱${Number(physicalFines.find((fine) => fine.id === fineWaiver.id)?.amount ?? 0).toFixed(2)} for ${memberName(physicalFines.find((fine) => fine.id === fineWaiver.id)?.student_id ?? '')}. The reason is saved to the member record and audit history.` : undefined}
       confirmLabel="Record waiver"
-      confirmDisabled={!fineWaiver?.reason.trim() || fineWaiver.reason.trim().length > 500}
+      confirmDisabled={!fineWaiver?.reasonCategory || !fineWaiver.justification.trim() || fineWaiver.justification.trim().length > 500}
       busy={busy}
       onClose={() => setFineWaiver(null)}
       onConfirm={() => void waivePhysicalFine()}
     >
-      {fineWaiver ? <label className="block text-sm font-medium">Waiver reason<textarea required minLength={1} maxLength={500} rows={3} value={fineWaiver.reason} onChange={(event) => setFineWaiver((current) => current ? { ...current, reason: event.target.value } : null)} placeholder="Explain the review decision or correction" className={`${input} mt-1`} /></label> : null}
+      {fineWaiver ? <div className="grid gap-3">
+        <label className="block text-sm font-medium">Reason category<select required value={fineWaiver.reasonCategory} onChange={(event) => setFineWaiver((current) => current ? { ...current, reasonCategory: event.target.value } : null)} className={`${input} mt-1`}><option value="">Select a category</option><option>Medical Excuse</option><option>Administrative Exemption</option></select></label>
+        <label className="block text-sm font-medium">Justification<textarea required minLength={1} maxLength={500} rows={3} value={fineWaiver.justification} onChange={(event) => setFineWaiver((current) => current ? { ...current, justification: event.target.value } : null)} placeholder="Record the supporting details for this waiver" className={`${input} mt-1`} /></label>
+      </div> : null}
     </ActionModal>
     <ActionModal
       open={finePaymentConfirmation !== null}
@@ -1487,18 +2507,45 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       {fineRefundConfirmation ? <label className="block text-sm font-medium">Cashier refund note<textarea required maxLength={500} rows={3} value={fineRefundConfirmation.reason} onChange={(event) => setFineRefundConfirmation((current) => current ? { ...current, reason: event.target.value } : null)} placeholder="Record how and when the refund was issued" className={`${input} mt-1`} /></label> : null}
     </ActionModal>
     {financeReceipt ? (() => {
-      const receiptNumber = financeReceipt.kind === 'fine' ? financeReceipt.fine.receipt_number : financeReceipt.kind === 'checkout' ? financeReceipt.loan.receipt_number : financeReceipt.payment.receipt_number
-      const title = financeReceipt.kind === 'fine' ? fineTypeLabel(financeReceipt.fine.fine_type) : financeReceipt.kind === 'checkout' ? 'Physical book checkout' : 'Print service'
-      const amount = financeReceipt.kind === 'fine' ? Number(financeReceipt.fine.amount) : financeReceipt.kind === 'checkout' ? Number(financeReceipt.loan.fee_amount) : Number(financeReceipt.payment.amount)
-      const memberId = financeReceipt.kind === 'fine' ? financeReceipt.fine.student_id : financeReceipt.kind === 'checkout' ? financeReceipt.loan.student_id : financeReceipt.payment.student_id
+      const receiptNumber = financeReceipt.kind === 'fine' ? financeReceipt.fine.receipt_number
+        : financeReceipt.kind === 'checkout' ? financeReceipt.loan.receipt_number
+          : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.receipt_number
+            : financeReceipt.payment.receipt_number
+      const title = financeReceipt.kind === 'fine' ? fineTypeLabel(financeReceipt.fine.fine_type)
+        : financeReceipt.kind === 'checkout' ? 'Physical book checkout'
+          : financeReceipt.kind === 'renewal' ? 'Physical loan renewal' : 'Print service'
+      const amount = financeReceipt.kind === 'fine' ? Number(financeReceipt.fine.amount)
+        : financeReceipt.kind === 'checkout' ? Number(financeReceipt.loan.fee_amount)
+          : financeReceipt.kind === 'renewal' ? Number(financeReceipt.renewal.amount_received)
+            : Number(financeReceipt.payment.amount)
+      const memberId = financeReceipt.kind === 'fine' ? financeReceipt.fine.student_id
+        : financeReceipt.kind === 'checkout' ? financeReceipt.loan.student_id
+          : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.student_id
+            : financeReceipt.payment.student_id
       const description = financeReceipt.kind === 'fine'
         ? `${bookName(loans.find((loan) => loan.id === financeReceipt.fine.physical_book_request_id)?.book_id ?? 0)} · Case #${financeReceipt.fine.physical_book_request_id}${financeReceipt.fine.fine_reason ? ` · ${financeReceipt.fine.fine_reason}` : ''}`
         : financeReceipt.kind === 'checkout'
           ? `${bookName(financeReceipt.loan.book_id)} · ${copyCode(financeReceipt.loan.copy_id)} · ${financeReceipt.loan.duration_days} days`
-          : financeReceipt.payment.description
-      const date = financeReceipt.kind === 'fine' ? financeReceipt.fine.paid_at ?? financeReceipt.fine.created_at : financeReceipt.kind === 'checkout' ? financeReceipt.loan.checked_out_at : financeReceipt.payment.created_at
-      return <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFinanceReceipt(null) }}><section className="physical-finance-receipt w-full max-w-lg rounded-2xl bg-white p-6 text-slate-900 shadow-2xl dark:bg-slate-900 dark:text-slate-100" role="dialog" aria-modal="true" aria-labelledby="finance-receipt-title"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Smart Lib · Official receipt</p><h2 id="finance-receipt-title" className="mt-1 text-xl font-semibold">{title}</h2></div><button type="button" data-print-hide onClick={() => setFinanceReceipt(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">Close</button></div><p className="mt-5 border-y border-dashed border-slate-300 py-3 font-mono text-sm">Receipt {receiptNumber ?? 'Unavailable'}</p><dl className="mt-4 space-y-3 text-sm"><div><dt className="text-xs text-slate-500">Received from</dt><dd className="font-medium">{memberName(memberId)}</dd></div><div><dt className="text-xs text-slate-500">Details</dt><dd>{description}</dd></div><div><dt className="text-xs text-slate-500">Date</dt><dd>{new Date(date).toLocaleString()}</dd></div><div><dt className="text-xs text-slate-500">Amount</dt><dd className="text-lg font-semibold">PHP {amount.toFixed(2)}</dd></div>{financeReceipt.kind === 'fine' ? <div><dt className="text-xs text-slate-500">Payment status</dt><dd className="capitalize">{financeReceipt.fine.status}</dd></div> : financeReceipt.kind === 'checkout' ? <div><dt className="text-xs text-slate-500">Payment</dt><dd className="capitalize">{financeReceipt.loan.payment_method} · {financeReceipt.loan.payment_status}</dd></div> : null}</dl><p className="mt-6 text-xs text-slate-500">Keep this receipt for your records.</p><div data-print-hide className="mt-5 flex justify-end"><button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Print receipt</button></div></section></div>
+          : financeReceipt.kind === 'renewal'
+            ? `${bookName(loans.find((loan) => loan.id === financeReceipt.renewal.request_id)?.book_id ?? 0)} · ${copyCode(financeReceipt.renewal.copy_id)} · ${financeReceipt.renewal.duration_days} days · Due ${new Date(financeReceipt.renewal.new_due_date).toLocaleDateString()}`
+            : financeReceipt.payment.description
+      const date = financeReceipt.kind === 'fine' ? financeReceipt.fine.paid_at ?? financeReceipt.fine.created_at
+        : financeReceipt.kind === 'checkout' ? financeReceipt.loan.checked_out_at
+          : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.created_at
+            : financeReceipt.payment.created_at
+      return <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFinanceReceipt(null) }}><section className="physical-finance-receipt w-full max-w-lg rounded-2xl bg-white p-6 text-slate-900 shadow-2xl dark:bg-slate-900 dark:text-slate-100" role="dialog" aria-modal="true" aria-labelledby="finance-receipt-title"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Smart Lib · Official receipt</p><h2 id="finance-receipt-title" className="mt-1 text-xl font-semibold">{title}</h2></div><button type="button" data-print-hide onClick={() => setFinanceReceipt(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">Close</button></div><p className="mt-5 border-y border-dashed border-slate-300 py-3 font-mono text-sm">Receipt {receiptNumber ?? 'Unavailable'}</p><dl className="mt-4 space-y-3 text-sm"><div><dt className="text-xs text-slate-500">Received from</dt><dd className="font-medium">{memberName(memberId)}</dd></div><div><dt className="text-xs text-slate-500">Details</dt><dd>{description}</dd></div><div><dt className="text-xs text-slate-500">Date</dt><dd>{new Date(date).toLocaleString()}</dd></div><div><dt className="text-xs text-slate-500">Amount</dt><dd className="text-lg font-semibold">PHP {amount.toFixed(2)}</dd></div>{financeReceipt.kind === 'fine' ? <div><dt className="text-xs text-slate-500">Payment status</dt><dd className="capitalize">{financeReceipt.fine.status}</dd></div> : financeReceipt.kind === 'checkout' ? <div><dt className="text-xs text-slate-500">Payment</dt><dd className="capitalize">{financeReceipt.loan.payment_method} · {financeReceipt.loan.payment_status}</dd></div> : financeReceipt.kind === 'renewal' ? <div><dt className="text-xs text-slate-500">Payment</dt><dd>PHP {Number(financeReceipt.renewal.amount_received).toFixed(2)} received · {financeReceipt.renewal.duration_days} days</dd></div> : null}</dl><p className="mt-6 text-xs text-slate-500">Keep this receipt for your records.</p><div data-print-hide className="mt-5 flex justify-end"><button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Print receipt</button></div></section></div>
     })() : null}
+    <StaffMemberEnrollmentModal
+      open={memberEnrollmentOpen}
+      onClose={() => setMemberEnrollmentOpen(false)}
+      onCreated={(email, username) => { void onMemberInvited(email, username) }}
+    />
+    <StaffCashPointTopUpModal
+      member={topUpMember}
+      open={topUpMember !== null}
+      onClose={() => setTopUpMember(null)}
+      onCompleted={() => { void load() }}
+    />
     {!requestsOnly && !overviewOnly && !catalogOnly && !policyOnly && !finesOnly ? <BookAssistant /> : null}
   </main>
 }

@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
--- Apply COMPLETE_SCHEMA.sql, then the physical borrowing policy and availability alert migrations, to a disposable local database first.
+-- Apply COMPLETE_SCHEMA.sql to a disposable local database first.
 begin;
-select plan(63);
+select plan(97);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -12,7 +12,13 @@ insert into auth.users (
   ('d3600000-0000-4000-8000-000000000002', '00000000-0000-0000-0000-000000000000',
    'authenticated', 'authenticated', 'qa-other@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now()),
   ('d3600000-0000-4000-8000-000000000003', '00000000-0000-0000-0000-000000000000',
-   'authenticated', 'authenticated', 'qa-admin@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now())
+   'authenticated', 'authenticated', 'qa-admin@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now()),
+  ('d3600000-0000-4000-8000-000000000004', '00000000-0000-0000-0000-000000000000',
+   'authenticated', 'authenticated', 'qa-waitlist-one@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now()),
+  ('d3600000-0000-4000-8000-000000000005', '00000000-0000-0000-0000-000000000000',
+   'authenticated', 'authenticated', 'qa-waitlist-two@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now()),
+  ('d3600000-0000-4000-8000-000000000007', '00000000-0000-0000-0000-000000000000',
+   'authenticated', 'authenticated', 'qa-librarian@smartlib.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now())
 on conflict (id) do nothing;
 
 update public.profiles set role = 'student', points_balance = 30
@@ -21,6 +27,11 @@ update public.profiles set role = 'student', points_balance = 0
 where id = 'd3600000-0000-4000-8000-000000000002';
 update public.profiles set role = 'admin'
 where id = 'd3600000-0000-4000-8000-000000000003';
+update public.profiles set role = 'student', points_balance = 0
+where id in ('d3600000-0000-4000-8000-000000000004', 'd3600000-0000-4000-8000-000000000005');
+update public.profiles set role = 'librarian'
+where id = 'd3600000-0000-4000-8000-000000000007';
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
 
 insert into public.books (id, title, author, category, catalog_type, access_mode, access_points)
 values
@@ -42,13 +53,41 @@ on conflict (id) do nothing;
 insert into public.academic_courses (id, name, is_active)
 values (910010, 'QA Course', true)
 on conflict (id) do nothing;
+insert into public.academic_departments (name, is_active)
+values ('QA Department', true)
+on conflict do nothing;
+
+insert into auth.users (
+  id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  'd3600000-0000-4000-8000-000000000006',
+  '00000000-0000-0000-0000-000000000000',
+  'authenticated', 'authenticated', 'qa-untrusted-faculty@smartlib.test', '', now(),
+  '{}'::jsonb,
+  '{"member_type":"faculty","department":"QA Department"}'::jsonb,
+  now(), now()
+);
+select is(
+  (select role from public.profiles where id = 'd3600000-0000-4000-8000-000000000006'),
+  'student',
+  'User-controlled metadata cannot assign the faculty role during profile provisioning'
+);
+update public.profiles set role = 'faculty'
+where id = 'd3600000-0000-4000-8000-000000000006';
+select is(
+  (select role from public.profiles where id = 'd3600000-0000-4000-8000-000000000006'),
+  'faculty',
+  'The trusted administrator workflow can assign the faculty role after invitation'
+);
 
 insert into public.physical_book_copies (id, book_id, copy_code, status)
 values (910004, 910004, 'QA-WORKFLOW-001', 'available')
 on conflict (id) do nothing;
 insert into public.physical_loan_options (id, book_id, duration_days, fee_amount, is_active)
 values (910004, 910004, 14, 0, true)
-on conflict (id) do nothing;
+on conflict (book_id, duration_days)
+do update set fee_amount = excluded.fee_amount, is_active = excluded.is_active;
 insert into public.book_contributions (
   id, user_id, title, author, description, pdf_url, status,
   storage_provider, storage_path, file_name, file_size, mime_type
@@ -168,9 +207,9 @@ select throws_ok(
   'Insufficient points prevent a digital loan'
 );
 select throws_ok(
-  $$ select public.admin_confirm_physical_checkout(910004) $$,
+  $$ select public.admin_confirm_physical_checkout(910004, 0, null, true) $$,
   'P0001',
-  'Librarian or administrator access required',
+  'Librarian access required',
   'A student cannot check out a physical book as a librarian'
 );
 select throws_ok(
@@ -206,9 +245,60 @@ select is(
   null,
   'The second pending request also has no assigned copy'
 );
+select throws_ok(
+  $$ select public.request_physical_book(910004, null, 14, 'cash', null, null) $$,
+  'P0001',
+  'You already have an open request or loan for this book',
+  'A duplicate physical request is rejected after serialization'
+);
 
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
-select is((public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004))).status, 'checked_out', 'An administrator checks out the requested physical copy');
+select throws_ok(
+  $$ select public.admin_confirm_physical_checkout(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    0, null, true
+  ) $$,
+  'P0001',
+  'Librarian access required',
+  'An administrator cannot perform a physical checkout'
+);
+select throws_ok(
+  $$ select public.admin_decide_physical_request(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    'rejected'
+  ) $$,
+  'P0001',
+  'Librarian access required',
+  'An administrator cannot decide a physical circulation request'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007', true);
+select throws_ok(
+  $$ select public.admin_confirm_physical_checkout(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    0, null, false
+  ) $$,
+  'P0001',
+  'Confirm that the member presented a physical institutional ID card',
+  'A checkout is rejected unless staff attest to seeing the member ID card'
+);
+select is(
+  (select status from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+  'pending',
+  'A rejected checkout leaves its request pending'
+);
+select is(
+  (select status from public.physical_book_copies where id = 910004),
+  'available',
+  'A rejected checkout leaves the copy available'
+);
+select is(
+  (public.admin_confirm_physical_checkout(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    0, null, true
+  )).status,
+  'checked_out',
+  'A librarian checks out the requested physical copy after ID verification'
+);
 select is((select status from public.physical_book_copies where id = 910004), 'borrowed', 'Checkout updates the physical copy state');
 select is(
   (select count(*)::integer from public.physical_book_loan_history where request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
@@ -216,7 +306,62 @@ select is(
   'Checkout creates one physical loan history record'
 );
 select throws_ok(
-  $$ select public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004)) $$,
+  $$ select public.admin_renew_physical_loan(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    14, 0, 'QA renewal', false
+  ) $$,
+  'P0001',
+  'Confirm that the member presented a physical institutional ID card',
+  'A renewal is rejected unless staff attest to seeing the member ID card'
+);
+select is(
+  (public.admin_renew_physical_loan(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    14, 0, 'QA renewal', true
+  )).duration_days,
+  14,
+  'Staff renew an active physical loan using a configured duration'
+);
+select is(
+  (select new_due_date = created_at + interval '14 days'
+   from public.physical_book_renewals
+   where request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+  true,
+  'The renewed due date is calculated from the renewal timestamp'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
+select is(
+  (select count(*)::integer from public.audit_logs
+   where action = 'physical_loan_renewed'
+     and target_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+  1,
+  'A physical loan renewal is recorded in the audit log'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007', true);
+select throws_ok(
+  $$ select public.admin_close_physical_loan(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    'invalid-condition'
+  ) $$,
+  'P0001',
+  'Choose available, damaged, or lost',
+  'An invalid return outcome is rejected'
+);
+select is(
+  (select status from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+  'checked_out',
+  'A rejected return leaves the loan checked out'
+);
+select is(
+  (select status from public.physical_book_copies where id = 910004),
+  'borrowed',
+  'A rejected return leaves the copy borrowed'
+);
+select throws_ok(
+  $$ select public.admin_confirm_physical_checkout(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
+    0, null, true
+  ) $$,
   'P0001',
   'No physical copy is currently available',
   'A second checkout fails after the last copy is assigned'
@@ -226,21 +371,38 @@ select is(
   'pending',
   'A failed checkout leaves the second request pending'
 );
-insert into public.physical_book_waitlist(student_id, book_id)
-values
-  ('d3600000-0000-4000-8000-000000000001', 910004),
-  ('d3600000-0000-4000-8000-000000000002', 910004)
-on conflict (student_id, book_id) do nothing;
-select is((public.admin_close_physical_loan((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004), 'available')).status, 'returned', 'An administrator records a physical-book return');
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000004', true);
+select lives_ok(
+  $$ select public.join_physical_book_waitlist(910004) $$,
+  'An eligible member can join a physical-copy waitlist'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000005', true);
+select lives_ok(
+  $$ select public.join_physical_book_waitlist(910004) $$,
+  'A second eligible member can subscribe to physical availability'
+);
+select throws_ok(
+  $$ select public.admin_inspect_physical_return(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
+    'available', 0, null, true
+  ) $$,
+  'P0001',
+  'Librarian access required',
+  'An administrator cannot inspect or close a physical return'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007', true);
+select is((public.admin_close_physical_loan((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004), 'available')).status, 'returned', 'A librarian records a physical-book return');
 select is((select status from public.physical_book_copies where id = 910004), 'available', 'Returning a physical book makes its copy available');
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
 select is(
   (select count(*)::integer from public.notifications
    where event_type = 'physical_book_available'
      and reference_id = 910004
-     and user_id in ('d3600000-0000-4000-8000-000000000001', 'd3600000-0000-4000-8000-000000000002')),
+     and user_id in ('d3600000-0000-4000-8000-000000000004', 'd3600000-0000-4000-8000-000000000005')),
   2,
   'A newly available copy alerts all subscribed members at once'
 );
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007', true);
 select is(
   (select count(*)::integer from public.physical_book_waitlist where book_id = 910004),
   2,
@@ -251,6 +413,7 @@ select is(
   'returned',
   'Return updates the existing physical loan history record'
 );
+reset role;
 update public.physical_book_requests
 set due_date = '2025-10-01 12:00:00+08'::timestamptz,
     returned_at = '2025-10-08 12:00:00+08'::timestamptz
@@ -258,6 +421,7 @@ where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004;
 insert into public.library_holidays (holiday_date, name)
 values ('2025-10-06', 'QA policy holiday')
 on conflict (holiday_date) do nothing;
+set local role authenticated;
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000001', true);
 select lives_ok(
   $$ select public.calculate_overdue_fines() $$,
@@ -269,14 +433,44 @@ select is(
   'Fine calculation excludes the two grace days, Sunday, and a configured holiday'
 );
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
+select throws_ok(
+  $$ select public.admin_waive_physical_fine(
+    (select id from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+    null, 'QA test waiver'
+  ) $$,
+  'P0001',
+  'Choose a supported waiver reason',
+  'A fine cannot be waived without a structured reason category'
+);
 select is(
-  (public.admin_confirm_physical_checkout((select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004))).status,
+  (public.admin_waive_physical_fine(
+    (select id from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004)),
+    'Medical Excuse', 'QA test waiver'
+  )).status,
+  'waived',
+  'An administrator can waive a fine with a structured category and justification'
+);
+select is(
+  (select count(*)::integer from public.audit_logs
+   where action = 'physical_fine_waiver_justified'
+     and target_id = (select id from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004))),
+  1,
+  'A justified fine waiver is recorded in the audit log'
+);
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007', true);
+select is(
+  (public.admin_confirm_physical_checkout(
+    (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
+    0, null, true
+  )).status,
   'checked_out',
   'A returned copy can be checked out to the second borrower'
 );
+reset role;
 update public.physical_book_requests
 set due_date = '2025-01-01 12:00:00+08'::timestamptz
 where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004;
+set local role authenticated;
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000002', true);
 select lives_ok(
   $$ select public.calculate_overdue_fines() $$,
@@ -295,14 +489,20 @@ select is(
 select throws_ok(
   $$ select public.request_digital_loan(910001, 7) $$,
   'P0001',
-  'New digital access is unavailable while an overdue physical item or unpaid physical fine remains.',
+  'New borrowing is unavailable while an overdue physical item or a balance above ₱100 remains.',
   'An overdue lost physical item blocks new digital access'
 );
 select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
 select is(
   (public.admin_record_physical_fine_payment((select id from public.fines where physical_book_request_id = (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004)))).status,
   'paid',
-  'A librarian can record cashier settlement for a closed or lost item'
+  'An administrator can record cashier settlement for a closed or lost item'
+);
+select throws_ok(
+  $$ select public.admin_review_book_contribution(910020, 'rejected', 0, 0, null) $$,
+  'P0001',
+  'Choose a supported rejection reason',
+  'A contribution cannot be rejected without a structured reason'
 );
 select is(
   (public.admin_review_book_contribution(910020, 'approved', 4, 0)).status,
@@ -375,6 +575,28 @@ select is(
   'Approving a legacy prefixed path preserves its existing file location'
 );
 select is(
+  (public.admin_award_recognition(
+    'd3600000-0000-4000-8000-000000000001', 'special_recognition', 1000, 'QA daily cap'
+  )).points,
+  1000,
+  'An administrator can use the full daily points allowance'
+);
+select throws_ok(
+  $$ select public.admin_award_recognition(
+    'd3600000-0000-4000-8000-000000000001', 'special_recognition', 1, 'QA over cap'
+  ) $$,
+  'P0001',
+  'Daily points grant limit of 1,000 points reached',
+  'The daily points cap is enforced on the server'
+);
+select is(
+  (select count(*)::integer from public.audit_logs
+   where action = 'recognition_awarded'
+     and details->>'target_user_id' = 'd3600000-0000-4000-8000-000000000001'),
+  1,
+  'A successful points grant is recorded in the audit log'
+);
+select is(
   (public.admin_update_member_academics(
     'd3600000-0000-4000-8000-000000000002', 'faculty', 'QA School', 'QA Department',
     null, null, 910010
@@ -386,6 +608,73 @@ select is(
   (select faculty_rank_id from public.profiles where id = 'd3600000-0000-4000-8000-000000000002'),
   910010::bigint,
   'An administrator can assign a faculty title'
+);
+reset role;
+insert into auth.users (
+  id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  'd3600000-0000-4000-8000-000000000008',
+  '00000000-0000-0000-0000-000000000000',
+  'authenticated', 'authenticated', 'qa-policy-member@smartlib.test', '', now(),
+  '{}'::jsonb, '{}'::jsonb, now(), now()
+) on conflict (id) do nothing;
+update public.profiles set role = 'student'
+where id = 'd3600000-0000-4000-8000-000000000008';
+select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003', true);
+set local role authenticated;
+select is(
+  (select faculty_lesson_reward_points from public.library_policy_settings where id = 1),
+  25,
+  'The default faculty lesson reward is configurable and begins at 25 points'
+);
+select lives_ok(
+  $$ select public.admin_update_library_policy(1, 7.00, 70.00, 40, 33, 'Updated policy: top-ups at the library desk.') $$,
+  'An administrator can save bounded policy fields and a member-facing notice'
+);
+select is(
+  (select faculty_lesson_reward_points from public.library_policy_settings where id = 1),
+  33,
+  'The configured faculty lesson reward is persisted'
+);
+select lives_ok(
+  $$ select public.request_physical_book(910004, null, 14, 'cash', null, null) $$,
+  'A new member request can be created with the configured policy'
+);
+select is(
+  (select policy_grace_days || ':' || policy_daily_fine || ':' || policy_fine_cap || ':' || policy_lost_days
+   from public.physical_book_requests
+   where student_id = 'd3600000-0000-4000-8000-000000000008' and book_id = 910004),
+  '1:7.00:70.00:40',
+  'New physical requests snapshot enforceable policy values'
+);
+select lives_ok(
+  $$ select public.admin_update_library_policy(0, 9.00, 90.00, 50, 44, 'Later policy update.') $$,
+  'An administrator can later change the policy without rewriting a loan'
+);
+select is(
+  (select policy_grace_days || ':' || policy_daily_fine || ':' || policy_fine_cap || ':' || policy_lost_days
+   from public.physical_book_requests
+   where student_id = 'd3600000-0000-4000-8000-000000000008' and book_id = 910004),
+  '1:7.00:70.00:40',
+  'Existing requests retain their original policy snapshot after a policy update'
+);
+select is(
+  (select count(*)::integer from public.audit_logs
+   where action = 'account_created'
+     and details->>'target_user_id' = 'd3600000-0000-4000-8000-000000000008'),
+  1,
+  'New profile creation is recorded in the audit log'
+);
+select lives_ok(
+  $$ update public.books set description = 'QA audited metadata update' where id = 910004 $$,
+  'An administrator can update catalog metadata'
+);
+select is(
+  (select count(*)::integer from public.audit_logs
+   where action = 'book_updated' and target_type = 'book' and target_id = 910004),
+  1,
+  'Catalog metadata changes are recorded in the audit log'
 );
 select * from finish();
 rollback;

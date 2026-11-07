@@ -11,11 +11,13 @@ type Recognition = { id: number; category: string; points: number; reason: strin
 type Grant = { id: number; book_id: number; access_type: string; points_paid: number; granted_at: string; expires_at: string | null; status: string; books?: { title: string }[] | null }
 type BorrowAccess = { id: number; book_id: number; points_cost: number; request_date: string | null; due_date: string | null; status: string; books?: { title: string }[] | null }
 type Achievement = { id: string; name: string; description: string; awarded_at: string }
+type CashTopUp = { id: number; bundle_points: number; amount_paid: number; receipt_number: string; created_at: string }
 
 export default function PointsPage() {
   const router = useRouter()
   const [balance, setBalance] = useState(0)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [cashTopUps, setCashTopUps] = useState<CashTopUp[]>([])
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [recognition, setRecognition] = useState<Recognition[]>([])
   const [grants, setGrants] = useState<Grant[]>([])
@@ -32,7 +34,7 @@ export default function PointsPage() {
       const isMissingTableError = (error: { code?: string; message?: string } | null) =>
         Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
-      const [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult, borrowAccessResult] = await Promise.all([
+      const [profileResult, transactionResult, contributionResult, recognitionResult, grantResult, achievementResult, borrowAccessResult, topUpResult] = await Promise.all([
         supabase.from('profiles').select('points_balance').eq('id', user.id).single(),
         supabase.from('point_transactions').select('id,amount,transaction_type,description,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(100),
         supabase.from('book_contributions').select('id,title,status,points_awarded,approved_book_id,created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
@@ -40,11 +42,14 @@ export default function PointsPage() {
         supabase.from('book_access_grants').select('id,book_id,access_type,points_paid,granted_at,expires_at,status,books(title)').eq('student_id', user.id).order('granted_at', { ascending: false }),
         supabase.from('user_achievements').select('awarded_at,achievements(name,description)').eq('user_id', user.id).order('awarded_at', { ascending: false }),
         supabase.from('borrow_requests').select('id,book_id,points_cost,request_date,due_date,status,books(title)').eq('student_id', user.id).gt('points_cost', 0).order('request_date', { ascending: false }).limit(100),
+        supabase.from('point_topups').select('id,bundle_points,amount_paid,receipt_number,created_at').eq('member_id', user.id).order('created_at', { ascending: false }).limit(100),
       ])
       const coreError = [profileResult, transactionResult, contributionResult].find((result) => result.error && !isMissingTableError(result.error))?.error
       if (coreError) setError('Unable to load your points activity right now.')
       setBalance(profileResult.data?.points_balance ?? 0)
       setTransactions((transactionResult.data ?? []) as Transaction[])
+      if (topUpResult.error && !isMissingTableError(topUpResult.error)) setError('Unable to load point top-up receipts.')
+      setCashTopUps((topUpResult.data ?? []) as CashTopUp[])
       const contributionItems = (contributionResult.data ?? []) as Contribution[]
       setContributions(contributionItems)
       setRecognition((!recognitionResult.error || !isMissingTableError(recognitionResult.error) ? (recognitionResult.data ?? []) : []) as Recognition[])
@@ -95,7 +100,7 @@ export default function PointsPage() {
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div> : null}
         <section className="grid gap-4 sm:grid-cols-3"><div className="surface-card p-5"><p className="text-xs uppercase tracking-wider text-slate-500">Lifetime earned</p><strong className="mt-3 block text-2xl">{earned}</strong></div><div className="surface-card p-5"><p className="text-xs uppercase tracking-wider text-slate-500">Points spent</p><strong className="mt-3 block text-2xl">{spent}</strong></div><div className="surface-card p-5"><p className="text-xs uppercase tracking-wider text-slate-500">Approved contributions</p><strong className="mt-3 block text-2xl">{approved}</strong></div></section>
         <section className="grid gap-6 lg:grid-cols-[1.1fr_.9fr]">
-          <div className="surface-card p-6"><h2 className="text-xl font-semibold">Transaction history</h2><div className="mt-4 divide-y divide-paper-300 dark:divide-forest-700">{transactions.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 py-4"><div><p className="font-medium">{item.description}</p><p className="mt-1 text-xs capitalize text-slate-500">{item.transaction_type.replaceAll('_', ' ')} · {new Date(item.created_at).toLocaleDateString()}</p></div><strong className={item.amount > 0 ? 'text-emerald-700' : 'text-rose-700'}>{item.amount > 0 ? '+' : ''}{item.amount}</strong></div>)}{transactions.length === 0 ? <p className="py-6 text-sm text-slate-500">No point transactions yet.</p> : null}</div></div>
+          <div className="space-y-6"><div className="surface-card p-6"><h2 className="text-xl font-semibold">Transaction history</h2><div className="mt-4 divide-y divide-paper-300 dark:divide-forest-700">{transactions.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 py-4"><div><p className="font-medium">{item.description}</p><p className="mt-1 text-xs capitalize text-slate-500">{item.transaction_type.replaceAll('_', ' ')} · {new Date(item.created_at).toLocaleDateString()}</p></div><strong className={item.amount > 0 ? 'text-emerald-700' : 'text-rose-700'}>{item.amount > 0 ? '+' : ''}{item.amount}</strong></div>)}{transactions.length === 0 ? <p className="py-6 text-sm text-slate-500">No point transactions yet.</p> : null}</div></div><div className="surface-card p-6"><h2 className="text-xl font-semibold">Cash top-up receipts</h2><div className="mt-4 space-y-3">{cashTopUps.map((topUp) => <article key={topUp.id} className="rounded-xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex flex-wrap items-start justify-between gap-3"><strong>+{topUp.bundle_points.toLocaleString()} points</strong><strong>PHP {Number(topUp.amount_paid).toFixed(2)}</strong></div><p className="mt-2 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt {topUp.receipt_number}</p><p className="mt-1 text-xs text-slate-500">{new Date(topUp.created_at).toLocaleString()}</p></article>)}{cashTopUps.length === 0 ? <p className="text-sm text-slate-500">Cash top-ups recorded by a librarian will appear here with their receipts.</p> : null}</div></div></div>
           <div className="space-y-6"><div className="surface-card p-6"><h2 className="text-xl font-semibold">Recognition</h2><div className="mt-4 space-y-3">{recognition.map((item) => <article key={item.id} className="rounded-xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex justify-between gap-3"><strong className="capitalize">{item.category.replaceAll('_', ' ')}</strong><strong className="text-emerald-700">+{item.points}</strong></div><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.reason}</p></article>)}{recognition.length === 0 ? <p className="text-sm text-slate-500">No recognition awards yet.</p> : null}</div></div><div className="surface-card p-6"><h2 className="text-xl font-semibold">Achievements</h2><div className="mt-4 space-y-3">{achievements.map((item) => <article key={item.id} className="rounded-xl border border-paper-300 p-4 dark:border-forest-700"><strong>{item.name}</strong><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{item.description}</p></article>)}{achievements.length === 0 ? <p className="text-sm text-slate-500">Your verified achievements will appear here.</p> : null}</div></div>
           <div className="surface-card p-6"><h2 className="text-xl font-semibold">Unlocked materials</h2><div className="mt-4 space-y-3">{grants.slice(0, 6).map((grant) => <article key={grant.id} className="rounded-xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex justify-between gap-3"><strong>{grant.books?.[0]?.title ?? `Book #${grant.book_id}`}</strong><span className="text-xs capitalize text-slate-500">{grant.status}</span></div><p className="mt-2 text-xs text-slate-500">{grant.points_paid ? `${grant.points_paid} points` : 'Free access'} · expires {grant.expires_at ? new Date(grant.expires_at).toLocaleString() : 'never'}</p><button type="button" onClick={() => router.push(`/reader/${grant.book_id}`)} className="mt-3 text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">Open reader</button></article>)}{grants.length === 0 ? <p className="text-sm text-slate-500">No unlocked materials yet.</p> : null}</div></div></div>
         </section>

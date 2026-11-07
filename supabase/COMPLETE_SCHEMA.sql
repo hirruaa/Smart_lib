@@ -1,4 +1,5 @@
--- Smart Lib complete fresh-install schema, consolidated through migration 20261054.
+-- Smart Lib complete fresh-install schema, including the 20261109 lesson workflow
+-- and the 20261108120000 policy/audit migration.
 -- Use only on a new/empty Supabase project. This script creates the current
 -- tables, functions, policies, storage configuration, closed registration,
 -- staff circulation and payments, member activity ledger, and username login.
@@ -34,6 +35,13 @@
   alter table public.profiles add column if not exists department text;
   alter table public.profiles add column if not exists course text;
   alter table public.profiles add column if not exists student_year text;
+  alter table public.profiles add column if not exists institutional_id text;
+  alter table public.profiles add column if not exists student_photo_path text;
+  alter table public.profiles drop constraint if exists profiles_institutional_id_format;
+  alter table public.profiles add constraint profiles_institutional_id_format
+    check (institutional_id is null or institutional_id ~ '^[0-9]{4}-[0-9]{5}$');
+  create unique index if not exists profiles_institutional_id_unique
+    on public.profiles (institutional_id) where institutional_id is not null;
   alter table public.profiles add column if not exists first_name text;
   alter table public.profiles add column if not exists middle_name text;
   alter table public.profiles add column if not exists last_name text;
@@ -73,6 +81,11 @@
     title text not null,
     author text not null,
     category text not null,
+    discipline text,
+    genre text,
+    course_code text,
+    source_type text not null default 'staff_added'
+      check (source_type in ('catalog', 'staff_added', 'community_contribution')),
     isbn text,
     description text,
     pdf_url text,
@@ -91,6 +104,55 @@
   );
 
   alter table public.books add column if not exists access_points integer not null default 0;
+  alter table public.books add column if not exists discipline text;
+  alter table public.books add column if not exists genre text;
+  alter table public.books add column if not exists course_code text;
+  alter table public.books add column if not exists source_type text;
+  update public.books set source_type = 'catalog' where source_type is null;
+  update public.books
+    set category = 'Uncategorized', source_type = 'community_contribution'
+    where lower(trim(category)) = 'community contribution';
+  update public.books
+    set course_code = trim(category), category = 'Uncategorized'
+    where course_code is null
+      and trim(category) ~* '^[a-z]{2,6}[- ]?[0-9]{2,4}[a-z]?$';
+  update public.books
+    set discipline = nullif(trim(category), '')
+    where discipline is null
+      and lower(trim(category)) not in ('community contribution', 'entertainment', 'uncategorized');
+  update public.books
+    set genre = nullif(trim(category), '')
+    where genre is null and lower(trim(category)) = 'entertainment';
+  alter table public.books alter column source_type set default 'staff_added';
+  alter table public.books alter column source_type set not null;
+  alter table public.books drop constraint if exists books_source_type_check;
+  alter table public.books add constraint books_source_type_check
+    check (source_type in ('catalog', 'staff_added', 'community_contribution'));
+  alter table public.books drop constraint if exists books_course_code_check;
+  alter table public.books add constraint books_course_code_check
+    check (course_code is null or char_length(trim(course_code)) between 1 and 32);
+  create or replace function public.normalize_book_metadata_fields()
+  returns trigger
+  language plpgsql
+  set search_path = public
+  as $$
+  begin
+    if lower(trim(new.category)) = 'community contribution' then
+      new.category := 'Uncategorized';
+      new.source_type := 'community_contribution';
+    elsif trim(new.category) ~* '^[a-z]{2,6}[- ]?[0-9]{2,4}[a-z]?$' then
+      new.course_code := coalesce(nullif(trim(new.course_code), ''), trim(new.category));
+      new.category := 'Uncategorized';
+    end if;
+    return new;
+  end;
+  $$;
+  drop trigger if exists trg_normalize_book_metadata_fields on public.books;
+  create trigger trg_normalize_book_metadata_fields
+  before insert or update of category, course_code, source_type
+  on public.books
+  for each row execute function public.normalize_book_metadata_fields();
+  revoke all on function public.normalize_book_metadata_fields() from public, anon, authenticated;
   alter table public.books add column if not exists access_costs jsonb not null default '{}'::jsonb;
   alter table public.books drop constraint if exists books_access_costs_object_check;
   alter table public.books add constraint books_access_costs_object_check check (jsonb_typeof(access_costs) = 'object');
@@ -158,8 +220,10 @@
     approved_book_id bigint references public.books(id) on delete set null,
     reviewed_by uuid references public.profiles(id) on delete set null,
     reviewed_at timestamptz,
+    rejection_reason text,
     created_at timestamptz not null default now()
   );
+  alter table public.book_contributions add column if not exists rejection_reason text;
 
   create table if not exists public.study_notes (
     id bigint generated by default as identity primary key,
@@ -586,6 +650,18 @@
     select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'librarian'));
   $$;
 
+  create or replace function public.is_librarian()
+  returns boolean
+  language sql
+  stable
+  security definer
+  set search_path = public
+  as $$
+    select exists (select 1 from public.profiles where id = auth.uid() and role = 'librarian');
+  $$;
+  revoke all on function public.is_librarian() from public, anon;
+  grant execute on function public.is_librarian() to authenticated;
+
   create or replace function public.submit_book_contribution(
     p_title text,
     p_author text,
@@ -759,7 +835,11 @@
 
   drop policy if exists profiles_select_self_or_admin on public.profiles;
   create policy profiles_select_self_or_admin on public.profiles
-  for select using (id = auth.uid() or public.is_admin());
+  for select to authenticated using (
+    id = auth.uid()
+    or public.is_admin()
+    or (role in ('student', 'faculty') and public.is_librarian())
+  );
 
   drop policy if exists profiles_insert_self on public.profiles;
   create policy profiles_insert_self on public.profiles
@@ -837,8 +917,6 @@
   for select to authenticated using (student_id = auth.uid() or public.is_admin());
 
   drop policy if exists fines_admin_update on public.fines;
-  create policy fines_admin_update on public.fines
-  for update to authenticated using (public.is_admin()) with check (public.is_admin());
 
   drop policy if exists assistant_sessions_manage_own on public.assistant_sessions;
   create policy assistant_sessions_manage_own on public.assistant_sessions
@@ -891,7 +969,7 @@
   grant select, insert, update, delete on public.study_notes to authenticated;
   grant select, insert, update, delete on public.highlights to authenticated;
   grant select, insert, update, delete on public.study_drawings to authenticated;
-  grant select, update on public.fines to authenticated;
+  grant select on public.fines to authenticated;
   grant select on public.point_transactions to authenticated;
   grant select, insert on public.book_contributions to authenticated;
   grant select, update on public.notifications to authenticated;
@@ -1267,16 +1345,40 @@
   as $$
   declare
     new_award public.recognition_awards;
+    daily_awarded bigint;
   begin
     if not public.is_admin() then raise exception 'Administrator access required'; end if;
     if award_points <= 0 then raise exception 'Award points must be positive'; end if;
     if nullif(trim(award_reason), '') is null then raise exception 'Award reason is required'; end if;
+    perform pg_advisory_xact_lock(hashtext('admin_daily_points'), hashtext(auth.uid()::text));
+    select coalesce(sum(points), 0)
+      into daily_awarded
+      from public.recognition_awards
+      where awarded_by = auth.uid()
+        and created_at >= date_trunc('day', now())
+        and created_at < date_trunc('day', now()) + interval '1 day';
+    if daily_awarded + award_points > 1000 then
+      raise exception 'Daily points grant limit of 1,000 points reached';
+    end if;
     insert into public.recognition_awards(student_id, category, points, reason, awarded_by)
     values (target_user_id, award_category, award_points, trim(award_reason), auth.uid())
     returning * into new_award;
     update public.profiles set points_balance = points_balance + award_points where id = target_user_id;
     insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
     values (target_user_id, award_points, 'admin_adjustment', new_award.id, 'Recognition award: ' || trim(award_category));
+    insert into public.audit_logs(actor_id, action, target_type, details)
+    values (
+      auth.uid(),
+      'recognition_awarded',
+      'profile',
+      jsonb_build_object(
+        'target_user_id', target_user_id,
+        'points', award_points,
+        'category', trim(award_category),
+        'reason', trim(award_reason),
+        'daily_cap', 1000
+      )
+    );
     return new_award;
   end;
   $$;
@@ -1371,6 +1473,7 @@
   revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer) from public, anon;
   grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer) to authenticated;
   grant execute on function public.admin_request_contribution_revision(bigint, text) to authenticated;
+  revoke all on function public.admin_award_recognition(uuid, text, integer, text) from public, anon;
   grant execute on function public.admin_award_recognition(uuid, text, integer, text) to authenticated;
   grant execute on function public.admin_grant_book_access(uuid, bigint, integer, text) to authenticated;
   grant execute on function public.admin_revoke_book_access(bigint, text) to authenticated;
@@ -1570,7 +1673,7 @@ create table if not exists public.physical_book_requests (
   copy_id bigint references public.physical_book_copies(id) on delete restrict,
   duration_days integer not null check (duration_days between 1 and 365),
   fee_amount numeric(10, 2) not null check (fee_amount >= 0),
-  payment_method text not null check (payment_method in ('cash', 'gcash')),
+  payment_method text not null check (payment_method = 'cash'),
   payment_status text not null default 'unpaid'
     check (payment_status in ('unpaid', 'pending_verification', 'paid')),
   transaction_reference text,
@@ -1583,11 +1686,62 @@ create table if not exists public.physical_book_requests (
   returned_at timestamptz,
   receipt_number text unique,
   created_at timestamptz not null default now(),
-  constraint physical_request_gcash_proof check (
-    payment_method <> 'gcash'
-    or (nullif(trim(transaction_reference), '') is not null and nullif(trim(payment_proof_path), '') is not null)
+  constraint physical_request_cash_only check (
+    payment_method = 'cash' and transaction_reference is null and payment_proof_path is null
   )
 );
+
+create or replace function public.enforce_physical_cash_only()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.payment_method is distinct from 'cash'
+      or new.transaction_reference is not null
+      or new.payment_proof_path is not null then
+      raise exception 'Physical book requests accept cash at the library desk only';
+    end if;
+  elsif old.payment_method is distinct from 'cash' then
+    if new.payment_method is distinct from old.payment_method
+      or new.transaction_reference is distinct from old.transaction_reference
+      or new.payment_proof_path is distinct from old.payment_proof_path then
+      raise exception 'Historical online-payment details are read-only';
+    end if;
+  elsif new.payment_method is distinct from 'cash'
+    or new.transaction_reference is not null
+    or new.payment_proof_path is not null then
+    raise exception 'Physical book requests accept cash at the library desk only';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists physical_requests_cash_only on public.physical_book_requests;
+create trigger physical_requests_cash_only
+before insert or update on public.physical_book_requests
+for each row execute function public.enforce_physical_cash_only();
+
+alter table public.fines
+  alter column borrow_request_id drop not null,
+  add column if not exists physical_book_request_id bigint references public.physical_book_requests(id) on delete cascade,
+  add column if not exists paid_by uuid references public.profiles(id) on delete set null,
+  add column if not exists waived_at timestamptz,
+  add column if not exists waiver_reason text,
+  add column if not exists fine_reason text,
+  add column if not exists fine_type text,
+  add column if not exists receipt_number text,
+  add column if not exists refund_due_at timestamptz,
+  add column if not exists refunded_at timestamptz,
+  add column if not exists refund_reason text;
+alter table public.fines drop constraint if exists fines_exactly_one_loan_check;
+alter table public.fines
+  add constraint fines_exactly_one_loan_check
+  check (num_nonnulls(borrow_request_id, physical_book_request_id) = 1);
+revoke insert, update, delete on public.fines from authenticated;
 
 create table if not exists public.physical_book_waitlist (
   student_id uuid not null references public.profiles(id) on delete cascade,
@@ -1595,6 +1749,65 @@ create table if not exists public.physical_book_waitlist (
   created_at timestamptz not null default now(),
   primary key (student_id, book_id)
 );
+
+create or replace function public.enforce_library_borrowing_policy()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  member_id uuid;
+  unpaid_total numeric(10, 2);
+  overdue_physical boolean;
+begin
+  member_id := new.student_id;
+  if member_id is null then return new; end if;
+  if member_id <> auth.uid() and not public.is_admin() then
+    raise exception 'Members can only submit borrowing requests for their own account.';
+  end if;
+
+  perform public.calculate_overdue_fines();
+
+  select coalesce(sum(amount), 0) into unpaid_total
+  from public.fines
+  where student_id = member_id and status = 'unpaid' and physical_book_request_id is not null;
+
+  select exists (
+    select 1
+    from public.physical_book_requests
+    where student_id = member_id
+      and (
+        status = 'lost'
+        or (status in ('checked_out', 'return_pending') and due_date < now())
+      )
+  ) into overdue_physical;
+
+  if tg_table_name = 'borrow_requests' then
+    if overdue_physical or unpaid_total > 0 then
+      raise exception 'New digital access is unavailable while an overdue physical item or unpaid physical fine remains.';
+    end if;
+  elsif tg_table_name = 'physical_book_waitlist' then
+    if overdue_physical then
+      raise exception 'Return overdue physical items before joining an availability queue.';
+    end if;
+    if unpaid_total >= 100 then
+      raise exception 'Borrowing privileges are suspended until your unpaid balance is below ₱100.';
+    end if;
+  else
+    if new.duration_days <> 14 then
+      raise exception 'General-circulation physical books have a 14-day loan period.';
+    end if;
+    if overdue_physical then
+      raise exception 'Return overdue physical items before requesting another physical book.';
+    end if;
+    if unpaid_total >= 100 then
+      raise exception 'Borrowing privileges are suspended until your unpaid balance is below ₱100.';
+    end if;
+  end if;
+  return new;
+end;
+$$;
 
 create index if not exists idx_physical_copies_book_status
   on public.physical_book_copies(book_id, status);
@@ -1907,7 +2120,7 @@ returns public.physical_book_requests language plpgsql security definer set sear
 as $$
 declare target_request public.physical_book_requests; target_copy_id bigint;
 begin
-  if not public.is_admin() then raise exception 'Librarian or administrator access required'; end if;
+  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
   if p_amount_paid is null or p_amount_paid < 0 then raise exception 'Enter a valid amount received'; end if;
   select * into target_request from public.physical_book_requests where id = p_request_id for update;
   if target_request.id is null or target_request.status <> 'pending' then raise exception 'This request is not ready for checkout'; end if;
@@ -1942,32 +2155,6 @@ drop trigger if exists trg_notify_staff_of_physical_request on public.physical_b
 create trigger trg_notify_staff_of_physical_request
 after insert on public.physical_book_requests
 for each row execute function public.notify_staff_of_physical_request();
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('physical-payment-proofs', 'physical-payment-proofs', false, 5242880, array['image/jpeg', 'image/png', 'image/webp'])
-on conflict (id) do update set
-  public = false,
-  file_size_limit = 5242880,
-  allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp'];
-
-drop policy if exists physical_payment_proofs_upload_own on storage.objects;
-create policy physical_payment_proofs_upload_own on storage.objects
-  for insert to authenticated with check (
-    bucket_id = 'physical-payment-proofs' and (storage.foldername(name))[1] = auth.uid()::text
-  );
-drop policy if exists physical_payment_proofs_read_own_or_admin on storage.objects;
-create policy physical_payment_proofs_read_own_or_admin on storage.objects
-  for select to authenticated using (
-    bucket_id = 'physical-payment-proofs'
-    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin())
-  );
-drop policy if exists physical_payment_proofs_delete_unlinked_own on storage.objects;
-create policy physical_payment_proofs_delete_unlinked_own on storage.objects
-  for delete to authenticated using (
-    bucket_id = 'physical-payment-proofs'
-    and (storage.foldername(name))[1] = auth.uid()::text
-    and not exists (select 1 from public.physical_book_requests where payment_proof_path = name)
-  );
 
 -- ============================================================================
 -- Digital access support, contribution screening, and reminder support
@@ -3642,25 +3829,9 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  requested_role text;
 begin
-  requested_role := case
-    when lower(trim(coalesce(new.raw_user_meta_data ->> 'member_type', ''))) = 'faculty' then 'faculty'
-    else 'student'
-  end;
-
-  if requested_role = 'faculty' and not exists (
-    select 1
-    from public.academic_departments
-    where is_active
-      and lower(name) = lower(trim(coalesce(new.raw_user_meta_data ->> 'department', '')))
-  ) then
-    raise exception 'Choose an active department to create a faculty account';
-  end if;
-
   insert into public.profiles (id, email, role)
-  values (new.id, coalesce(new.email, ''), requested_role)
+  values (new.id, coalesce(new.email, ''), 'student')
   on conflict (id) do update set email = excluded.email;
 
   update public.profiles
@@ -3693,17 +3864,7 @@ insert into public.profiles (id, email, role)
 select
   u.id,
   coalesce(u.email, ''),
-  case
-    when lower(trim(coalesce(u.raw_user_meta_data ->> 'member_type', ''))) = 'faculty'
-      and exists (
-        select 1
-        from public.academic_departments d
-        where d.is_active
-          and lower(d.name) = lower(trim(coalesce(u.raw_user_meta_data ->> 'department', '')))
-      )
-      then 'faculty'
-    else 'student'
-  end
+  'student'
 from auth.users u
 on conflict (id) do update set email = excluded.email;
 
@@ -3752,7 +3913,7 @@ create table if not exists public.physical_book_loan_history (
   copy_id bigint not null references public.physical_book_copies(id) on delete restrict,
   duration_days integer not null check (duration_days between 1 and 365),
   fee_amount numeric(10, 2) not null check (fee_amount >= 0),
-  payment_method text not null check (payment_method in ('cash', 'gcash')),
+  payment_method text not null check (payment_method = 'cash'),
   payment_status text not null check (payment_status in ('unpaid', 'pending_verification', 'paid')),
   checked_out_at timestamptz not null,
   due_date timestamptz not null,
@@ -4089,7 +4250,14 @@ declare
   created_request public.physical_book_requests;
 begin
   if current_user_id is null then raise exception 'Sign in to request a physical book'; end if;
-  if p_payment_method not in ('cash', 'gcash') then raise exception 'Choose cash or GCash'; end if;
+  if p_payment_method is distinct from 'cash'
+    or p_transaction_reference is not null
+    or p_payment_proof_path is not null then
+    raise exception 'Physical book requests accept cash at the library desk only';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended(
+    'physical-request:' || current_user_id::text || ':' || p_book_id::text, 0
+  ));
   if p_duration_days < 1 or p_duration_days > 365 then raise exception 'Choose a valid loan period'; end if;
   if not exists (select 1 from public.books where id = p_book_id and catalog_type in ('physical', 'hybrid')) then
     raise exception 'This title is not in the physical collection';
@@ -4105,17 +4273,6 @@ begin
   end if;
   select * into chosen_option from public.physical_loan_options where book_id = p_book_id and duration_days = p_duration_days and is_active;
   if chosen_option.id is null then raise exception 'That loan period is not available for this book'; end if;
-  if p_payment_method = 'gcash' then
-    if nullif(trim(p_transaction_reference), '') is null or char_length(trim(p_transaction_reference)) > 100
-      or nullif(trim(p_payment_proof_path), '') is null or p_payment_proof_path not like current_user_id::text || '/%' then
-      raise exception 'Upload payment proof and enter its transaction reference';
-    end if;
-    if not exists (select 1 from storage.objects where bucket_id = 'physical-payment-proofs' and name = p_payment_proof_path) then
-      raise exception 'Uploaded GCash proof could not be found';
-    end if;
-  elsif p_transaction_reference is not null or p_payment_proof_path is not null then
-    raise exception 'Cash requests must not include online payment proof';
-  end if;
   if not exists (select 1 from public.physical_book_copies where book_id = p_book_id and status = 'available') then
     raise exception 'No physical copy is currently available; join the availability queue instead';
   end if;
@@ -4124,13 +4281,12 @@ begin
     payment_status, transaction_reference, payment_proof_path, status, reservation_expires_at
   ) values (
     current_user_id, p_book_id, chosen_option.id, null, p_duration_days, chosen_option.fee_amount,
-    p_payment_method, case when p_payment_method = 'gcash' then 'pending_verification' else 'unpaid' end,
-    nullif(trim(p_transaction_reference), ''), nullif(trim(p_payment_proof_path), ''), 'pending', null
+    'cash', 'unpaid', null, null, 'pending', null
   ) returning * into created_request;
   delete from public.physical_book_waitlist where student_id = current_user_id and book_id = p_book_id;
   insert into public.audit_logs(actor_id, action, target_type, target_id, details)
   values (current_user_id, 'physical_request_created', 'physical_book_request', created_request.id,
-    jsonb_build_object('book_id', p_book_id, 'scanned_copy_id', p_copy_id, 'payment_method', p_payment_method));
+    jsonb_build_object('book_id', p_book_id, 'scanned_copy_id', p_copy_id, 'payment_method', 'cash'));
   return created_request;
 end;
 $$;
@@ -4471,12 +4627,23 @@ create policy physical_loan_history_read_admin on public.physical_book_loan_hist
 drop policy if exists fines_read_own_or_admin on public.fines;
 create policy fines_read_own_or_admin on public.fines
   for select to authenticated using (student_id = auth.uid() or public.is_library_staff());
+create table if not exists public.library_holidays (
+  holiday_date date primary key,
+  name text not null check (char_length(trim(name)) between 1 and 120),
+  created_at timestamptz not null default now(),
+  created_by uuid references public.profiles(id) on delete set null
+);
+alter table public.library_holidays enable row level security;
+drop policy if exists library_holidays_read_authenticated on public.library_holidays;
+create policy library_holidays_read_authenticated on public.library_holidays
+  for select to authenticated using (true);
 drop policy if exists library_holidays_staff_insert on public.library_holidays;
 create policy library_holidays_staff_insert on public.library_holidays
   for insert to authenticated with check (public.is_library_staff());
 drop policy if exists library_holidays_staff_delete on public.library_holidays;
 create policy library_holidays_staff_delete on public.library_holidays
   for delete to authenticated using (public.is_library_staff());
+grant select, insert, delete on public.library_holidays to authenticated;
 
 alter table public.fines add column if not exists fine_reason text;
 
@@ -4556,27 +4723,11 @@ with check (
   and exists (select 1 from public.profiles where id = auth.uid() and role = 'faculty')
 );
 
--- Public Auth sign-up is closed. Accounts can only be provisioned through the
--- server-side Supabase Auth Admin API, which runs with the service_role claim.
-create or replace function public.reject_public_account_registration()
-returns trigger
-language plpgsql
-security invoker
-set search_path = public, auth
-as $$
-begin
-  if coalesce(auth.role(), '') <> 'service_role'
-     and current_user not in ('postgres', 'supabase_admin') then
-    raise exception 'Public account registration is disabled. Contact the college administrator.';
-  end if;
-  return new;
-end;
-$$;
-
+-- Close public sign-up in Supabase Auth configuration. An auth.users trigger
+-- cannot distinguish Auth Admin invitations from public sign-ups because both
+-- are inserted by supabase_auth_admin.
 drop trigger if exists trg_reject_public_account_registration on auth.users;
-create trigger trg_reject_public_account_registration
-before insert on auth.users
-for each row execute function public.reject_public_account_registration();
+drop function if exists public.reject_public_account_registration();
 
 -- Only faculty may submit or revise supplementary academic materials.
 create or replace function public.guard_faculty_contributions()
@@ -4639,6 +4790,16 @@ alter table public.profiles
     or department in ('IT Department', 'Courses Department')
   );
 
+commit;
+
+
+
+begin;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('student-headshots', 'student-headshots', false, 10485760, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do update
+set public = false, file_size_limit = 10485760,
+    allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp'];
 commit;
 
 
@@ -5170,7 +5331,7 @@ grant execute on function public.admin_waive_physical_fine(bigint, text) to auth
 -- Recovered lost books must not keep an unpaid replacement assessment. If the
 -- recovered copy is damaged, record its separate staff-assessed charge here.
 drop function if exists public.admin_resolve_lost_physical_loan(bigint, text);
-create function public.admin_resolve_lost_physical_loan(
+create or replace function public.admin_resolve_lost_physical_loan(
   p_request_id bigint,
   p_copy_condition text,
   p_damage_amount numeric default 0,
@@ -6235,6 +6396,42 @@ revoke all on function public.admin_update_member_academics(uuid, text, text, te
 grant execute on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint)
   to authenticated;
 
+create or replace function public.admin_update_member_academics(
+  target_user_id uuid, new_role text, new_school text, new_department text,
+  new_course text, new_student_year text, new_faculty_rank_id bigint,
+  new_institutional_id text
+) returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare updated_profile public.profiles;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if new_role in ('student', 'faculty') and coalesce(new_institutional_id, '') !~ '^[0-9]{4}-[0-9]{5}$' then
+    raise exception 'Enter a 9-digit institutional ID in NNNN-NNNNN format';
+  end if;
+  if new_role = 'librarian' and nullif(trim(coalesce(new_institutional_id, '')), '') is not null then
+    raise exception 'Librarian accounts do not use borrower institutional IDs';
+  end if;
+  updated_profile := public.admin_update_member_academics(
+    target_user_id, new_role, new_school, new_department, new_course,
+    new_student_year, new_faculty_rank_id
+  );
+  update public.profiles
+  set institutional_id = case when new_role = 'librarian' then null else trim(new_institutional_id) end
+  where id = target_user_id returning * into updated_profile;
+  insert into public.audit_logs(actor_id, action, target_type, details)
+  values (auth.uid(), 'member_institutional_id_updated', 'profile',
+    jsonb_build_object('target_user_id', target_user_id, 'institutional_id', updated_profile.institutional_id));
+  return updated_profile;
+end;
+$$;
+revoke all on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint, text)
+  from public, anon;
+grant execute on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint, text)
+  to authenticated;
+
 drop table if exists public.faculty_courses;
 
 commit;
@@ -6618,5 +6815,1299 @@ end;
 $$;
 revoke all on function public.admin_record_physical_fine_refund(bigint, text) from public, anon;
 grant execute on function public.admin_record_physical_fine_refund(bigint, text) to authenticated;
+
+commit;
+
+begin;
+
+create or replace function public.enforce_library_borrowing_policy()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare member_id uuid; unpaid_total numeric(10,2); overdue_physical boolean;
+begin
+  member_id := new.student_id;
+  if member_id is null then return new; end if;
+  if member_id <> auth.uid() and not public.is_admin() then
+    raise exception 'Members can only submit borrowing requests for their own account.';
+  end if;
+  perform public.calculate_overdue_fines();
+  select coalesce(sum(amount), 0) into unpaid_total
+  from public.fines
+  where student_id = member_id and status = 'unpaid' and physical_book_request_id is not null;
+  select exists (
+    select 1 from public.physical_book_requests
+    where student_id = member_id
+      and (status = 'lost' or (status in ('checked_out', 'return_pending') and due_date < now()))
+  ) into overdue_physical;
+  if tg_table_name = 'borrow_requests' then
+    if overdue_physical or unpaid_total > 100 then
+      raise exception 'New borrowing is unavailable while an overdue physical item or a balance above ₱100 remains.';
+    end if;
+  elsif tg_table_name = 'physical_book_waitlist' then
+    if overdue_physical then raise exception 'Return overdue physical items before joining an availability queue.'; end if;
+    if unpaid_total > 100 then raise exception 'Borrowing privileges are suspended until your unpaid balance is ₱100 or less.'; end if;
+  else
+    if new.duration_days <> 14 then raise exception 'General-circulation physical books have a 14-day loan period.'; end if;
+    if overdue_physical then raise exception 'Return overdue physical items before requesting another physical book.'; end if;
+    if unpaid_total > 100 then raise exception 'Borrowing privileges are suspended until your unpaid balance is ₱100 or less.'; end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists enforce_digital_borrowing_policy on public.borrow_requests;
+create trigger enforce_digital_borrowing_policy before insert on public.borrow_requests
+for each row execute function public.enforce_library_borrowing_policy();
+drop trigger if exists enforce_physical_request_policy on public.physical_book_requests;
+create trigger enforce_physical_request_policy before insert on public.physical_book_requests
+for each row execute function public.enforce_library_borrowing_policy();
+drop trigger if exists enforce_physical_waitlist_policy on public.physical_book_waitlist;
+create trigger enforce_physical_waitlist_policy before insert on public.physical_book_waitlist
+for each row execute function public.enforce_library_borrowing_policy();
+revoke all on function public.enforce_library_borrowing_policy() from public, anon, authenticated;
+
+revoke all on function public.admin_waive_physical_fine(bigint, text) from public, anon, authenticated;
+alter function public.admin_waive_physical_fine(bigint, text) rename to admin_waive_physical_fine_internal;
+create function public.admin_waive_physical_fine(
+  p_fine_id bigint, p_reason_category text, p_justification text
+) returns public.fines
+language plpgsql security definer set search_path = public
+as $$
+declare saved_fine public.fines;
+begin
+  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+  if p_reason_category is null or p_reason_category not in ('Medical Excuse', 'Administrative Exemption') then raise exception 'Choose a supported waiver reason'; end if;
+  if nullif(trim(coalesce(p_justification, '')), '') is null or char_length(trim(p_justification)) > 500 then
+    raise exception 'Enter a waiver justification of 1 to 500 characters';
+  end if;
+  saved_fine := public.admin_waive_physical_fine_internal(
+    p_fine_id, p_reason_category || ': ' || trim(p_justification)
+  );
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (auth.uid(), 'physical_fine_waiver_justified', 'fine', saved_fine.id,
+    jsonb_build_object('reason_category', p_reason_category, 'justification', trim(p_justification),
+      'physical_book_request_id', saved_fine.physical_book_request_id, 'student_id', saved_fine.student_id,
+      'amount', saved_fine.amount));
+  return saved_fine;
+end;
+$$;
+revoke all on function public.admin_waive_physical_fine(bigint, text, text) from public, anon;
+grant execute on function public.admin_waive_physical_fine(bigint, text, text) to authenticated;
+
+revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer) from public, anon, authenticated;
+alter function public.admin_review_book_contribution(bigint, text, integer, integer)
+  rename to admin_review_book_contribution_internal;
+create function public.admin_review_book_contribution(
+  contribution_id bigint, decision text, reward_points integer default 25,
+  access_points integer default 0, rejection_reason text default null
+) returns public.book_contributions
+language plpgsql security definer set search_path = public
+as $$
+declare reviewed public.book_contributions;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if decision = 'rejected'
+    and (rejection_reason is null or rejection_reason not in ('Poor Scan Quality', 'Copyright Violation', 'Incorrect Metadata')) then
+    raise exception 'Choose a supported rejection reason';
+  end if;
+  reviewed := public.admin_review_book_contribution_internal(
+    contribution_id, decision, reward_points, access_points
+  );
+  if decision = 'rejected' then
+    update public.book_contributions set rejection_reason = $5
+    where id = contribution_id returning * into reviewed;
+    insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+    values (auth.uid(), 'contribution_rejected', 'contribution', contribution_id,
+      jsonb_build_object('reason', rejection_reason));
+  end if;
+  return reviewed;
+end;
+$$;
+revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer, text) from public, anon;
+grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer, text) to authenticated;
+
+drop function if exists public.admin_confirm_physical_checkout(bigint);
+revoke all on function public.admin_confirm_physical_checkout(bigint, numeric, text) from public, anon, authenticated;
+alter function public.admin_confirm_physical_checkout(bigint, numeric, text)
+  rename to admin_confirm_physical_checkout_internal;
+create function public.admin_confirm_physical_checkout(
+  p_request_id bigint, p_amount_paid numeric, p_payment_notes text, p_id_card_presented boolean
+) returns public.physical_book_requests
+language plpgsql security definer set search_path = public
+as $$
+declare saved_request public.physical_book_requests;
+begin
+  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+  if p_id_card_presented is distinct from true then raise exception 'Confirm that the member presented a physical institutional ID card'; end if;
+  select * into saved_request
+  from public.physical_book_requests
+  where id = p_request_id;
+  if saved_request.id is null then raise exception 'Physical-book request not found'; end if;
+  if saved_request.payment_method is distinct from 'cash' then
+    raise exception 'This historical online-payment request cannot be checked out; reject it and ask the member to submit a cash request';
+  end if;
+  saved_request := public.admin_confirm_physical_checkout_internal(
+    p_request_id, p_amount_paid, p_payment_notes
+  );
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (auth.uid(), 'physical_id_verified_at_checkout', 'physical_book_request', saved_request.id,
+    jsonb_build_object('student_id', saved_request.student_id, 'id_card_presented', true, 'copy_id', saved_request.copy_id));
+  return saved_request;
+end;
+$$;
+revoke all on function public.admin_confirm_physical_checkout(bigint, numeric, text, boolean) from public, anon;
+grant execute on function public.admin_confirm_physical_checkout(bigint, numeric, text, boolean) to authenticated;
+
+drop policy if exists physical_payment_proofs_upload_own on storage.objects;
+drop policy if exists physical_payment_proofs_read_own_or_admin on storage.objects;
+drop policy if exists physical_payment_proofs_delete_unlinked_own on storage.objects;
+
+revoke all on function public.admin_inspect_physical_return(bigint, text, numeric, text) from public, anon, authenticated;
+alter function public.admin_inspect_physical_return(bigint, text, numeric, text)
+  rename to admin_inspect_physical_return_internal;
+create function public.admin_inspect_physical_return(
+  p_request_id bigint, p_copy_condition text, p_assessed_amount numeric,
+  p_assessment_reason text, p_id_card_presented boolean
+) returns public.physical_book_requests
+language plpgsql security definer set search_path = public
+as $$
+declare saved_request public.physical_book_requests;
+begin
+  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+  if p_id_card_presented is distinct from true then raise exception 'Confirm that the member presented a physical institutional ID card'; end if;
+  saved_request := public.admin_inspect_physical_return_internal(
+    p_request_id, p_copy_condition, p_assessed_amount, p_assessment_reason
+  );
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (auth.uid(), 'physical_id_verified_at_return', 'physical_book_request', saved_request.id,
+    jsonb_build_object('student_id', saved_request.student_id, 'id_card_presented', true,
+      'copy_id', saved_request.copy_id, 'copy_condition', p_copy_condition));
+  return saved_request;
+end;
+$$;
+revoke all on function public.admin_inspect_physical_return(bigint, text, numeric, text, boolean) from public, anon;
+grant execute on function public.admin_inspect_physical_return(bigint, text, numeric, text, boolean) to authenticated;
+
+revoke all on function public.admin_create_physical_book(text, text, text, text, text, text, integer, text, text) from public, anon, authenticated;
+alter function public.admin_create_physical_book(text, text, text, text, text, text, integer, text, text)
+  rename to admin_create_physical_book_internal;
+create function public.admin_create_physical_book(
+  p_title text, p_author text, p_category text, p_isbn text, p_description text,
+  p_cover_image_url text, p_quantity integer, p_code_prefix text, p_location text,
+  p_discipline text, p_genre text
+) returns bigint
+language plpgsql security definer set search_path = public
+as $$
+declare created_book_id bigint;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if nullif(trim(coalesce(p_discipline, '')), '') is null and nullif(trim(coalesce(p_genre, '')), '') is null then
+    raise exception 'Enter a discipline or genre for the physical title';
+  end if;
+  if char_length(trim(coalesce(p_discipline, ''))) > 120 or char_length(trim(coalesce(p_genre, ''))) > 120 then
+    raise exception 'Discipline and genre are limited to 120 characters';
+  end if;
+  created_book_id := public.admin_create_physical_book_internal(
+    p_title, p_author, p_category, p_isbn, p_description, p_cover_image_url,
+    p_quantity, p_code_prefix, p_location
+  );
+  update public.books set discipline = nullif(trim(coalesce(p_discipline, '')), ''),
+      genre = nullif(trim(coalesce(p_genre, '')), ''),
+      category = coalesce(nullif(trim(coalesce(p_discipline, '')), ''), nullif(trim(coalesce(p_genre, '')), ''))
+  where id = created_book_id;
+  return created_book_id;
+end;
+$$;
+grant execute on function public.admin_create_physical_book(text, text, text, text, text, text, integer, text, text, text, text) to authenticated;
+
+revoke all on function public.admin_update_physical_book(bigint, text, text, text, text, text) from public, anon, authenticated;
+alter function public.admin_update_physical_book(bigint, text, text, text, text, text)
+  rename to admin_update_physical_book_internal;
+create function public.admin_update_physical_book(
+  p_book_id bigint, p_title text, p_author text, p_category text,
+  p_isbn text, p_description text, p_discipline text, p_genre text
+) returns public.books
+language plpgsql security definer set search_path = public
+as $$
+declare updated_book public.books;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if nullif(trim(coalesce(p_discipline, '')), '') is null and nullif(trim(coalesce(p_genre, '')), '') is null then
+    raise exception 'Enter a discipline or genre for the physical title';
+  end if;
+  if char_length(trim(coalesce(p_discipline, ''))) > 120 or char_length(trim(coalesce(p_genre, ''))) > 120 then
+    raise exception 'Discipline and genre are limited to 120 characters';
+  end if;
+  perform public.admin_update_physical_book_internal(
+    p_book_id, p_title, p_author, p_category, p_isbn, p_description
+  );
+  update public.books set discipline = nullif(trim(coalesce(p_discipline, '')), ''),
+      genre = nullif(trim(coalesce(p_genre, '')), ''),
+      category = coalesce(nullif(trim(coalesce(p_discipline, '')), ''), nullif(trim(coalesce(p_genre, '')), ''))
+  where id = p_book_id and catalog_type in ('physical', 'hybrid')
+  returning * into updated_book;
+  if updated_book.id is null then raise exception 'Physical book not found'; end if;
+  return updated_book;
+end;
+$$;
+grant execute on function public.admin_update_physical_book(bigint, text, text, text, text, text, text, text) to authenticated;
+
+commit;
+
+begin;
+
+create table if not exists public.physical_book_renewals (
+  id bigint generated by default as identity primary key,
+  request_id bigint not null references public.physical_book_requests(id) on delete restrict,
+  student_id uuid not null references public.profiles(id) on delete restrict,
+  copy_id bigint not null references public.physical_book_copies(id) on delete restrict,
+  renewed_by uuid references public.profiles(id) on delete set null,
+  duration_days integer not null check (duration_days between 1 and 365),
+  previous_due_date timestamptz not null,
+  new_due_date timestamptz not null,
+  fee_amount numeric(10, 2) not null check (fee_amount >= 0),
+  amount_received numeric(10, 2) not null check (amount_received >= 0),
+  payment_notes text,
+  receipt_number text not null unique,
+  id_card_presented boolean not null check (id_card_presented),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_physical_book_renewals_request
+  on public.physical_book_renewals(request_id, created_at desc);
+create index if not exists idx_physical_book_renewals_student
+  on public.physical_book_renewals(student_id, created_at desc);
+
+alter table public.physical_book_renewals enable row level security;
+drop policy if exists physical_book_renewals_read_own_or_staff on public.physical_book_renewals;
+create policy physical_book_renewals_read_own_or_staff
+  on public.physical_book_renewals for select to authenticated
+  using (student_id = auth.uid() or public.is_library_staff());
+revoke insert, update, delete on public.physical_book_renewals from public, anon, authenticated;
+grant select on public.physical_book_renewals to authenticated;
+
+create or replace function public.admin_renew_physical_loan(
+  p_request_id bigint,
+  p_duration_days integer,
+  p_amount_paid numeric,
+  p_payment_notes text,
+  p_id_card_presented boolean
+) returns public.physical_book_renewals
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_request public.physical_book_requests;
+  selected_option public.physical_loan_options;
+  saved_renewal public.physical_book_renewals;
+  renewal_time timestamptz := now();
+  previous_due_date timestamptz;
+  next_due_date timestamptz;
+begin
+  if not public.is_library_staff() then raise exception 'Librarian or administrator access required'; end if;
+  if p_id_card_presented is distinct from true then
+    raise exception 'Confirm that the member presented a physical institutional ID card';
+  end if;
+  if p_amount_paid is null or p_amount_paid < 0 then raise exception 'Enter a valid amount received'; end if;
+  if char_length(coalesce(p_payment_notes, '')) > 500 then raise exception 'Payment notes are limited to 500 characters'; end if;
+
+  perform public.calculate_overdue_fines();
+  select * into target_request
+  from public.physical_book_requests
+  where id = p_request_id
+  for update;
+  if target_request.id is null or target_request.status <> 'checked_out' then
+    raise exception 'Only an active checked-out loan can be renewed';
+  end if;
+  if target_request.copy_id is null or target_request.due_date is null then
+    raise exception 'The active loan is missing its copy or due date';
+  end if;
+  if target_request.due_date <= renewal_time then raise exception 'Overdue loans cannot be renewed'; end if;
+  if target_request.incident_type is not null
+    and coalesce(target_request.incident_status, 'open') = 'open' then
+    raise exception 'Loans with an open incident cannot be renewed';
+  end if;
+  if exists (
+    select 1
+    from public.physical_book_requests r
+    where r.student_id = target_request.student_id
+      and (
+        r.status = 'lost'
+        or (r.status in ('checked_out', 'return_pending') and r.due_date <= renewal_time)
+      )
+  ) then
+    raise exception 'Resolve overdue or lost physical loans before renewing';
+  end if;
+  if coalesce((
+    select sum(f.amount)
+    from public.fines f
+    where f.student_id = target_request.student_id and f.status = 'unpaid'
+  ), 0) > 100 then
+    raise exception 'Unpaid fines above PHP 100 block physical borrowing and renewals';
+  end if;
+
+  select * into selected_option
+  from public.physical_loan_options
+  where book_id = target_request.book_id
+    and duration_days = p_duration_days
+    and is_active
+  for share;
+  if selected_option.id is null then raise exception 'Choose an active renewal period and fee'; end if;
+  if round(p_amount_paid, 2) <> round(selected_option.fee_amount, 2) then
+    raise exception 'Amount received must equal the configured fee for the selected renewal period';
+  end if;
+
+  previous_due_date := target_request.due_date;
+  next_due_date := renewal_time + make_interval(days => selected_option.duration_days);
+  update public.physical_book_copies
+  set due_date = next_due_date
+  where id = target_request.copy_id and status = 'borrowed';
+  if not found then raise exception 'The physical copy is no longer checked out'; end if;
+
+  update public.physical_book_requests
+  set due_date = next_due_date
+  where id = target_request.id
+  returning * into target_request;
+  update public.physical_book_loan_history
+  set due_date = next_due_date, updated_at = renewal_time
+  where request_id = target_request.id;
+
+  insert into public.physical_book_renewals(
+    request_id, student_id, copy_id, renewed_by, duration_days,
+    previous_due_date, new_due_date, fee_amount, amount_received,
+    payment_notes, receipt_number, id_card_presented, created_at
+  ) values (
+    target_request.id, target_request.student_id, target_request.copy_id, auth.uid(),
+    selected_option.duration_days, previous_due_date,
+    next_due_date, selected_option.fee_amount, round(p_amount_paid, 2),
+    nullif(trim(coalesce(p_payment_notes, '')), ''),
+    'SL-R-' || to_char(renewal_time, 'YYYYMMDD') || '-' || upper(substr(gen_random_uuid()::text, 1, 8)),
+    true, renewal_time
+  ) returning * into saved_renewal;
+
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (auth.uid(), 'physical_loan_renewed', 'physical_book_request', target_request.id,
+    jsonb_build_object(
+      'student_id', target_request.student_id,
+      'copy_id', target_request.copy_id,
+      'duration_days', selected_option.duration_days,
+      'fee_amount', selected_option.fee_amount,
+      'amount_received', round(p_amount_paid, 2),
+      'previous_due_date', saved_renewal.previous_due_date,
+      'new_due_date', next_due_date,
+      'receipt_number', saved_renewal.receipt_number,
+      'id_card_presented', true
+    ));
+  return saved_renewal;
+end;
+$$;
+
+revoke all on function public.admin_renew_physical_loan(bigint, integer, numeric, text, boolean)
+  from public, anon;
+grant execute on function public.admin_renew_physical_loan(bigint, integer, numeric, text, boolean)
+  to authenticated;
+
+do $$
+declare
+  routine record;
+  routine_name text;
+  routine_count integer;
+  definition text;
+  restricted_definition text;
+begin
+  foreach routine_name in array array[
+    'admin_confirm_physical_checkout',
+    'admin_close_physical_loan',
+    'admin_decide_physical_request',
+    'admin_inspect_physical_return',
+    'admin_renew_physical_loan',
+    'admin_resolve_lost_physical_loan',
+    'admin_assess_physical_incident',
+    'admin_resolve_physical_damage_case'
+  ]
+  loop
+    routine_count := 0;
+    for routine in
+      select p.oid
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.proname = routine_name
+        and p.prokind = 'f'
+    loop
+      routine_count := routine_count + 1;
+      definition := pg_get_functiondef(routine.oid);
+      restricted_definition := regexp_replace(
+        definition,
+        'if not public\.(is_admin|is_library_staff)\(\) then raise exception ''[^'']+''; end if;',
+        'if not public.is_librarian() then raise exception ''Librarian access required''; end if;',
+        'g'
+      );
+
+      if restricted_definition <> definition then
+        execute restricted_definition;
+      elsif position('if not public.is_librarian() then' in definition) = 0 then
+        raise exception 'Could not verify librarian-only authorization for public.%', routine_name;
+      end if;
+    end loop;
+
+    if routine_count = 0 then
+      raise exception 'Expected physical circulation routine public.% was not found', routine_name;
+    end if;
+  end loop;
+end;
+$$;
+
+commit;
+
+-- Consolidated source: 20261106_librarian_scan_to_issue.sql
+begin;
+
+create or replace function public.notify_staff_of_physical_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status <> 'pending' then return new; end if;
+  insert into public.notifications(user_id, event_type, title, message, reference_id)
+  select p.id, 'physical_request_created', 'New physical-book request',
+    'A member submitted a physical-book request that needs payment and checkout review.', new.id
+  from public.profiles p where p.role in ('admin', 'librarian');
+  return new;
+end;
+$$;
+
+do $$
+declare definition text; updated_definition text;
+begin
+  select pg_get_functiondef(p.oid) into definition
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'enforce_library_borrowing_policy'
+    and p.prorettype = 'pg_catalog.trigger'::regtype;
+  if definition is null then raise exception 'Physical borrowing policy trigger was not found'; end if;
+  updated_definition := replace(definition,
+    'member_id <> auth.uid() and not public.is_admin()',
+    'member_id <> auth.uid() and not public.is_admin() and not (tg_table_name = ''physical_book_requests'' and public.is_librarian())');
+  if updated_definition = definition then
+    raise exception 'Could not verify librarian borrowing authorization; inspect the borrowing policy trigger before applying';
+  end if;
+  execute updated_definition;
+end;
+$$;
+
+do $$
+declare definition text; updated_definition text;
+begin
+  select pg_get_functiondef(p.oid) into definition
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'admin_renew_physical_loan'
+    and p.proargtypes = '20 23 1700 25 16'::oidvector;
+  if definition is null then raise exception 'Expected librarian renewal RPC was not found'; end if;
+  updated_definition := regexp_replace(definition,
+    '>\s*100([.]0+)?\s+then',
+    '> 0 then',
+    'g');
+  updated_definition := replace(updated_definition,
+    'Unpaid fines above PHP 100 block physical borrowing and renewals',
+    'Clear all unpaid physical fines before renewing');
+  if position('sum(f.amount)' in lower(updated_definition)) = 0
+    or updated_definition !~* '>\s*0([.]0+)?\s+then' then
+    raise exception 'Could not verify the physical renewal fine hold; inspect public.admin_renew_physical_loan before applying';
+  end if;
+  if updated_definition <> definition then
+    execute updated_definition;
+  end if;
+end;
+$$;
+
+create or replace function public.admin_issue_physical_copy(
+  p_student_id uuid, p_copy_code text, p_duration_days integer,
+  p_amount_paid numeric, p_payment_notes text, p_id_card_presented boolean
+)
+returns public.physical_book_requests
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_profile public.profiles;
+  target_copy public.physical_book_copies;
+  target_book public.books;
+  target_option public.physical_loan_options;
+  saved_request public.physical_book_requests;
+  checked_out_at_time timestamptz := now();
+  unpaid_total numeric(10, 2);
+  active_physical_count integer;
+begin
+  if not public.is_librarian() then raise exception 'Librarian access required'; end if;
+  if p_id_card_presented is distinct from true then
+    raise exception 'Confirm that the member presented a physical institutional ID card';
+  end if;
+  if nullif(trim(coalesce(p_copy_code, '')), '') is null or char_length(trim(p_copy_code)) > 80 then
+    raise exception 'Enter a valid physical copy accession tag';
+  end if;
+  if p_amount_paid is null or p_amount_paid < 0 then raise exception 'Enter a valid amount received'; end if;
+  if char_length(coalesce(p_payment_notes, '')) > 500 then raise exception 'Payment notes are limited to 500 characters'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('physical-member:' || p_student_id::text, 0));
+  perform public.calculate_overdue_fines();
+
+  select * into target_profile from public.profiles
+  where id = p_student_id and role in ('student', 'faculty');
+  if target_profile.id is null then raise exception 'Choose an active student or faculty member'; end if;
+
+  select * into target_copy from public.physical_book_copies
+  where lower(copy_code) = lower(trim(p_copy_code)) for update;
+  if target_copy.id is null then raise exception 'No physical copy matches that accession tag'; end if;
+  if target_copy.status <> 'available' then
+    raise exception 'Copy % is %, not available for checkout', target_copy.copy_code, target_copy.status;
+  end if;
+
+  select * into target_book from public.books
+  where id = target_copy.book_id and catalog_type in ('physical', 'hybrid') and not is_archived;
+  if target_book.id is null then raise exception 'This title is not available for circulation'; end if;
+
+  select * into target_option from public.physical_loan_options
+  where book_id = target_copy.book_id and duration_days = p_duration_days and is_active for share;
+  if target_option.id is null then raise exception 'Choose an active loan period configured for this title'; end if;
+  if round(p_amount_paid, 2) <> round(target_option.fee_amount, 2) then
+    raise exception 'Amount received must equal the configured loan fee';
+  end if;
+
+  if exists (
+    select 1 from public.physical_book_requests
+    where student_id = p_student_id
+      and (status = 'lost' or (status in ('checked_out', 'return_pending') and due_date < checked_out_at_time))
+  ) then raise exception 'Resolve overdue or lost physical loans before issuing another book'; end if;
+
+  select coalesce(sum(amount), 0) into unpaid_total from public.fines
+  where student_id = p_student_id and physical_book_request_id is not null and status = 'unpaid';
+  if unpaid_total > 0 then raise exception 'Clear all unpaid physical fines before issuing another book'; end if;
+
+  select count(*)::integer into active_physical_count from public.physical_book_requests
+  where student_id = p_student_id and status in ('checked_out', 'return_pending');
+  if active_physical_count >= 3 then raise exception 'The physical borrowing limit of 3 active books has been reached'; end if;
+
+  if exists (
+    select 1 from public.physical_book_requests
+    where student_id = p_student_id and book_id = target_copy.book_id
+      and status in ('pending', 'checked_out', 'return_pending')
+  ) then raise exception 'This member already has a pending request or active loan for this title'; end if;
+
+  update public.physical_book_copies set status = 'borrowed', checked_out_at = checked_out_at_time,
+    due_date = checked_out_at_time + make_interval(days => target_option.duration_days)
+  where id = target_copy.id;
+
+  insert into public.physical_book_requests (
+    student_id, book_id, loan_option_id, copy_id, duration_days, fee_amount,
+    payment_method, payment_status, status, checked_out_at, due_date,
+    payment_received_amount, payment_verified_at, payment_verified_by, payment_notes
+  ) values (
+    p_student_id, target_copy.book_id, target_option.id, target_copy.id,
+    target_option.duration_days, target_option.fee_amount, 'cash', 'paid', 'checked_out',
+    checked_out_at_time, checked_out_at_time + make_interval(days => target_option.duration_days),
+    round(p_amount_paid, 2), checked_out_at_time, auth.uid(),
+    nullif(trim(coalesce(p_payment_notes, '')), '')
+  ) returning * into saved_request;
+
+  update public.physical_book_requests
+  set receipt_number = 'SL-' || to_char(checked_out_at_time, 'YYYYMMDD') || '-' || lpad(saved_request.id::text, 6, '0')
+  where id = saved_request.id returning * into saved_request;
+
+  insert into public.physical_book_loan_history (
+    request_id, student_id, book_id, copy_id, duration_days, fee_amount,
+    payment_method, payment_status, checked_out_at, due_date, status,
+    receipt_number, checked_out_by, notes
+  ) values (
+    saved_request.id, saved_request.student_id, saved_request.book_id, saved_request.copy_id,
+    saved_request.duration_days, saved_request.fee_amount, saved_request.payment_method,
+    saved_request.payment_status, saved_request.checked_out_at, saved_request.due_date,
+    'checked_out', saved_request.receipt_number, auth.uid(), saved_request.payment_notes
+  );
+
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (auth.uid(), 'physical_checkout_issued_by_librarian', 'physical_book_request', saved_request.id,
+    jsonb_build_object('student_id', p_student_id, 'copy_id', target_copy.id,
+      'copy_code', target_copy.copy_code, 'duration_days', target_option.duration_days,
+      'fee_amount', target_option.fee_amount, 'amount_received', round(p_amount_paid, 2),
+      'id_card_presented', true));
+
+  insert into public.notifications(user_id, event_type, title, message, reference_id)
+  values (p_student_id, 'physical_checkout', 'Physical book checked out',
+    'Your physical-book checkout is complete. Your receipt is available in your library account.',
+    saved_request.id);
+  return saved_request;
+end;
+$$;
+revoke all on function public.admin_issue_physical_copy(uuid, text, integer, numeric, text, boolean) from public, anon;
+grant execute on function public.admin_issue_physical_copy(uuid, text, integer, numeric, text, boolean) to authenticated;
+
+create or replace function public.admin_return_physical_loans(
+  p_student_id uuid, p_request_ids bigint[], p_id_card_presented boolean
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare target_request record; returned_count integer := 0;
+begin
+  if not public.is_librarian() then raise exception 'Librarian access required'; end if;
+  if p_id_card_presented is distinct from true then
+    raise exception 'Confirm that the member presented a physical institutional ID card';
+  end if;
+  if p_request_ids is null or cardinality(p_request_ids) < 1 or cardinality(p_request_ids) > 10 then
+    raise exception 'Select between 1 and 10 physical loans to return';
+  end if;
+  if cardinality(p_request_ids) <> (
+    select count(distinct request_id) from unnest(p_request_ids) as items(request_id)
+  ) then raise exception 'A physical loan can only be selected once'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('physical-member:' || p_student_id::text, 0));
+  for target_request in
+    select r.id from public.physical_book_requests r
+    where r.id = any(p_request_ids) and r.student_id = p_student_id
+      and r.status in ('checked_out', 'return_pending') and r.copy_id is not null
+    order by r.id for update
+  loop
+    perform public.admin_inspect_physical_return(target_request.id, 'available', 0, null, true);
+    returned_count := returned_count + 1;
+  end loop;
+  if returned_count <> cardinality(p_request_ids) then
+    raise exception 'One or more selected copies are not active loans for this member';
+  end if;
+  return returned_count;
+end;
+$$;
+revoke all on function public.admin_return_physical_loans(uuid, bigint[], boolean) from public, anon;
+grant execute on function public.admin_return_physical_loans(uuid, bigint[], boolean) to authenticated;
+
+alter table public.point_transactions
+  drop constraint if exists point_transactions_transaction_type_check;
+alter table public.point_transactions
+  add constraint point_transactions_transaction_type_check
+  check (transaction_type in (
+    'contribution_reward',
+    'contribution_royalty',
+    'access_unlock',
+    'admin_adjustment',
+    'cash_topup'
+  ));
+
+create table if not exists public.point_topups (
+  id bigint generated by default as identity primary key,
+  member_id uuid not null references public.profiles(id) on delete restrict,
+  bundle_points integer not null check (bundle_points in (200, 500, 1000)),
+  amount_paid numeric(8, 2) not null check (amount_paid in (10, 22, 40)),
+  recorded_by uuid not null references public.profiles(id) on delete restrict,
+  receipt_number text unique,
+  created_at timestamptz not null default now(),
+  check (
+    (bundle_points = 200 and amount_paid = 10)
+    or (bundle_points = 500 and amount_paid = 22)
+    or (bundle_points = 1000 and amount_paid = 40)
+  )
+);
+create index if not exists point_topups_member_created_idx
+  on public.point_topups(member_id, created_at desc);
+alter table public.point_topups enable row level security;
+drop policy if exists point_topups_read_own_or_staff on public.point_topups;
+create policy point_topups_read_own_or_staff on public.point_topups
+  for select to authenticated
+  using (member_id = auth.uid() or public.is_library_staff());
+revoke all on public.point_topups from public, anon, authenticated;
+grant select on public.point_topups to authenticated;
+
+create or replace function public.staff_record_cash_point_topup(
+  p_member_id uuid,
+  p_bundle_points integer
+)
+returns public.point_topups
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  member_role text;
+  amount_to_pay numeric(8, 2);
+  saved_topup public.point_topups;
+begin
+  if auth.uid() is null or not public.is_library_staff() then
+    raise exception 'Librarian or administrator access required';
+  end if;
+
+  amount_to_pay := case p_bundle_points
+    when 200 then 10
+    when 500 then 22
+    when 1000 then 40
+    else null
+  end;
+  if amount_to_pay is null then
+    raise exception 'Choose one of the published 200, 500, or 1,000 point bundles';
+  end if;
+
+  select role into member_role
+  from public.profiles
+  where id = p_member_id
+  for update;
+  if member_role is null or member_role not in ('student', 'faculty') then
+    raise exception 'Point top-ups are available only to student and faculty members';
+  end if;
+
+  insert into public.point_topups(member_id, bundle_points, amount_paid, recorded_by)
+  values (p_member_id, p_bundle_points, amount_to_pay, auth.uid())
+  returning * into saved_topup;
+
+  update public.point_topups
+  set receipt_number = 'SL-PT-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(saved_topup.id::text, 6, '0')
+  where id = saved_topup.id
+  returning * into saved_topup;
+
+  update public.profiles
+  set points_balance = points_balance + p_bundle_points
+  where id = p_member_id;
+
+  insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
+  values (
+    p_member_id,
+    p_bundle_points,
+    'cash_topup',
+    saved_topup.id,
+    format('Cash top-up: %s points for PHP %s (Receipt %s)',
+      p_bundle_points, to_char(amount_to_pay, 'FM999999990.00'), saved_topup.receipt_number)
+  );
+
+  insert into public.audit_logs(actor_id, action, target_type, details)
+  values (
+    auth.uid(),
+    'cash_point_topup_recorded',
+    'profile',
+    jsonb_build_object(
+      'target_user_id', p_member_id,
+      'topup_id', saved_topup.id,
+      'points', p_bundle_points,
+      'amount_paid_php', amount_to_pay,
+      'receipt_number', saved_topup.receipt_number
+    )
+  );
+
+  return saved_topup;
+end;
+$$;
+revoke all on function public.staff_record_cash_point_topup(uuid, integer) from public, anon;
+grant execute on function public.staff_record_cash_point_topup(uuid, integer) to authenticated;
+
+revoke all on function public.admin_award_recognition(uuid, text, integer, text) from public, anon, authenticated;
+
+create or replace function public.prevent_student_non_topup_point_income()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_role text;
+begin
+  if new.amount > 0 and new.transaction_type <> 'cash_topup' then
+    select role into target_role from public.profiles where id = new.user_id;
+    if target_role = 'student' then
+      raise exception 'Student points can be added only through a staff-recorded cash top-up';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists prevent_student_non_topup_point_income on public.point_transactions;
+create trigger prevent_student_non_topup_point_income
+before insert on public.point_transactions
+for each row execute function public.prevent_student_non_topup_point_income();
+revoke all on function public.prevent_student_non_topup_point_income() from public, anon, authenticated;
+
+alter table public.book_contributions
+  add column if not exists material_type text not null default 'lesson';
+update public.book_contributions
+set material_type = 'legacy_book'
+where approved_book_id is not null;
+alter table public.book_contributions
+  drop constraint if exists book_contributions_material_type_check;
+alter table public.book_contributions
+  add constraint book_contributions_material_type_check
+  check (material_type in ('lesson', 'legacy_book'));
+create index if not exists book_contributions_public_lessons_idx
+  on public.book_contributions(status, created_at desc)
+  where material_type = 'lesson';
+
+drop policy if exists book_contributions_read_own_or_admin on public.book_contributions;
+create policy book_contributions_read_own_or_admin on public.book_contributions
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or public.is_library_staff()
+    or (status = 'approved' and material_type = 'lesson')
+  );
+
+drop function if exists public.admin_review_book_contribution(bigint, text, integer, integer);
+create or replace function public.admin_review_book_contribution(
+  contribution_id bigint,
+  decision text,
+  reward_points integer default 25,
+  access_points integer default 0,
+  rejection_reason text default null
+)
+returns public.book_contributions
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  contribution public.book_contributions;
+  owner_path text;
+  reason text;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if decision not in ('approved', 'rejected') then raise exception 'Invalid lesson review decision'; end if;
+  if reward_points is null or reward_points < 0 or reward_points > 100 then raise exception 'Lesson reward must be between 0 and 100 points'; end if;
+  if access_points is distinct from 0 then raise exception 'Faculty lessons do not create books or have a points access cost'; end if;
+  if decision = 'rejected'
+    and (rejection_reason is null or rejection_reason not in ('Poor Scan Quality', 'Copyright Violation', 'Incorrect Metadata')) then
+    raise exception 'Choose a supported rejection reason';
+  end if;
+  reason := case when decision = 'rejected' then rejection_reason else null end;
+
+  select * into contribution
+  from public.book_contributions
+  where id = contribution_id
+  for update;
+  if contribution.id is null or contribution.status <> 'pending' then
+    raise exception 'Pending lesson submission not found';
+  end if;
+  if contribution.material_type <> 'lesson' then
+    raise exception 'Only lesson submissions can be reviewed here; books must be added by an administrator';
+  end if;
+
+  if decision = 'approved' then
+    owner_path := 'contributions/' || contribution.user_id::text || '/';
+    if contribution.storage_provider = 'google_drive' then
+      if nullif(trim(contribution.storage_file_id), '') is null then
+        raise exception 'Lesson file is missing its file ID';
+      end if;
+    elsif contribution.storage_provider is distinct from 'supabase'
+      or nullif(trim(contribution.storage_path), '') is null
+      or (
+        contribution.storage_path not like owner_path || '%'
+        and contribution.storage_path not like 'ebooks/' || owner_path || '%'
+      )
+      or regexp_replace(contribution.storage_path, '^ebooks/', '') ~ '(^|/)(\.|\.\.)(/|$)'
+      or nullif(trim(contribution.pdf_url), '') is distinct from nullif(trim(contribution.storage_path), '') then
+      raise exception 'Lesson file must be in the submitter private storage folder before approval';
+    end if;
+
+    update public.profiles
+    set points_balance = points_balance + reward_points
+    where id = contribution.user_id;
+    if reward_points > 0 then
+      insert into public.point_transactions(user_id, amount, transaction_type, reference_id, description)
+      values (contribution.user_id, reward_points, 'contribution_reward', contribution.id, 'Approved faculty lesson');
+    end if;
+  end if;
+
+  update public.book_contributions
+  set status = decision,
+      points_awarded = case when decision = 'approved' then reward_points else 0 end,
+      approved_book_id = null,
+      material_type = 'lesson',
+      reviewed_by = auth.uid(),
+      reviewed_at = now(),
+      rejection_reason = reason,
+      review_feedback = reason
+  where id = contribution.id
+  returning * into contribution;
+
+  insert into public.notifications(user_id, event_type, title, message, reference_id)
+  values (
+    contribution.user_id,
+    'contribution_review',
+    case when decision = 'approved' then 'Lesson approved' else 'Lesson reviewed' end,
+    case when decision = 'approved'
+      then 'Your lesson is approved and available in the library. ' || reward_points::text || ' points were awarded.'
+      else 'Your lesson was not approved: ' || reason || '.' end,
+    contribution.id
+  );
+
+  insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+  values (
+    auth.uid(),
+    case when decision = 'approved' then 'faculty_lesson_approved' else 'faculty_lesson_rejected' end,
+    'book_contribution',
+    contribution.id,
+    jsonb_build_object('decision', decision, 'points_awarded', contribution.points_awarded, 'reason', reason)
+  );
+
+  return contribution;
+end;
+$$;
+revoke all on function public.admin_review_book_contribution(bigint, text, integer, integer, text) from public, anon;
+grant execute on function public.admin_review_book_contribution(bigint, text, integer, integer, text) to authenticated;
+
+commit;
+
+
+-- Consolidated from migration 20261108120000_library_policy_and_audit.sql.
+begin;
+
+create table if not exists public.library_policy_settings (
+  id smallint primary key default 1 check (id = 1),
+  fine_grace_days integer not null default 2 check (fine_grace_days between 0 and 30),
+  late_fee_per_day numeric(8, 2) not null default 5.00 check (late_fee_per_day between 0 and 1000),
+  late_fee_cap numeric(10, 2) not null default 500.00 check (late_fee_cap between 0 and 100000),
+  lost_after_days integer not null default 30 check (lost_after_days between 1 and 365),
+  faculty_lesson_reward_points integer not null default 25 check (faculty_lesson_reward_points between 0 and 100),
+  policy_notice text not null default 'Students and faculty can top up points with the librarian: 200 points for PHP 10, 500 for PHP 22, or 1,000 for PHP 40 (maximum 1,000 points per sale). Students earn points through these cash top-ups. Faculty may also earn the configured reward when an administrator approves a lesson submission. Only administrators add books to the catalog. Librarians can invite students and faculty after checking a school ID in person; ID images are not retained.',
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now(),
+  check (char_length(policy_notice) between 1 and 5000)
+);
+
+insert into public.library_policy_settings(id)
+values (1)
+on conflict (id) do nothing;
+
+alter table public.library_policy_settings enable row level security;
+drop policy if exists library_policy_settings_read_public on public.library_policy_settings;
+create policy library_policy_settings_read_public on public.library_policy_settings
+  for select to anon, authenticated using (true);
+revoke all on public.library_policy_settings from public, anon, authenticated;
+grant select on public.library_policy_settings to anon, authenticated;
+
+alter table public.physical_book_requests
+  add column if not exists policy_grace_days integer not null default 2,
+  add column if not exists policy_daily_fine numeric(8, 2) not null default 5.00,
+  add column if not exists policy_fine_cap numeric(10, 2) not null default 500.00,
+  add column if not exists policy_lost_days integer not null default 30;
+
+alter table public.physical_book_requests
+  drop constraint if exists physical_book_requests_policy_snapshot_check;
+alter table public.physical_book_requests
+  add constraint physical_book_requests_policy_snapshot_check
+  check (
+    policy_grace_days between 0 and 30
+    and policy_daily_fine between 0 and 1000
+    and policy_fine_cap between 0 and 100000
+    and policy_lost_days between 1 and 365
+  );
+
+create or replace function public.snapshot_physical_loan_policy()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare policy public.library_policy_settings;
+begin
+  select * into policy from public.library_policy_settings where id = 1;
+  if policy.id is null then
+    raise exception 'Library policy settings are not initialized';
+  end if;
+  new.policy_grace_days := policy.fine_grace_days;
+  new.policy_daily_fine := policy.late_fee_per_day;
+  new.policy_fine_cap := policy.late_fee_cap;
+  new.policy_lost_days := policy.lost_after_days;
+  return new;
+end;
+$$;
+
+drop trigger if exists snapshot_physical_loan_policy on public.physical_book_requests;
+create trigger snapshot_physical_loan_policy
+before insert on public.physical_book_requests
+for each row execute function public.snapshot_physical_loan_policy();
+revoke all on function public.snapshot_physical_loan_policy() from public, anon, authenticated;
+
+create or replace function public.admin_update_library_policy(
+  p_fine_grace_days integer,
+  p_late_fee_per_day numeric,
+  p_late_fee_cap numeric,
+  p_lost_after_days integer,
+  p_faculty_lesson_reward_points integer,
+  p_policy_notice text
+)
+returns public.library_policy_settings
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  old_policy public.library_policy_settings;
+  saved_policy public.library_policy_settings;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if p_fine_grace_days is null or p_fine_grace_days not between 0 and 30 then
+    raise exception 'Fine grace period must be between 0 and 30 days';
+  end if;
+  if p_late_fee_per_day is null or p_late_fee_per_day not between 0 and 1000 then
+    raise exception 'Daily late fee must be between PHP 0 and PHP 1,000';
+  end if;
+  if p_late_fee_cap is null or p_late_fee_cap not between 0 and 100000 then
+    raise exception 'Fine cap must be between PHP 0 and PHP 100,000';
+  end if;
+  if p_lost_after_days is null or p_lost_after_days not between 1 and 365 then
+    raise exception 'Lost classification must be between 1 and 365 overdue days';
+  end if;
+  if p_faculty_lesson_reward_points is null or p_faculty_lesson_reward_points not between 0 and 100 then
+    raise exception 'Faculty lesson reward must be between 0 and 100 points';
+  end if;
+  if nullif(trim(coalesce(p_policy_notice, '')), '') is null or char_length(p_policy_notice) > 5000 then
+    raise exception 'Enter a policy notice of at most 5,000 characters';
+  end if;
+
+  select * into old_policy from public.library_policy_settings where id = 1 for update;
+  if old_policy.id is null then raise exception 'Library policy settings are not initialized'; end if;
+  update public.library_policy_settings
+  set fine_grace_days = p_fine_grace_days,
+      late_fee_per_day = round(p_late_fee_per_day, 2),
+      late_fee_cap = round(p_late_fee_cap, 2),
+      lost_after_days = p_lost_after_days,
+      faculty_lesson_reward_points = p_faculty_lesson_reward_points,
+      policy_notice = trim(p_policy_notice),
+      updated_by = auth.uid(),
+      updated_at = now()
+  where id = 1
+  returning * into saved_policy;
+
+  insert into public.audit_logs(actor_id, action, target_type, details)
+  values (
+    auth.uid(),
+    'library_policy_updated',
+    'library_policy',
+    jsonb_build_object(
+      'fine_grace_days', jsonb_build_object('before', old_policy.fine_grace_days, 'after', saved_policy.fine_grace_days),
+      'late_fee_per_day', jsonb_build_object('before', old_policy.late_fee_per_day, 'after', saved_policy.late_fee_per_day),
+      'late_fee_cap', jsonb_build_object('before', old_policy.late_fee_cap, 'after', saved_policy.late_fee_cap),
+      'lost_after_days', jsonb_build_object('before', old_policy.lost_after_days, 'after', saved_policy.lost_after_days),
+      'faculty_lesson_reward_points', jsonb_build_object('before', old_policy.faculty_lesson_reward_points, 'after', saved_policy.faculty_lesson_reward_points),
+      'policy_notice_changed', old_policy.policy_notice is distinct from saved_policy.policy_notice
+    )
+  );
+  return saved_policy;
+end;
+$$;
+revoke all on function public.admin_update_library_policy(integer, numeric, numeric, integer, integer, text) from public, anon;
+grant execute on function public.admin_update_library_policy(integer, numeric, numeric, integer, integer, text) to authenticated;
+
+create or replace function public.calculate_overdue_fines(daily_rate numeric default 5.00)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  loan record;
+  local_today date := (now() at time zone 'Asia/Manila')::date;
+  due_local_date date;
+  end_local_date date;
+  fine_through date;
+  chargeable_days integer;
+  fine_amount numeric(10, 2);
+  can_process_all boolean;
+begin
+  if daily_rate is distinct from 5.00 then
+    raise exception 'Daily fine rates are configured by an administrator and snapshotted for each new request.';
+  end if;
+  can_process_all := public.is_library_staff()
+    or coalesce(current_setting('request.jwt.claim.role', true), '') = 'service_role';
+  if auth.uid() is null and not can_process_all then
+    raise exception 'Authenticated member or library staff access required';
+  end if;
+
+  for loan in
+    select id, student_id, copy_id, due_date, returned_at, status,
+           policy_grace_days, policy_daily_fine, policy_fine_cap, policy_lost_days
+    from public.physical_book_requests
+    where due_date is not null
+      and status in ('checked_out', 'return_pending', 'returned')
+      and (can_process_all or student_id = auth.uid())
+    for update
+  loop
+    due_local_date := (loan.due_date at time zone 'Asia/Manila')::date;
+    end_local_date := case
+      when loan.status = 'returned' and loan.returned_at is not null
+        then (loan.returned_at at time zone 'Asia/Manila')::date
+      else local_today
+    end;
+
+    fine_through := least(end_local_date, due_local_date + loan.policy_lost_days);
+    if end_local_date > due_local_date + loan.policy_grace_days then
+      select count(*)::integer into chargeable_days
+      from generate_series(due_local_date + loan.policy_grace_days + 1, fine_through, interval '1 day') as overdue_day(day)
+      where extract(dow from overdue_day.day) <> 0
+        and not exists (
+          select 1 from public.library_holidays holiday
+          where holiday.holiday_date = overdue_day.day::date
+        );
+    else
+      chargeable_days := 0;
+    end if;
+
+    fine_amount := least(loan.policy_fine_cap, chargeable_days * loan.policy_daily_fine);
+    if fine_amount > 0 then
+      insert into public.fines(
+        physical_book_request_id, borrow_request_id, student_id, amount,
+        status, created_at, fine_type, fine_reason
+      ) values (
+        loan.id, null, loan.student_id, fine_amount, 'unpaid', now(),
+        'late_fee', 'Automatic overdue charge under the policy saved with this request.'
+      )
+      on conflict (physical_book_request_id)
+        where physical_book_request_id is not null and fine_type = 'late_fee'
+      do update set amount = excluded.amount
+      where public.fines.status <> 'paid';
+    else
+      update public.fines
+      set status = 'waived',
+          waived_at = now(),
+          waiver_reason = 'Recalculated under the policy saved with this request; no chargeable overdue days remain.'
+      where physical_book_request_id = loan.id
+        and fine_type = 'late_fee'
+        and status = 'unpaid';
+    end if;
+
+    if loan.status in ('checked_out', 'return_pending')
+      and local_today >= due_local_date + loan.policy_lost_days then
+      update public.physical_book_requests set status = 'lost'
+      where id = loan.id and status in ('checked_out', 'return_pending');
+      update public.physical_book_copies
+      set status = 'lost', checked_out_at = null, due_date = null
+      where id = loan.copy_id;
+      insert into public.notifications(user_id, event_type, title, message, reference_id)
+      values (
+        loan.student_id, 'physical_item_classified_lost', 'Physical book classified as lost',
+        format('This physical book has been overdue for %s consecutive days. Late-fine accrual has stopped; contact the library to resolve the lost-item record.', loan.policy_lost_days),
+        loan.id
+      );
+    end if;
+  end loop;
+
+  delete from public.physical_book_waitlist waitlist
+  where (can_process_all or waitlist.student_id = auth.uid())
+    and (exists (
+      select 1 from public.physical_book_requests request
+      where request.student_id = waitlist.student_id
+        and (request.status = 'lost' or (request.status in ('checked_out', 'return_pending') and request.due_date < now()))
+    ) or (
+      select coalesce(sum(fine.amount), 0)
+      from public.fines fine
+      where fine.student_id = waitlist.student_id
+        and fine.status = 'unpaid'
+        and fine.physical_book_request_id is not null
+    ) >= 100);
+end;
+$$;
+revoke all on function public.calculate_overdue_fines(numeric) from public, anon;
+grant execute on function public.calculate_overdue_fines(numeric) to authenticated, service_role;
+
+create or replace function public.audit_profile_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  old_data jsonb;
+  new_data jsonb;
+  changed_fields text[];
+begin
+  if tg_op = 'INSERT' then
+    insert into public.audit_logs(actor_id, action, target_type, details)
+    values (auth.uid(), 'account_created', 'profile',
+      jsonb_build_object('target_user_id', new.id, 'role', new.role));
+    return new;
+  elsif tg_op = 'DELETE' then
+    insert into public.audit_logs(actor_id, action, target_type, details)
+    values (auth.uid(), 'account_deleted', 'profile',
+      jsonb_build_object('target_user_id', old.id, 'role', old.role));
+    return old;
+  end if;
+
+  old_data := to_jsonb(old);
+  new_data := to_jsonb(new);
+  select array_agg(field.key order by field.key) into changed_fields
+  from jsonb_each(new_data) field
+  where field.key = any(array['full_name', 'first_name', 'middle_name', 'last_name', 'role', 'school', 'department', 'course', 'student_year', 'institutional_id', 'faculty_rank_id'])
+    and old_data -> field.key is distinct from field.value;
+  if coalesce(cardinality(changed_fields), 0) > 0 then
+    insert into public.audit_logs(actor_id, action, target_type, details)
+    values (
+      auth.uid(),
+      case when old.role is distinct from new.role then 'member_role_changed' else 'profile_updated' end,
+      'profile',
+      jsonb_build_object(
+        'target_user_id', new.id,
+        'changed_fields', changed_fields,
+        'role', new.role
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists audit_profile_changes on public.profiles;
+create trigger audit_profile_changes
+after insert or update or delete on public.profiles
+for each row execute function public.audit_profile_changes();
+revoke all on function public.audit_profile_changes() from public, anon, authenticated;
+
+create or replace function public.audit_book_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  old_data jsonb;
+  new_data jsonb;
+  changed_fields text[];
+begin
+  if tg_op = 'INSERT' then
+    insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+    values (auth.uid(), 'book_created', 'book', new.id,
+      jsonb_build_object('title', new.title, 'author', new.author, 'catalog_type', new.catalog_type, 'source_type', new.source_type));
+    return new;
+  elsif tg_op = 'DELETE' then
+    insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+    values (auth.uid(), 'book_deleted', 'book', old.id,
+      jsonb_build_object('title', old.title, 'author', old.author, 'catalog_type', old.catalog_type));
+    return old;
+  end if;
+
+  old_data := to_jsonb(old);
+  new_data := to_jsonb(new);
+  select array_agg(field.key order by field.key) into changed_fields
+  from jsonb_each(new_data) field
+  where field.key = any(array['title', 'author', 'category', 'discipline', 'genre', 'course_code', 'isbn', 'description', 'catalog_type', 'source_type', 'is_archived'])
+    and old_data -> field.key is distinct from field.value;
+  if coalesce(cardinality(changed_fields), 0) > 0 then
+    insert into public.audit_logs(actor_id, action, target_type, target_id, details)
+    values (
+      auth.uid(),
+      case when old.is_archived is distinct from new.is_archived then 'book_archive_status_changed' else 'book_updated' end,
+      'book',
+      new.id,
+      jsonb_build_object('title', new.title, 'author', new.author, 'changed_fields', changed_fields, 'is_archived', new.is_archived)
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists audit_book_changes on public.books;
+create trigger audit_book_changes
+after insert or update or delete on public.books
+for each row execute function public.audit_book_changes();
+revoke all on function public.audit_book_changes() from public, anon, authenticated;
 
 commit;

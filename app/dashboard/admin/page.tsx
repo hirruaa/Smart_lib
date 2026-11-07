@@ -11,19 +11,18 @@ import EbookUploader from '@/components/EbookUploader'
 import AdminAnalytics from '@/components/AdminAnalytics'
 import ActionModal from '@/components/ActionModal'
 import ResultModal from '@/components/ResultModal'
-import PasswordInput from '@/components/PasswordInput'
 import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
 import PhysicalCirculationAdminPage from '@/components/PhysicalCirculationAdminPage'
-import SearchableMemberSelect from '@/components/SearchableMemberSelect'
+import StaffCashPointTopUpModal from '@/components/StaffCashPointTopUpModal'
 import { generateCatalogIsbn } from '@/utils/isbn'
 import { isAdminRole } from '@/utils/roles'
 
 const navGroups = [
-  { label: 'Operations', items: [{ label: 'Overview', section: 'overview' }, { label: 'Physical lending', section: 'physical-requests' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital history', section: 'requests' }, { label: 'Contributions', section: 'contributions' }] },
-  { label: 'Library', items: [{ label: 'Catalog management', section: 'books' }, { label: 'Physical catalog', section: 'physical' }, { label: 'Borrowing policy', section: 'policy' }] },
-  { label: 'Review & insights', items: [{ label: 'Analytics', section: 'analytics' }, { label: 'Audit log', section: 'audit' }] },
+  { label: 'Management', items: [{ label: 'Overview', section: 'overview' }, { label: 'Financial ledger / fines', section: 'physical-finance' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital history', section: 'requests' }, { label: 'Faculty lessons', section: 'contributions' }] },
+  { label: 'Library management', items: [{ label: 'Catalog management', section: 'books' }, { label: 'Physical catalog', section: 'physical' }, { label: 'Borrowing policy', section: 'policy' }] },
+  { label: 'Review & insights', items: [{ label: 'Audit log', section: 'audit' }] },
 ]
 
 function ListPagination({ page, pageCount, total, onPageChange }: { page: number; pageCount: number; total: number; onPageChange: (page: number) => void }) {
@@ -44,6 +43,10 @@ type Book = {
   author: string
   isbn: string | null
   category: string
+  discipline?: string | null
+  genre?: string | null
+  course_code: string | null
+  source_type: 'catalog' | 'staff_added' | 'community_contribution'
   description: string | null
   cover_image_url?: string | null
   pdf_url: string | null
@@ -137,6 +140,7 @@ type Profile = {
   id: string
   email: string
   username?: string | null
+  institutional_id?: string | null
   role: string
   created_at: string | null
   points_balance?: number | null
@@ -155,12 +159,21 @@ type MemberEditForm = {
   department: string
   course: string
   studentYear: string
+  institutionalId: string
 }
 
 type AdminProfile = {
   email: string
   role: string
   full_name?: string | null
+}
+
+type MemberSuspensionState = {
+  memberId: string
+  suspended: boolean | null
+  bannedUntil: string | null
+  loading: boolean
+  error: string | null
 }
 
 type Contribution = {
@@ -176,9 +189,11 @@ type Contribution = {
   status: string
   created_at: string | null
   review_feedback?: string | null
+  rejection_reason?: string | null
 }
 
-type AuditLog = { id: number; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
+type AuditLog = { id: number; actor_id: string | null; action: string; target_type: string; target_id: number | null; details: Record<string, unknown>; created_at: string }
+type AuditActor = { id: string; full_name: string | null; email: string; role: string }
 type AdminConfirm = { type: 'archiveBook' | 'revokeLoan'; id: number; label?: string; isArchived?: boolean } | { type: 'deleteBook'; id: number; label?: string } | { type: 'deleteMember'; id: string; label?: string } | null
 
 function memberDisplayName(member?: Pick<Profile, 'full_name' | 'email'> | null, fallback = 'Member') {
@@ -213,12 +228,11 @@ function AdminNavIcon({ section }: { section: string }) {
     overview: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
     books: <><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v17H7.5A2.5 2.5 0 0 0 5 22V5.5Z" /><path d="M5 20.5A2.5 2.5 0 0 1 7.5 18H19M9 7h6M9 10h4" /></>,
     requests: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 12h6M9 16h4" /></>,
-    'physical-requests': <><path d="M4 5h16v14H4z" /><path d="M8 9h8M8 13h5" /><circle cx="18" cy="18" r="3" /></>,
     'physical-fines': <><path d="M12 3v18M17 7.5c-.8-1-2.3-1.5-4.5-1.5-2.4 0-4 1-4 2.7 0 4.2 9 1.4 9 5.8 0 1.8-1.8 3-4.5 3-2.2 0-4-.7-5-1.9" /></>,
+    'physical-finance': <><path d="M12 3v18M17 7.5c-.8-1-2.3-1.5-4.5-1.5-2.4 0-4 1-4 2.7 0 4.2 9 1.4 9 5.8 0 1.8-1.8 3-4.5 3-2.2 0-4-.7-5-1.9" /></>,
     users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
     physical: <><path d="M4 7h16v13H4z" /><path d="M8 7V4h8v3M8 12h8M8 16h5" /></>,
     policy: <><path d="M6 3h12v18l-6-3-6 3z" /><path d="M9 8h6M9 12h6" /></>,
-    analytics: <><path d="M5 19V9M12 19V5M19 19v-8" /><path d="M3 19h18" /></>,
     materials: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
     contributions: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h5" /><path d="m14 16 2 2 4-4" /></>,
     audit: <><path d="M4 5h16M4 12h16M4 19h16" /><circle cx="7" cy="5" r="1" /><circle cx="7" cy="12" r="1" /><circle cx="7" cy="19" r="1" /></>,
@@ -231,18 +245,18 @@ export default function AdminPage() {
   const router = useRouter()
   const [section, setSection] = useState('overview')
   const [physicalSectionVisited, setPhysicalSectionVisited] = useState(false)
-  const [overviewPhysicalAction, setOverviewPhysicalAction] = useState<{ panel: 'requests' | 'checkedOut' | 'history' | 'lost' | 'print' | 'addBook'; token: number; caseId?: number; requestId?: number } | null>(null)
   const [profile, setProfile] = useState<AdminProfile | null>(null)
   const [books, setBooks] = useState<Book[]>([])
   const [requests, setRequests] = useState<RequestItem[]>([])
   const [physicalRequestPreview, setPhysicalRequestPreview] = useState<PhysicalRequestPreview[]>([])
-  const [circulationSummary, setCirculationSummary] = useState({ pendingRequests: 0, activeLoans: 0, lostLoans: 0 })
+  const [circulationSummary, setCirculationSummary] = useState<{ pendingRequests: number; lostLoans: number } | null>(null)
   const [digitalLoanHistory, setDigitalLoanHistory] = useState<DigitalLoanHistoryItem[]>([])
   const [students, setStudents] = useState<Profile[]>([])
   const [academicCourses, setAcademicCourses] = useState<AcademicCourse[]>([])
   const [academicDepartments, setAcademicDepartments] = useState<AcademicDepartment[]>([])
   const [contributions, setContributions] = useState<Contribution[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [dashboardLoadError, setDashboardLoadError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [actionSuccessTitle, setActionSuccessTitle] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -251,6 +265,9 @@ export default function AdminPage() {
     title: '',
     author: '',
     category: '',
+    genre: '',
+    source_type: 'staff_added' as 'catalog' | 'staff_added' | 'community_contribution',
+    course_code: '',
     isbn: '',
     pdf_url: '',
     access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>,
@@ -275,7 +292,7 @@ export default function AdminPage() {
   const [userLoanFilter, setUserLoanFilter] = useState<'all' | 'active' | 'none'>('all')
   const [digitalHistorySearch, setDigitalHistorySearch] = useState('')
   const debouncedDigitalHistorySearch = useDebounce(digitalHistorySearch, 200)
-  const [digitalHistoryStatus, setDigitalHistoryStatus] = useState<'all' | 'active' | 'returned' | 'expired'>('all')
+  const [digitalHistoryStatus, setDigitalHistoryStatus] = useState<'all' | 'active' | 'returned' | 'expired' | 'revoked'>('all')
   const [bookPage, setBookPage] = useState(1)
   const [digitalHistoryPage, setDigitalHistoryPage] = useState(1)
   const [selectedDigitalLoanIds, setSelectedDigitalLoanIds] = useState<number[]>([])
@@ -283,50 +300,120 @@ export default function AdminPage() {
   const [userPage, setUserPage] = useState(1)
   const [contributionPage, setContributionPage] = useState(1)
   const [selectedContributionIds, setSelectedContributionIds] = useState<number[]>([])
-  const [bulkContributionReview, setBulkContributionReview] = useState<{ decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
+  const [bulkContributionReview, setBulkContributionReview] = useState<{ decision: 'approved' | 'rejected'; reward: string; rejectionReason: string } | null>(null)
+  const [inspectingContribution, setInspectingContribution] = useState<Contribution | null>(null)
   const [showContributionHistory, setShowContributionHistory] = useState(false)
   const [auditPage, setAuditPage] = useState(1)
+  const [auditSearch, setAuditSearch] = useState('')
   const [editingBookId, setEditingBookId] = useState<number | null>(null)
   const [selectedCatalogBook, setSelectedCatalogBook] = useState<Book | null>(null)
+  const [bookManagementTab, setBookManagementTab] = useState<'metadata' | 'attachments' | 'permissions'>('metadata')
   const [bookAccessDraft, setBookAccessDraft] = useState({ mode: 'free' as 'free' | 'points', costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string> })
   const [editingBookDetailsId, setEditingBookDetailsId] = useState<number | null>(null)
-  const [bookDetailsDraft, setBookDetailsDraft] = useState({ title: '', author: '', category: '', isbn: '', description: '', coverImageUrl: '' })
+  const [bookDetailsDraft, setBookDetailsDraft] = useState({ title: '', author: '', category: '', genre: '', sourceType: 'staff_added' as Book['source_type'], courseCode: '', isbn: '', description: '', coverImageUrl: '' })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '' })
-  const [recognitionForm, setRecognitionForm] = useState({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
+  const [newStudent, setNewStudent] = useState({ username: '', email: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [auditActors, setAuditActors] = useState<AuditActor[]>([])
+  const [auditActorError, setAuditActorError] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<AdminConfirm>(null)
-  const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; accessPoints: string } | null>(null)
+  const [reviewDialog, setReviewDialog] = useState<{ id: number; decision: 'approved' | 'rejected'; reward: string; rejectionReason: string } | null>(null)
   const [revisionDialog, setRevisionDialog] = useState<{ id: number; feedback: string } | null>(null)
-  const [quickAction, setQuickAction] = useState<'recognition' | null>(null)
   const [memberToolModal, setMemberToolModal] = useState<'catalogs' | 'createMember' | null>(null)
   const [editingMember, setEditingMember] = useState<Profile | null>(null)
   const [memberEditForm, setMemberEditForm] = useState<MemberEditForm | null>(null)
   const [selectedMember, setSelectedMember] = useState<(Profile & { active_loans: number }) | null>(null)
+  const [topUpMember, setTopUpMember] = useState<Profile | null>(null)
+  const [memberSuspension, setMemberSuspension] = useState<MemberSuspensionState | null>(null)
+  const [memberSuspensionDialog, setMemberSuspensionDialog] = useState<{ memberId: string; memberName: string; suspended: boolean; reason: string; error?: string } | null>(null)
   const [memberAccountHistory, setMemberAccountHistory] = useState<MemberAccountHistory | null>(null)
   const [memberAccountHistoryLoading, setMemberAccountHistoryLoading] = useState(false)
   const [memberAccountHistoryError, setMemberAccountHistoryError] = useState<string | null>(null)
   const [memberFineStatusAvailable, setMemberFineStatusAvailable] = useState(false)
   const [courseDraft, setCourseDraft] = useState('')
   const [facultyDraft, setFacultyDraft] = useState('')
+  const [defaultLessonReward, setDefaultLessonReward] = useState(25)
+  const [lessonPolicyError, setLessonPolicyError] = useState<string | null>(null)
   const [catalogRemoval, setCatalogRemoval] = useState<{ kind: 'faculty' | 'course'; id: number; name: string } | null>(null)
+
+  const loadMemberSuspension = async (memberId: string) => {
+    setMemberSuspension({ memberId, suspended: null, bannedUntil: null, loading: true, error: null })
+    try {
+      const response = await fetch(`/api/admin/students/${memberId}/suspension`)
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.error || 'Unable to load account access status.')
+      setMemberSuspension((current) => current?.memberId === memberId
+        ? { memberId, suspended: Boolean(data.suspended), bannedUntil: data.bannedUntil ?? null, loading: false, error: null }
+        : current)
+    } catch (cause) {
+      setMemberSuspension((current) => current?.memberId === memberId
+        ? {
+          memberId,
+          suspended: null,
+          bannedUntil: null,
+          loading: false,
+          error: cause instanceof Error ? cause.message : 'Unable to load account access status.',
+        }
+        : current)
+    }
+  }
+
+  const executeMemberSuspensionChange = async () => {
+    if (!memberSuspensionDialog || memberSuspensionDialog.reason.trim().length < 3) {
+      setMemberSuspensionDialog((current) => current ? { ...current, error: 'Enter a reason of at least 3 characters.' } : current)
+      return
+    }
+    const change = memberSuspensionDialog
+    setSaving(true)
+    setMemberSuspensionDialog((current) => current ? { ...current, error: undefined } : current)
+    let updatedSuccessfully = false
+    try {
+      const response = await fetch(`/api/admin/students/${change.memberId}/suspension`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ suspended: change.suspended, reason: change.reason.trim() }),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(result?.error || 'Unable to update account suspension.')
+      setMemberSuspension({
+        memberId: change.memberId,
+        suspended: Boolean(result.suspended),
+        bannedUntil: result.bannedUntil ?? null,
+        loading: false,
+        error: null,
+      })
+      setMemberSuspensionDialog(null)
+      updatedSuccessfully = true
+    } catch (cause) {
+      setMemberSuspensionDialog((current) => current?.memberId === change.memberId
+        ? { ...current, error: cause instanceof Error ? cause.message : 'Unable to update account suspension.' }
+        : current)
+    } finally {
+      setSaving(false)
+    }
+    if (updatedSuccessfully) {
+      await loadData().catch((cause: unknown) => {
+        setDashboardLoadError(cause instanceof Error
+          ? `Account access changed, but the admin data could not be refreshed. (${cause.message})`
+          : 'Account access changed, but the admin data could not be refreshed.')
+      })
+      setActionSuccessTitle(change.suspended ? 'Account suspended' : 'Suspension lifted')
+      setActionMessage(`${change.memberName} ${change.suspended ? 'can no longer sign in' : 'can sign in again'}. The action was recorded in the audit log.`)
+    }
+  }
 
   const openMemberDetails = (member: Profile & { active_loans: number }) => {
     setMemberAccountHistory(null)
     setMemberAccountHistoryError(null)
     setMemberFineStatusAvailable(false)
     setSelectedMember(member)
+    void loadMemberSuspension(member.id)
   }
 
   const navigateToSection = (nextSection: string) => {
     setSection(nextSection)
-    if (nextSection !== 'overview') setOverviewPhysicalAction(null)
-    if (nextSection === 'physical' || nextSection === 'physical-requests') setPhysicalSectionVisited(true)
-  }
-
-  const openOverviewCirculationPanel = (panel: NonNullable<typeof overviewPhysicalAction>['panel'], requestId?: number) => {
-    setOverviewPhysicalAction((current) => ({ panel, token: (current?.token ?? 0) + 1, requestId }))
+    if (nextSection === 'physical' || nextSection === 'physical-finance') setPhysicalSectionVisited(true)
   }
 
 
@@ -431,6 +518,7 @@ export default function AdminPage() {
 
   const openCatalogBook = (book: Book) => {
     setSelectedCatalogBook(book)
+    setBookManagementTab('metadata')
     setEditingBookId(null)
     setEditingBookDetailsId(null)
   }
@@ -438,7 +526,11 @@ export default function AdminPage() {
   const startBookDetailsEdit = (book: Book) => {
     setEditingBookId(null)
     setEditingBookDetailsId(book.id)
-    setBookDetailsDraft({ title: book.title, author: book.author, category: book.category, isbn: book.isbn ?? '', description: book.description ?? '', coverImageUrl: book.cover_image_url ?? '' })
+    setBookDetailsDraft({
+      title: book.title, author: book.author, category: book.discipline ?? '',
+      genre: book.genre ?? '', sourceType: book.source_type, courseCode: book.course_code ?? '',
+      isbn: book.isbn ?? '', description: book.description ?? '', coverImageUrl: book.cover_image_url ?? '',
+    })
   }
 
   const generateBookIsbn = (update: (isbn: string) => void, excludedBookId?: number) => {
@@ -454,19 +546,27 @@ export default function AdminPage() {
     event.preventDefault()
     const title = bookDetailsDraft.title.trim()
     const author = bookDetailsDraft.author.trim()
-    const category = bookDetailsDraft.category.trim()
+    const discipline = bookDetailsDraft.category.trim()
+    const genre = bookDetailsDraft.genre.trim()
+    const category = discipline || genre
+    const courseCode = bookDetailsDraft.courseCode.trim()
     if (!title || !author || !category) {
-      setError('Title, author, and category are required.')
+      setError('Title and author are required, and the book needs a discipline or genre.')
+      return
+    }
+    if (courseCode.length > 32) {
+      setError('Course code must be 32 characters or fewer.')
       return
     }
     setSaving(true)
     setError(null)
     const { data, error: updateError } = await getSupabase().from('books').update({
-      title, author, category,
+      title, author, category, discipline: discipline || null, genre: genre || null,
+      source_type: bookDetailsDraft.sourceType, course_code: courseCode || null,
       isbn: bookDetailsDraft.isbn.trim() || null,
       description: bookDetailsDraft.description.trim() || null,
       cover_image_url: bookDetailsDraft.coverImageUrl.trim() || null,
-    }).eq('id', book.id).select('id,title,author,category,isbn,description,cover_image_url').single()
+    }).eq('id', book.id).select('id,title,author,category,discipline,genre,source_type,course_code,isbn,description,cover_image_url').single()
     if (updateError) {
       setError(`Unable to update book details: ${updateError.message}`)
     } else {
@@ -525,10 +625,16 @@ export default function AdminPage() {
 
   const loadData = async () => {
     setError(null)
+    setDashboardLoadError(null)
     setActionMessage(null)
     const supabase = getSupabase()
 
     const { data: { user }, error } = await supabase.auth.getUser()
+    if (error) {
+      setDashboardLoadError(`Unable to verify your session. Refresh the page or sign in again. (${error.message})`)
+      setLoading(false)
+      return
+    }
     const currentUser = user
     if (!currentUser) {
       router.replace('/login')
@@ -542,7 +648,7 @@ export default function AdminPage() {
       .maybeSingle()
 
     if (profileError) {
-      setError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
+      setDashboardLoadError(`Unable to load your profile. Apply the Supabase profile policies, then try again. (${profileError.message})`)
       setLoading(false)
       return
     }
@@ -565,13 +671,10 @@ export default function AdminPage() {
 
     setProfile({ email: email ?? '', role, full_name: profileData?.full_name ?? null })
 
-    const isMissingTableError = (error: { code?: string; message?: string } | null) =>
-      Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
-
-    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, departmentsRes, physicalRequestsRes, pendingPhysicalRequestsRes] = await Promise.all([
+    const [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, auditRes, coursesRes, departmentsRes, physicalRequestsRes, pendingPhysicalRequestsRes, libraryPolicyRes] = await Promise.all([
       supabase
         .from('books')
-        .select('id, title, author, isbn, category, description, cover_image_url, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, access_duration_days, created_at, is_archived')
+        .select('id, title, author, isbn, category, discipline, genre, course_code, source_type, description, cover_image_url, pdf_url, catalog_type, storage_provider, storage_file_id, storage_path, access_points, access_costs, access_mode, access_duration_days, created_at, is_archived')
         .order('title', { ascending: true }),
       supabase
         .from('borrow_requests')
@@ -584,30 +687,39 @@ export default function AdminPage() {
         .limit(200),
       supabase
         .from('profiles')
-        .select('id, email, username, role, created_at, points_balance, full_name, school, department, course, student_year')
+        .select('id, email, username, institutional_id, role, created_at, points_balance, full_name, school, department, course, student_year')
         .in('role', ['student', 'faculty', 'librarian'])
         .order('created_at', { ascending: false }),
       supabase
         .from('book_contributions')
         .select('id, user_id, title, author, description, pdf_url, storage_provider, storage_file_id, storage_path, status, review_feedback, created_at')
         .order('created_at', { ascending: false }),
-      supabase.from('audit_logs').select('id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(100),
+      supabase.from('audit_logs').select('id,actor_id,action,target_type,target_id,details,created_at').order('created_at', { ascending: false }).limit(1000),
       supabase.from('academic_courses').select('id,name,is_active').order('name'),
       supabase.from('academic_departments').select('id,name,is_active').order('name'),
       supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').order('requested_at', { ascending: false }).limit(5),
       supabase.from('physical_book_requests').select('id,student_id,book_id,status,payment_status,payment_method,fee_amount,requested_at').eq('status', 'pending').order('requested_at', { ascending: false }).limit(5),
+      supabase.from('library_policy_settings').select('faculty_lesson_reward_points').eq('id', 1).single(),
     ])
 
-    // Optional insights modules may not exist yet in older Supabase projects.
-    // Keep the control panel usable while those sections remain empty.
-    if (booksRes.error || requestsRes.error || historyRes.error || studentsRes.error || contributionsRes.error || coursesRes.error || departmentsRes.error) {
-      const failedResource = [booksRes, requestsRes, historyRes, studentsRes, contributionsRes, coursesRes, departmentsRes].find((result) => result.error && !isMissingTableError(result.error))?.error
-      if (failedResource) {
-        setError(`Failed to load admin data: ${failedResource.message || 'Please check the Supabase schema.'}`)
-      } else if (coursesRes.error || departmentsRes.error) {
-        setError('Academic catalogs are not configured. Apply the academic catalog migrations in Supabase.')
-      }
+    const requiredAdminError = [
+      booksRes, requestsRes, historyRes, studentsRes, contributionsRes,
+      auditRes, physicalRequestsRes, pendingPhysicalRequestsRes,
+    ].find((result) => result.error)?.error
+    if (requiredAdminError) {
+      setDashboardLoadError(`Unable to load required admin or library records: ${requiredAdminError.message || 'Please check the Supabase schema.'}`)
+      setLoading(false)
+      return
     }
+    const failedAcademicCatalog = [coursesRes, departmentsRes].find((result) => result.error)?.error
+    if (failedAcademicCatalog) {
+      setDashboardLoadError(`Unable to load the academic catalogs required for member accounts: ${failedAcademicCatalog.message}`)
+      setLoading(false)
+      return
+    }
+    setLessonPolicyError(libraryPolicyRes.error
+      ? `Policy settings are unavailable; lesson approvals will use the default reward until the policy migration is applied. (${libraryPolicyRes.error.message})`
+      : null)
 
     setBooks((booksRes.data ?? []).map((book) => ({
       ...book,
@@ -624,12 +736,37 @@ export default function AdminPage() {
     setAcademicCourses((coursesRes.data ?? []) as AcademicCourse[])
     setAcademicDepartments((departmentsRes.data ?? []) as AcademicDepartment[])
     setContributions((contributionsRes.data ?? []) as Contribution[])
-    setAuditLogs((auditRes.data ?? []) as AuditLog[])
+    const auditRows = (auditRes.data ?? []) as AuditLog[]
+    setAuditLogs(auditRows)
+    if (!libraryPolicyRes.error && libraryPolicyRes.data) {
+      setDefaultLessonReward(libraryPolicyRes.data.faculty_lesson_reward_points)
+    }
+    const auditActorIds = Array.from(new Set(auditRows.flatMap((log) => log.actor_id ? [log.actor_id] : [])))
+    setAuditActorError(null)
+    if (auditActorIds.length) {
+      const { data: actorRows, error: actorError } = await supabase
+        .from('profiles')
+        .select('id,full_name,email,role')
+        .in('id', auditActorIds)
+      if (actorError) {
+        setAuditActors([])
+        setAuditActorError(`Unable to load audit actor names: ${actorError.message}`)
+      } else {
+        setAuditActors((actorRows ?? []) as AuditActor[])
+      }
+    } else {
+      setAuditActors([])
+    }
     setLoading(false)
   }
 
   useEffect(() => {
-    loadData()
+    void loadData().catch((cause: unknown) => {
+      setDashboardLoadError(cause instanceof Error
+        ? `Unable to load the admin dashboard. Refresh and try again. (${cause.message})`
+        : 'Unable to load the admin dashboard. Refresh and try again.')
+      setLoading(false)
+    })
   }, [router])
 
   useEffect(() => {
@@ -637,14 +774,17 @@ export default function AdminPage() {
 
     const refreshCirculationSummary = async () => {
       const supabase = getSupabase()
-      const [pendingRequests, activeLoans, lostLoans] = await Promise.all([
+      const [pendingRequests, lostLoans] = await Promise.all([
         supabase.from('physical_book_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('physical_book_loan_history').select('id', { count: 'exact', head: true }).in('status', ['checked_out', 'return_pending']),
         supabase.from('physical_book_loan_history').select('id', { count: 'exact', head: true }).eq('status', 'lost'),
       ])
+      const failedCount = [pendingRequests, lostLoans].find((result) => result.error)
+      if (failedCount?.error) {
+        setError(`Unable to refresh physical circulation totals: ${failedCount.error.message}`)
+        return
+      }
       setCirculationSummary({
         pendingRequests: pendingRequests.count ?? 0,
-        activeLoans: activeLoans.count ?? 0,
         lostLoans: lostLoans.count ?? 0,
       })
     }
@@ -855,19 +995,24 @@ export default function AdminPage() {
     const now = Date.now()
     return digitalLoanHistory.filter((loan) => {
       const isReturned = Boolean(loan.returned_at)
-      const isActive = !isReturned && Boolean(loan.due_date && new Date(loan.due_date).getTime() > now)
-      const isExpired = !isReturned && Boolean(loan.due_date && new Date(loan.due_date).getTime() <= now)
+      const request = requests.find((item) => item.id === loan.borrow_request_id)
+      const isRevoked = request?.status === 'revoked' || loan.status === 'revoked'
+      const isActive = request
+        ? isActiveDigitalAccess(request)
+        : !isReturned && Boolean(loan.due_date && new Date(loan.due_date).getTime() > now)
+      const isExpired = !isReturned && !isRevoked && !isActive
       const matchesStatus = digitalHistoryStatus === 'all'
         || (digitalHistoryStatus === 'active' && isActive)
         || (digitalHistoryStatus === 'returned' && isReturned)
         || (digitalHistoryStatus === 'expired' && isExpired)
+        || (digitalHistoryStatus === 'revoked' && isRevoked)
       const member = studentMap.get(loan.student_id)
       const book = bookMap.get(loan.book_id)
-      const searchable = [member?.email, member?.full_name, book?.title, book?.author, loan.status, String(loan.borrow_request_id), String(loan.id)]
+      const searchable = [member?.email, member?.full_name, book?.title, book?.author, loan.status, request?.status, String(loan.borrow_request_id), String(loan.id)]
         .filter(Boolean).join(' ').toLowerCase()
       return matchesStatus && (!query || searchable.includes(query))
     })
-  }, [bookMap, debouncedDigitalHistorySearch, digitalHistoryStatus, digitalLoanHistory, studentMap])
+  }, [bookMap, debouncedDigitalHistorySearch, digitalHistoryStatus, digitalLoanHistory, requests, studentMap])
 
   const bookPageCount = Math.max(1, Math.ceil(filteredBooks.length / 10))
   const visibleBooks = filteredBooks.slice((Math.min(bookPage, bookPageCount) - 1) * 10, Math.min(bookPage, bookPageCount) * 10)
@@ -885,19 +1030,37 @@ export default function AdminPage() {
   const contributionPageCount = Math.max(1, Math.ceil(pendingContributions.length / 10))
   const visiblePendingContributions = pendingContributions.slice((Math.min(contributionPage, contributionPageCount) - 1) * 10, Math.min(contributionPage, contributionPageCount) * 10)
   const reviewedContributions = contributions.filter((contribution) => contribution.status !== 'pending').sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
-  const auditPageCount = Math.max(1, Math.ceil(auditLogs.length / 10))
-  const visibleAuditLogs = auditLogs.slice((Math.min(auditPage, auditPageCount) - 1) * 10, Math.min(auditPage, auditPageCount) * 10)
+  const filteredAuditLogs = useMemo(() => {
+    const query = auditSearch.trim().toLocaleLowerCase()
+    if (!query) return auditLogs
+    return auditLogs.filter((log) => {
+      const actor = auditActors.find((item) => item.id === log.actor_id)
+      const searchable = [
+        log.action,
+        log.target_type,
+        String(log.target_id ?? ''),
+        actor?.full_name,
+        actor?.email,
+        actor?.role,
+        JSON.stringify(log.details),
+      ].filter(Boolean).join(' ').toLocaleLowerCase()
+      return searchable.includes(query)
+    })
+  }, [auditActors, auditLogs, auditSearch])
+  const auditPageCount = Math.max(1, Math.ceil(filteredAuditLogs.length / 10))
+  const visibleAuditLogs = filteredAuditLogs.slice((Math.min(auditPage, auditPageCount) - 1) * 10, Math.min(auditPage, auditPageCount) * 10)
 
   useEffect(() => { setBookPage(1) }, [debouncedBookSearch, bookCategoryFilter, bookAuthorFilter])
   useEffect(() => { setDigitalHistoryPage(1) }, [debouncedDigitalHistorySearch, digitalHistoryStatus])
   useEffect(() => { setUserPage(1) }, [debouncedUserSearch, userRoleFilter, userLoanFilter])
   useEffect(() => { setContributionPage(1) }, [contributions.length])
   useEffect(() => { setAuditPage(1) }, [auditLogs.length])
+  useEffect(() => { setAuditPage(1) }, [auditSearch])
 
   const categoryStats = useMemo(() => {
     const counts: Record<string, number> = {}
     books.forEach((b) => {
-      const cat = b.category?.trim() || 'Uncategorized'
+      const cat = b.discipline?.trim() || 'Unspecified discipline'
       counts[cat] = (counts[cat] || 0) + 1
     })
     return Object.entries(counts)
@@ -994,9 +1157,13 @@ export default function AdminPage() {
     if (!bulkContributionReview || !selectedContributionIds.length) return
     const { decision } = bulkContributionReview
     const reward = decision === 'approved' ? Number(bulkContributionReview.reward) : 0
-    const accessPoints = decision === 'approved' ? Number(bulkContributionReview.accessPoints) : 0
-    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0 || !Number.isSafeInteger(accessPoints) || accessPoints < 0)) {
-      setError('Reward and access cost must be nonnegative whole numbers of points.')
+    const rejectionReason = bulkContributionReview.rejectionReason
+    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0 || reward > 100)) {
+      setError('Lesson reward must be a whole number between 0 and 100 points.')
+      return
+    }
+    if (decision === 'rejected' && !['Poor Scan Quality', 'Copyright Violation', 'Incorrect Metadata'].includes(rejectionReason)) {
+      setError('Choose a structured rejection reason.')
       return
     }
     setSaving(true)
@@ -1005,7 +1172,8 @@ export default function AdminPage() {
     const failed: number[] = []
     for (const contributionId of selectedContributionIds) {
       const { error } = await supabase.rpc('admin_review_book_contribution', {
-        contribution_id: contributionId, decision, reward_points: reward, access_points: accessPoints,
+        contribution_id: contributionId, decision, reward_points: reward, access_points: 0,
+        rejection_reason: rejectionReason || null,
       })
       if (error) failed.push(contributionId)
     }
@@ -1013,7 +1181,7 @@ export default function AdminPage() {
     setSelectedContributionIds(failed)
     setBulkContributionReview(null)
     if (succeeded) await loadData()
-    setActionMessage(failed.length ? `Processed ${succeeded}; ${failed.length} contribution${failed.length === 1 ? '' : 's'} need review.` : `${succeeded} contribution${succeeded === 1 ? '' : 's'} ${decision}.`)
+    setActionMessage(failed.length ? `Processed ${succeeded}; ${failed.length} lesson${failed.length === 1 ? '' : 's'} need review.` : `${succeeded} lesson${succeeded === 1 ? '' : 's'} ${decision}.`)
     if (failed.length) setError(`Could not process contribution IDs: ${failed.join(', ')}.`)
     setSaving(false)
   }
@@ -1052,6 +1220,7 @@ export default function AdminPage() {
       department: member.department ?? '',
       course: memberCourseFormValue(member.course, academicCourses),
       studentYear: memberYearDisplay(member.student_year) === 'Not set' || memberYearDisplay(member.student_year) === 'Needs review' ? member.student_year ?? '' : memberYearDisplay(member.student_year),
+      institutionalId: member.institutional_id ?? '',
     })
     setError(null)
   }
@@ -1075,6 +1244,10 @@ export default function AdminPage() {
         return
       }
     }
+    if (memberEditForm.role !== 'librarian' && !/^\d{4}-\d{5}$/.test(memberEditForm.institutionalId)) {
+      setError('Enter a 9-digit institutional ID in NNNN-NNNNN format.')
+      return
+    }
     setSaving(true)
     setError(null)
     setActionMessage(null)
@@ -1086,6 +1259,7 @@ export default function AdminPage() {
       new_course: memberEditForm.role === 'student' ? memberEditForm.course.trim() || null : null,
       new_student_year: memberEditForm.role === 'student' ? memberEditForm.studentYear.trim() || null : null,
       new_faculty_rank_id: null,
+      new_institutional_id: memberEditForm.role === 'librarian' ? null : memberEditForm.institutionalId,
     })
     if (error) {
       setError(error.message)
@@ -1160,20 +1334,19 @@ export default function AdminPage() {
   }
 
   const handleContributionReview = async (contributionId: number, decision: 'approved' | 'rejected') => {
-    setReviewDialog({ id: contributionId, decision, reward: decision === 'approved' ? '25' : '0', accessPoints: '0' })
+    setReviewDialog({ id: contributionId, decision, reward: decision === 'approved' ? String(defaultLessonReward) : '0', rejectionReason: '' })
   }
 
   const executeContributionReview = async () => {
     if (!reviewDialog) return
     const { id: contributionId, decision } = reviewDialog
     const reward = decision === 'approved' ? Number(reviewDialog.reward) : 0
-    const accessPoints = decision === 'approved' ? Number(reviewDialog.accessPoints) : 0
-    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0)) {
-      setError('Reward must be a nonnegative whole number of points.')
+    if (decision === 'approved' && (!Number.isSafeInteger(reward) || reward < 0 || reward > 100)) {
+      setError('Lesson reward must be a whole number between 0 and 100 points.')
       return
     }
-    if (decision === 'approved' && (!Number.isInteger(accessPoints) || accessPoints < 0)) {
-      setError('Access cost must be a whole number of 0 or more points.')
+    if (decision === 'rejected' && !['Poor Scan Quality', 'Copyright Violation', 'Incorrect Metadata'].includes(reviewDialog.rejectionReason)) {
+      setError('Choose a structured rejection reason.')
       return
     }
     setSaving(true)
@@ -1182,7 +1355,8 @@ export default function AdminPage() {
       contribution_id: contributionId,
       decision,
       reward_points: reward,
-      access_points: accessPoints,
+      access_points: 0,
+      rejection_reason: reviewDialog.rejectionReason || null,
     })
     if (error) {
       setActionSuccessTitle(null)
@@ -1190,7 +1364,8 @@ export default function AdminPage() {
     } else {
       setReviewDialog(null)
       setActionSuccessTitle(decision === 'approved' ? 'Approved' : 'Rejected')
-      setActionMessage(decision === 'approved' ? `Contribution approved. ${reward} points awarded.` : 'Contribution rejected.')
+      setActionMessage(decision === 'approved' ? `Lesson approved. ${reward} points awarded.` : 'Lesson rejected.')
+      if (inspectingContribution?.id === contributionId) setInspectingContribution(null)
       await loadData()
     }
     setSaving(false)
@@ -1229,42 +1404,18 @@ export default function AdminPage() {
       setSaving(false)
       return false
     } else {
-      setActionMessage(`Member account created for ${data.email}. Username: ${data.username}.`)
-      setNewStudent({ username: '', email: '', password: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '' })
+      setActionMessage(`Invitation sent to ${data.email}. Username: ${data.username}.`)
+      setNewStudent({ username: '', email: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
       await loadData()
     }
     setSaving(false)
     return true
   }
 
-  const submitRecognition = async () => {
-    const awardPoints = Number(recognitionForm.points)
-    if (!Number.isSafeInteger(awardPoints) || awardPoints <= 0) {
-      setError('Enter a positive whole number of points.')
-      return
-    }
-    setSaving(true)
-    setError(null)
-    setActionMessage(null)
-    const { error } = await getSupabase().rpc('admin_award_recognition', {
-      target_user_id: recognitionForm.studentId,
-      award_category: recognitionForm.category,
-      award_points: awardPoints,
-      award_reason: recognitionForm.reason,
-    })
-    if (error) setError(error.message)
-    else {
-      setActionMessage('Recognition points awarded successfully.')
-      setRecognitionForm({ studentId: '', category: 'academic_assistance', points: '10', reason: '' })
-      setQuickAction(null)
-    }
-    setSaving(false)
-  }
-
   const handleAddBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!newBook.title.trim() || !newBook.author.trim() || !newBook.category.trim() || !newBook.isbn.trim()) {
-      setError('Title, author, category, and ISBN are required.')
+    if (!newBook.title.trim() || !newBook.author.trim() || (!newBook.category.trim() && !newBook.genre.trim()) || !newBook.isbn.trim()) {
+      setError('Title, author, ISBN, and at least one discipline or genre are required.')
       return
     }
     setSaving(true)
@@ -1293,7 +1444,7 @@ export default function AdminPage() {
       setActionMessage('Uploading e-book to library storage...')
       const formData = new FormData()
       formData.append('file', newBookFile)
-      formData.append('category', newBook.category || 'Books')
+      formData.append('category', newBook.category || newBook.genre)
       formData.append('isbn', newBook.isbn.trim())
       formData.append('provider', 'supabase')
       formData.append('allow_fallback', 'false')
@@ -1317,7 +1468,11 @@ export default function AdminPage() {
       {
         title: newBook.title,
         author: newBook.author,
-        category: newBook.category,
+        category: newBook.category.trim() || newBook.genre.trim(),
+        discipline: newBook.category.trim() || null,
+        genre: newBook.genre.trim() || null,
+        course_code: newBook.course_code.trim() || null,
+        source_type: newBook.source_type,
         isbn: newBook.isbn || null,
         pdf_url: finalPdfUrl || null,
         ...storageMetadata,
@@ -1336,7 +1491,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New e-book added to the online catalog.')
-      setNewBook({ title: '', author: '', category: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
+      setNewBook({ title: '', author: '', category: '', genre: '', source_type: 'staff_added', course_code: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
       setNewBookFile(null)
       setNewBookOpen(false)
       await loadData()
@@ -1394,6 +1549,27 @@ export default function AdminPage() {
     setSaving(false)
   }
 
+  if (dashboardLoadError) {
+    return <main className="surface-page flex min-h-screen items-center justify-center px-6 py-12">
+      <section role="alert" className="surface-card w-full max-w-xl p-8">
+        <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Admin dashboard unavailable</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{dashboardLoadError}</p>
+        <button type="button" disabled={loading} onClick={() => {
+          setLoading(true)
+          setDashboardLoadError(null)
+          void loadData().catch((cause: unknown) => {
+            setDashboardLoadError(cause instanceof Error
+              ? `Unable to load the admin dashboard. Refresh and try again. (${cause.message})`
+              : 'Unable to load the admin dashboard. Refresh and try again.')
+            setLoading(false)
+          })
+        }} className="pine-action mt-6 rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">
+          {loading ? 'Retrying…' : 'Retry'}
+        </button>
+      </section>
+    </main>
+  }
+
   return (
     <div className="dashboard-shell admin-shell min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       {sidebarOpen ? <button type="button" className="admin-sidebar-backdrop" aria-label="Close admin navigation" onClick={() => setSidebarOpen(false)} /> : null}
@@ -1447,74 +1623,113 @@ export default function AdminPage() {
             <AdminDashboardSkeleton />
           ) : (
             <>
-          <header className="dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
+          <header className={`dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40${section === 'overview' ? ' admin-welcome-hero' : ''}`}>
             <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
-              <div className="rounded-[1.5rem] bg-slate-100 p-4 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
-                Active role: <span className="font-semibold text-slate-900 dark:text-slate-100">{profile?.role}</span>
+            <div className={`admin-welcome-layout${section === 'overview' ? ' admin-welcome-layout--overview' : ''}`}>
+              <div className="admin-welcome-copy">
+                {section === 'overview' ? <p className="admin-overview-kicker">Library administration</p> : null}
+                <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
+                {section === 'overview' ? <p className="admin-welcome-caption">A clear view of what needs attention and how your library is doing.</p> : null}
               </div>
+              {section === 'overview' ? <nav className="admin-overview-actions" aria-label="Quick actions">
+                <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action">
+                  <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.5" /><path d="M3 20a6 6 0 0 1 12 0M19 8v6m-3-3h6" /></svg></span>
+                  <span><strong>Invite a member</strong><small>Add a student or staff account</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                </button>
+                <button type="button" onClick={() => setSection('users')} className="admin-quick-action">
+                  <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5 14.6 9l6 .8-4.3 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.3-4.2 6-.8L12 3.5Z" /></svg></span>
+                  <span><strong>Record point top-up</strong><small>Choose a member and record cash</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                </button>
+                <button type="button" onClick={() => navigateToSection('physical')} className="admin-quick-action">
+                  <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5v-12Z" /><path d="M4 6v12m5-11h7m-7 4h7" /></svg></span>
+                  <span><strong>Add a physical book</strong><small>Grow your physical catalog</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                </button>
+              </nav> : null}
             </div>
           </header>
 
           {section === 'overview' && (
-            <section className="admin-overview space-y-6">
-              <section className="admin-overview-card admin-quick-actions rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6" aria-labelledby="quick-actions-title">
-                <div className="admin-overview-section-heading"><div><h2 id="quick-actions-title">Quick actions</h2><p>Common tasks, one click away.</p></div></div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action admin-quick-action-primary"><strong>Create account</strong><span>Provision a student, faculty, or librarian</span></button>
-                  <button type="button" onClick={() => setQuickAction('recognition')} className="admin-quick-action admin-quick-action-primary"><strong>Give points</strong><span>Recognize a member</span></button>
-                  <button type="button" onClick={() => setSection('contributions')} className="admin-quick-action"><strong>Review contributions · {pendingContributions.length} pending</strong><span>Check pending academic materials</span></button>
-                  <button type="button" onClick={() => navigateToSection('physical')} className="admin-quick-action"><strong>Add a physical book</strong><span>Create a title, copies, and QR labels</span></button>
+            <section className="admin-overview">
+              <section className="admin-overview-panel admin-attention-panel" aria-labelledby="admin-oversight-title">
+                <div className="admin-overview-section-heading admin-attention-heading">
+                  <div>
+                    <p className="admin-overview-kicker">Needs a closer look</p>
+                    <h2 id="admin-oversight-title">Management attention</h2>
+                    <p>Review member and catalog activity here. Physical checkout and return processing stays with the librarian desk.</p>
+                  </div>
+                </div>
+                <div className="admin-attention-grid">
+                  <button type="button" onClick={() => navigateToSection('contributions')} aria-label={`Review ${pendingContributions.length} pending contributions`} className="admin-attention-card admin-attention-card--amber">
+                    <span className="admin-attention-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 4 7v5c0 4.3 3.2 7.7 8 9 4.8-1.3 8-4.7 8-9V7l-8-4Z" /><path d="m8.5 12 2.2 2.2 4.8-4.8" /></svg></span>
+                    <span className="admin-attention-label">Contributions</span>
+                    <strong>{pendingContributions.length}</strong>
+                    <span className="admin-attention-detail">{pendingContributions.length ? 'Waiting for your review' : 'Nothing waiting for review'}</span>
+                    <span className="admin-attention-link">Review contributions <span aria-hidden="true">→</span></span>
+                  </button>
+                  <button type="button" onClick={() => navigateToSection('requests')} aria-label={`Open ${pendingRequests.length} digital access requests`} className="admin-attention-card admin-attention-card--blue">
+                    <span className="admin-attention-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3.5h9l5 5V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.5Z" /><path d="M14 4v5h5m-9 4h5m-5 3h5" /></svg></span>
+                    <span className="admin-attention-label">Digital access</span>
+                    <strong>{pendingRequests.length}</strong>
+                    <span className="admin-attention-detail">{pendingRequests.length ? 'Requests awaiting review' : 'No requests awaiting review'}</span>
+                    <span className="admin-attention-link">View request history <span aria-hidden="true">→</span></span>
+                  </button>
+                  <article className="admin-attention-card admin-attention-card--forest">
+                    <span className="admin-attention-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v14H4z" /><path d="M8 9h8m-8 3h8m-8 3h4" /><path d="M7 5V3m10 2V3" /></svg></span>
+                    <span className="admin-attention-label">Physical requests</span>
+                    <strong>{circulationSummary ? circulationSummary.pendingRequests : '—'}</strong>
+                    <span className="admin-attention-detail">{circulationSummary ? 'At the librarian desk' : 'Circulation data unavailable'}</span>
+                    <span className="admin-attention-note">Handled by a librarian</span>
+                  </article>
+                  <article className="admin-attention-card admin-attention-card--rose">
+                    <span className="admin-attention-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 2.8 19h18.4L12 3Z" /><path d="M12 9v4m0 3h.01" /></svg></span>
+                    <span className="admin-attention-label">Items classified lost</span>
+                    <strong>{circulationSummary ? circulationSummary.lostLoans : '—'}</strong>
+                    <span className="admin-attention-detail">{circulationSummary?.lostLoans ? 'Needs librarian follow-up' : circulationSummary ? 'No lost items reported' : 'Circulation data unavailable'}</span>
+                    <span className="admin-attention-note">Librarian follow-up</span>
+                  </article>
                 </div>
               </section>
 
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-                <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+              <section className="admin-overview-panel admin-glance-panel" aria-labelledby="admin-glance-title">
+                <div className="admin-overview-section-heading">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">High-level telemetry of collection health, borrowing activity, fulfillment rates, and storage.</p>
+                    <p className="admin-overview-kicker">The bigger picture</p>
+                    <h2 id="admin-glance-title">Your library at a glance</h2>
+                    <p>A live snapshot of the library’s reach and activity.</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => navigateToSection('analytics')}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                  >
-                    View detailed analytics →
-                  </button>
+                </div>
+                <div className="admin-glance-grid">
+                  {[
+                    { label: 'Catalog titles', value: books.length, note: 'Across all formats', tone: 'sage', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5v-12Z" /><path d="M4 6v12m5-11h7m-7 4h7" /></svg> },
+                    { label: 'Student accounts', value: students.length, note: 'In the community', tone: 'blue', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.5" /><path d="M3 20a6 6 0 0 1 12 0m2-8a3.5 3.5 0 1 0 0-7m1 10a5.8 5.8 0 0 1 3 5" /></svg> },
+                    { label: 'Active digital access', value: activeDigitalAccess.length, note: 'Available to members', tone: 'gold', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3.5h9l5 5V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.5Z" /><path d="M14 4v5h5m-9 4 2 2 4-4" /></svg> },
+                    { label: 'Digital access records', value: requests.length, note: 'All recorded requests', tone: 'plum', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h14v16H5z" /><path d="M8 8h8m-8 4h8m-8 4h5" /></svg> },
+                  ].map((stat) => <article key={stat.label} className={`admin-glance-stat admin-glance-stat--${stat.tone}`}>
+                    <span className="admin-glance-icon" aria-hidden="true">{stat.icon}</span>
+                    <span className="admin-glance-label">{stat.label}</span>
+                    <strong>{stat.value}</strong>
+                    <span className="admin-glance-note">{stat.note}</span>
+                  </article>)}
+                </div>
+              </section>
+              <section id="admin-detailed-analytics" className="admin-overview-panel" aria-labelledby="admin-analytics-title">
+                <div className="mb-5">
+                  <p className="admin-overview-kicker">Trends and usage</p>
+                  <h2 id="admin-analytics-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Library activity</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Borrowing, fulfillment, storage, and catalog trends in one place.</p>
                 </div>
                 <AdminAnalytics
                   totalBooks={books.length}
                   totalStudents={students.length}
                   totalRequests={requests.length}
+                  totalApprovedRequests={requests.filter((request) => request.status === 'approved').length}
                   totalLoansActive={activeDigitalAccess.length}
-                  totalReturned={requests.filter((r) => r.status === 'returned').length}
+                  totalReturned={requests.filter((request) => request.status === 'returned').length}
                   categoryStats={categoryStats}
                   monthlyStats={monthlyStats}
                   storageCount={storageCount}
                 />
               </section>
-            </section>
-          )}
-
-          {section === 'analytics' && (
-            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Library Analytics & Intelligence</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Track borrowing velocity, inventory health, fulfillment rates, and storage utilization.</p>
-                </div>
-              </div>
-              <AdminAnalytics
-                totalBooks={books.length}
-                totalStudents={students.length}
-                totalRequests={requests.length}
-                totalLoansActive={activeDigitalAccess.length}
-                totalReturned={requests.filter((r) => r.status === 'returned').length}
-                categoryStats={categoryStats}
-                monthlyStats={monthlyStats}
-                storageCount={storageCount}
-              />
             </section>
           )}
 
@@ -1645,15 +1860,57 @@ export default function AdminPage() {
                 <ListPagination page={Math.min(bookPage, bookPageCount)} pageCount={bookPageCount} total={filteredBooks.length} onPageChange={setBookPage} />
               </div>
 
-              {selectedCatalogBook ? <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setSelectedCatalogBook(null); setEditingBookId(null) } }}>
-                <section className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="catalog-book-details-title">
+              {selectedCatalogBook ? <div className="fixed inset-0 z-[60] bg-slate-950/60" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setSelectedCatalogBook(null); setEditingBookId(null); setEditingBookDetailsId(null) } }}>
+                <section className="ml-auto flex h-full w-full max-w-2xl flex-col overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-7" role="dialog" aria-modal="true" aria-labelledby="catalog-book-details-title">
                   <div className="flex items-start justify-between gap-4">
-                    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Catalog book</p><h3 id="catalog-book-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedCatalogBook.author} · {selectedCatalogBook.category}</p></div>
+                    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Catalog book</p><h3 id="catalog-book-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedCatalogBook.author} · {selectedCatalogBook.discipline || selectedCatalogBook.genre || selectedCatalogBook.category}{selectedCatalogBook.genre && selectedCatalogBook.discipline ? ` · ${selectedCatalogBook.genre}` : ''}{selectedCatalogBook.course_code ? ` · Course ${selectedCatalogBook.course_code}` : ''}</p><p className="mt-1 text-xs capitalize text-slate-400">Source: {selectedCatalogBook.source_type.replace(/_/g, ' ')}</p></div>
                     <button type="button" onClick={() => { setSelectedCatalogBook(null); setEditingBookId(null) }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button>
                   </div>
                   <div className="mt-6 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Format</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.catalog_type}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Access</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.access_mode}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">ISBN</p><p className="mt-1 font-semibold">{selectedCatalogBook.isbn || 'Not set'}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">File</p><p className="mt-1 font-semibold">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'Available' : 'Missing'}</p></div></div>
-                  {selectedCatalogBook.description ? <p className="mt-5 text-sm leading-6 text-slate-600 dark:text-slate-300">{selectedCatalogBook.description}</p> : null}
-                  {editingBookDetailsId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookDetailsEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit book information</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Title<input required maxLength={300} value={bookDetailsDraft.title} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, title: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Author<input required maxLength={200} value={bookDetailsDraft.author} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, author: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Category<input required maxLength={120} value={bookDetailsDraft.category} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, category: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><div><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">ISBN<input maxLength={32} value={bookDetailsDraft.isbn} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, isbn: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><button type="button" onClick={() => generateBookIsbn((isbn) => setBookDetailsDraft((current) => ({ ...current, isbn })), selectedCatalogBook.id)} className="mt-2 text-xs font-semibold text-sky-700 underline dark:text-sky-300">Generate ISBN-13</button><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Internal catalog ID, not a publisher-assigned ISBN.</span></div></div><label className="mt-3 block text-xs font-semibold text-slate-600 dark:text-slate-300">Description<textarea maxLength={5000} rows={4} value={bookDetailsDraft.description} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, description: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save book details'}</button><button type="button" disabled={saving} onClick={() => setEditingBookDetailsId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : editingBookId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookAccessEdit(event, selectedCatalogBook)} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Edit access settings</p><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option></select></label>{bookAccessDraft.mode === 'points' ? DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{days} {days === 1 ? 'day' : 'days'}<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} required className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>) : <p className="text-sm text-slate-500 dark:text-slate-400">Free access unlocks immediately. No points are deducted.</p>}</div><div className="mt-4 flex flex-wrap gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save access'}</button><button type="button" onClick={() => setEditingBookId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div></form> : <div className="mt-6 flex flex-wrap gap-2"><button type="button" disabled={saving || !(selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path)} onClick={() => window.open(`/reader/${selectedCatalogBook.id}`, '_blank', 'noopener,noreferrer')} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Open reader</button><button type="button" disabled={saving} onClick={() => openPdfAttachment(selectedCatalogBook.id)} className="rounded-xl border border-sky-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path ? 'Replace PDF' : 'Attach PDF'}</button><button type="button" disabled={saving} onClick={() => startBookDetailsEdit(selectedCatalogBook)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit details</button><button type="button" disabled={saving} onClick={() => startBookAccessEdit(selectedCatalogBook)} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Edit access</button><button type="button" disabled={saving} onClick={() => handleArchiveBook(selectedCatalogBook.id, selectedCatalogBook.title)} className="!bg-rose-700 !text-white rounded-xl px-4 py-2.5 text-sm font-semibold hover:!bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:!bg-rose-700 dark:hover:!bg-rose-600">{selectedCatalogBook.is_archived ? 'Restore to catalog' : 'Archive book'}</button>{selectedCatalogBook.is_archived ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteBook', id: selectedCatalogBook.id, label: selectedCatalogBook.title })} className="rounded-xl border border-rose-400 px-4 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">Delete permanently</button> : null}</div>}
+                  <div className="mt-6 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800" role="tablist" aria-label="Book management sections">
+                    {([['metadata', 'Metadata'], ['attachments', 'Attachments'], ['permissions', 'Permissions']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" aria-selected={bookManagementTab === tab} onClick={() => { setBookManagementTab(tab); setEditingBookId(null); setEditingBookDetailsId(null) }} className={`rounded-lg px-2 py-2 text-sm font-semibold ${bookManagementTab === tab ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300'}`}>{label}</button>)}
+                  </div>
+                  {bookManagementTab === 'metadata' ? <section role="tabpanel" className="mt-5 space-y-4">
+                    {editingBookDetailsId === selectedCatalogBook.id ? null : <dl className="grid gap-x-4 gap-y-4 rounded-2xl border border-slate-200 p-4 sm:grid-cols-2 dark:border-slate-700">
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Title</dt><dd className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Author</dt><dd className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.author}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">ISBN</dt><dd className="mt-1 break-all text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.isbn || 'Not listed'}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Discipline</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.discipline || selectedCatalogBook.category || 'Not set'}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Genre</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.genre || 'Not set'}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Course code</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.course_code || 'Not set'}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Source</dt><dd className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-slate-100">{selectedCatalogBook.source_type.replace(/_/g, ' ')}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Format and access</dt><dd className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-slate-100">{selectedCatalogBook.catalog_type} · {selectedCatalogBook.access_mode}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">File</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'Available' : 'Missing'}</dd></div>
+                      <div className="sm:col-span-2"><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Description</dt><dd className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700 dark:text-slate-300">{selectedCatalogBook.description || 'No description has been added.'}</dd></div>
+                    </dl>}
+                    {editingBookDetailsId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookDetailsEdit(event, selectedCatalogBook)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-semibold">Title<input required maxLength={300} value={bookDetailsDraft.title} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, title: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Author<input required maxLength={200} value={bookDetailsDraft.author} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, author: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Discipline<input maxLength={120} value={bookDetailsDraft.category} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, category: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Genre<input maxLength={120} value={bookDetailsDraft.genre} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, genre: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Course code<input maxLength={32} value={bookDetailsDraft.courseCode} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, courseCode: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Source type<select value={bookDetailsDraft.sourceType} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, sourceType: event.target.value as Book['source_type'] }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="catalog">Catalog</option><option value="staff_added">Staff-added</option><option value="community_contribution">Community contribution</option></select></label>
+                        <label className="text-xs font-semibold">ISBN<input maxLength={32} value={bookDetailsDraft.isbn} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, isbn: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /><button type="button" onClick={() => generateBookIsbn((isbn) => setBookDetailsDraft((current) => ({ ...current, isbn })), selectedCatalogBook.id)} className="mt-2 text-sky-700 underline dark:text-sky-300">Generate ISBN-13</button></label>
+                        <label className="text-xs font-semibold sm:col-span-2">Description<textarea maxLength={5000} rows={4} value={bookDetailsDraft.description} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, description: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                      </div>
+                      <div className="mt-4 flex gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save details'}</button><button type="button" disabled={saving} onClick={() => setEditingBookDetailsId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div>
+                    </form> : <button type="button" disabled={saving} onClick={() => startBookDetailsEdit(selectedCatalogBook)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit metadata</button>}
+                  </section> : null}
+                  {bookManagementTab === 'attachments' ? <section role="tabpanel" className="mt-5 rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+                    <h4 className="font-semibold">PDF attachment</h4>
+                    <p className="mt-2 text-sm text-slate-500">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'A PDF is attached to this book.' : 'No PDF is attached.'}</p>
+                    <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={saving || !(selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path)} onClick={() => window.open(`/reader/${selectedCatalogBook.id}`, '_blank', 'noopener,noreferrer')} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Open reader</button><button type="button" disabled={saving} onClick={() => openPdfAttachment(selectedCatalogBook.id)} className="rounded-xl border border-sky-200 px-4 py-2.5 text-sm font-semibold text-sky-700 dark:border-sky-800 dark:text-sky-300">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path ? 'Replace PDF' : 'Attach PDF'}</button></div>
+                  </section> : null}
+                  {bookManagementTab === 'permissions' ? <section role="tabpanel" className="mt-5 space-y-4">
+                    <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700"><p className="text-sm">Access mode: <strong className="capitalize">{selectedCatalogBook.access_mode}</strong></p><p className="mt-1 text-xs text-slate-500">Configure access mode and point costs for each duration.</p></div>
+                    {editingBookId === selectedCatalogBook.id ? <form onSubmit={(event) => void saveBookAccessEdit(event, selectedCatalogBook)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/70">
+                      <label className="text-sm font-semibold">Mode<select value={bookAccessDraft.mode} onChange={(event) => setBookAccessDraft((current) => ({ ...current, mode: event.target.value as typeof current.mode }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="free">Free</option><option value="points">Points</option></select></label>
+                      {bookAccessDraft.mode === 'points' ? <div className="mt-3 grid gap-3 sm:grid-cols-2">{DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <label key={days} className="text-sm font-semibold">{days} days<input type="number" min="0" step="1" value={bookAccessDraft.costs[String(days)] ?? '0'} onChange={(event) => setBookAccessDraft((current) => ({ ...current, costs: { ...current.costs, [days]: event.target.value } }))} required className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>)}</div> : null}
+                      <div className="mt-4 flex gap-2"><button type="submit" disabled={saving} className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save permissions'}</button><button type="button" disabled={saving} onClick={() => setEditingBookId(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button></div>
+                    </form> : <button type="button" disabled={saving} onClick={() => startBookAccessEdit(selectedCatalogBook)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit access</button>}
+                    <div className="border-t border-slate-200 pt-4 dark:border-slate-700"><button type="button" disabled={saving} onClick={() => handleArchiveBook(selectedCatalogBook.id, selectedCatalogBook.title)} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{selectedCatalogBook.is_archived ? 'Restore to catalog' : 'Archive book'}</button>{selectedCatalogBook.is_archived ? <button type="button" disabled={saving} onClick={() => setConfirmAction({ type: 'deleteBook', id: selectedCatalogBook.id, label: selectedCatalogBook.title })} className="ml-2 rounded-xl border border-rose-400 px-4 py-2.5 text-sm font-semibold text-rose-800 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">Delete permanently</button> : null}</div>
+                  </section> : null}
                 </section>
               </div> : null}
 
@@ -1680,11 +1937,36 @@ export default function AdminPage() {
                     />
                   </label>
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Category</span>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Discipline (optional if genre is set)</span>
                     <input
                       value={newBook.category}
                       onChange={(event) => setNewBook({ ...newBook, category: event.target.value })}
-                      required
+                      maxLength={120}
+                      placeholder="e.g. Biology"
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Genre (optional if discipline is set)</span>
+                    <input
+                      value={newBook.genre}
+                      onChange={(event) => setNewBook({ ...newBook, genre: event.target.value })}
+                      maxLength={120}
+                      placeholder="e.g. Reference"
+                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Source type</span>
+                    <select value={newBook.source_type} onChange={(event) => setNewBook({ ...newBook, source_type: event.target.value as typeof newBook.source_type })} className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="catalog">Catalog</option><option value="staff_added">Staff-added</option><option value="community_contribution">Community contribution</option></select>
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Course code (optional)</span>
+                    <input
+                      maxLength={32}
+                      value={newBook.course_code}
+                      onChange={(event) => setNewBook({ ...newBook, course_code: event.target.value })}
+                      placeholder="e.g. BIO101"
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </label>
@@ -1758,7 +2040,7 @@ export default function AdminPage() {
                 </button>
               </form>
               </div> : null}
-              {pdfAttachmentOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setPdfAttachmentOpen(false) }}>
+              {pdfAttachmentOpen ? <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setPdfAttachmentOpen(false) }}>
                 <form onSubmit={(event) => void attachPdfToBook(event)} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-800/95" role="dialog" aria-modal="true" aria-labelledby="attach-pdf-title">
                   <div className="flex items-start justify-between gap-4"><div><h3 id="attach-pdf-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Attach PDF to catalog title</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Attach or replace the protected reading file for an existing digital or hybrid book.</p></div><button type="button" disabled={saving} onClick={() => setPdfAttachmentOpen(false)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold disabled:opacity-50 dark:border-slate-600">Close</button></div>
                   <label className="mt-5 block"><span className="text-sm font-medium text-slate-700 dark:text-slate-200">Catalog title</span><select value={pdfBookId ?? ''} onChange={(event) => setPdfBookId(Number(event.target.value) || null)} required className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Choose a digital or hybrid title</option>{books.filter((book) => book.catalog_type !== 'physical').map((book) => <option key={book.id} value={book.id}>{book.title} ({book.author})</option>)}</select></label>
@@ -1770,11 +2052,12 @@ export default function AdminPage() {
           )}
 
           {physicalSectionVisited ? (
-            <div hidden={section !== 'physical' && section !== 'physical-requests'}>
+            <div hidden={section !== 'physical' && section !== 'physical-finance'}>
               <PhysicalCirculationAdminPage
-                active={section === 'physical' || section === 'physical-requests'}
-                requestsOnly={section === 'physical-requests'}
+                active={section === 'physical' || section === 'physical-finance'}
                 catalogOnly={section === 'physical'}
+                finesOnly={section === 'physical-finance'}
+                onOpenFines={() => navigateToSection('physical-finance')}
                 onClose={() => navigateToSection('overview')}
               />
             </div>
@@ -1797,27 +2080,32 @@ export default function AdminPage() {
               <div className="mt-8">
                 <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
                   <input type="search" value={digitalHistorySearch} onChange={(event) => setDigitalHistorySearch(event.target.value)} placeholder="Search member, book, or loan ID..." aria-label="Search digital loan history" className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <select value={digitalHistoryStatus} onChange={(event) => setDigitalHistoryStatus(event.target.value as typeof digitalHistoryStatus)} aria-label="Filter digital loan history by status" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
-                    <option value="all">All loan states</option><option value="active">Active</option><option value="returned">Returned</option><option value="expired">Expired</option>
+                  <select value={digitalHistoryStatus} onChange={(event) => setDigitalHistoryStatus(event.target.value as typeof digitalHistoryStatus)} aria-label="Filter digital history" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+                    <option value="all">All access / return states</option><option value="active">Active access</option><option value="revoked">Revoked access</option><option value="expired">Expired access</option><option value="returned">Returned</option>
                   </select>
                 </div>
                 <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Showing {filteredDigitalLoanHistory.length} of {digitalLoanHistory.length} loans</p>
                 {selectedDigitalLoanIds.length ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm dark:bg-emerald-950/30"><span>{selectedDigitalLoanIds.length} active loan{selectedDigitalLoanIds.length === 1 ? '' : 's'} selected</span><div className="flex gap-2"><button type="button" disabled={saving} onClick={() => setBulkRevokeOpen(true)} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 disabled:opacity-50 dark:text-rose-200">Revoke selected</button><button type="button" onClick={() => setSelectedDigitalLoanIds([])} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs dark:border-slate-700">Clear</button></div></div> : null}
                 <div>
                   <table className="w-full table-fixed divide-y divide-slate-200 text-left text-xs sm:text-sm dark:divide-slate-700">
-                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-10 px-2 py-3"><input type="checkbox" aria-label="Select active digital loans on this page" checked={visibleActiveDigitalRequestIds.length > 0 && visibleActiveDigitalRequestIds.every((id) => selectedDigitalLoanIds.includes(id))} onChange={(event) => setSelectedDigitalLoanIds((current) => event.target.checked ? Array.from(new Set([...current, ...visibleActiveDigitalRequestIds])) : current.filter((id) => !visibleActiveDigitalRequestIds.includes(id)))} /></th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Member</th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Book</th><th className="w-[14%] px-2 py-3 font-semibold sm:px-3">Issue date</th><th className="w-[18%] px-2 py-3 font-semibold sm:px-3">Due / returned</th><th className="w-[16%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[14%] px-2 py-3 font-semibold sm:px-3">Status</th></tr></thead>
+                    <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th className="w-10 px-2 py-3"><input type="checkbox" aria-label="Select active digital loans on this page" checked={visibleActiveDigitalRequestIds.length > 0 && visibleActiveDigitalRequestIds.every((id) => selectedDigitalLoanIds.includes(id))} onChange={(event) => setSelectedDigitalLoanIds((current) => event.target.checked ? Array.from(new Set([...current, ...visibleActiveDigitalRequestIds])) : current.filter((id) => !visibleActiveDigitalRequestIds.includes(id)))} /></th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Member</th><th className="w-[17%] px-2 py-3 font-semibold sm:px-3">Book</th><th className="w-[12%] px-2 py-3 font-semibold sm:px-3">Issue date</th><th className="w-[18%] px-2 py-3 font-semibold sm:px-3">Return audit</th><th className="w-[16%] px-2 py-3 font-semibold sm:px-3">Loan</th><th className="w-[14%] px-2 py-3 font-semibold sm:px-3">Access status</th></tr></thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleDigitalLoanHistory.map((loan) => {
                         const request = requests.find((item) => item.id === loan.borrow_request_id)
                         const active = request ? isActiveDigitalAccess(request) : false
+                        const accessStatus = request?.status === 'revoked' || loan.status === 'revoked'
+                          ? 'Revoked'
+                          : active
+                            ? 'Active'
+                            : 'Expired'
                         return <tr key={loan.id} className="align-top hover:bg-slate-50 dark:hover:bg-slate-800/80">
                           <td className="px-2 py-3">{active && request ? <input type="checkbox" aria-label={`Select active loan for ${memberDisplayName(studentMap.get(loan.student_id))}`} checked={selectedDigitalLoanIds.includes(request.id)} onChange={(event) => setSelectedDigitalLoanIds((current) => event.target.checked ? [...current, request.id] : current.filter((id) => id !== request.id))} /> : null}</td>
                           <td className="break-words px-2 py-3 font-medium text-slate-800 dark:text-slate-100 sm:px-3">{memberDisplayName(studentMap.get(loan.student_id))}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3">{bookMap.get(loan.book_id)?.title ?? 'Unknown book'}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block text-[10px] uppercase tracking-wide text-slate-400">{loan.borrowed_at ? 'Borrowed' : 'Requested'}</span><time>{new Date(loan.borrowed_at ?? loan.requested_at).toLocaleDateString()}</time></td>
-                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">Due {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</span>{loan.returned_at ? <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-300">Returned {new Date(loan.returned_at).toLocaleDateString()}</span> : null}</td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">Due date: {loan.due_date ? new Date(loan.due_date).toLocaleDateString() : '—'}</span>{loan.returned_at ? <span className="mt-1 block text-xs text-emerald-700 dark:text-emerald-300">Returned date: {new Date(loan.returned_at).toLocaleDateString()}</span> : <span className="mt-1 block text-xs text-slate-500">Not returned</span>}</td>
                           <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">{loan.duration_days} days</span><span className="block">{loan.renewal_count} renewals · {loan.points_cost} pts</span></td>
-                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block capitalize">{loan.status.replace('_', ' ')}</span>{active && request ? <button type="button" disabled={saving} onClick={() => handleRevoke(request.id)} className="mt-2 inline-flex items-center rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200 dark:hover:bg-rose-950">Revoke access</button> : null}</td>
+                          <td className="break-words px-2 py-3 text-slate-600 dark:text-slate-300 sm:px-3"><span className="block">{accessStatus}</span>{active && request ? <button type="button" disabled={saving} onClick={() => handleRevoke(request.id)} className="mt-2 inline-flex  items-center rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200 dark:hover:bg-rose-950">Revoke access</button> : null}</td>
                         </tr>
                       })}
                     </tbody>
@@ -1957,20 +2245,54 @@ export default function AdminPage() {
 
           {section === 'audit' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Audit log</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review recent point, recognition, contribution, and access actions.</p>
-              <div className="mt-5 space-y-3">{visibleAuditLogs.map((log) => <article key={log.id} className="rounded-2xl border border-paper-300 p-4 dark:border-forest-700"><div className="flex flex-wrap justify-between gap-2"><strong className="capitalize">{log.action.replaceAll('_', ' ')}</strong><span className="text-xs text-slate-500">{new Date(log.created_at).toLocaleString()}</span></div><p className="mt-1 text-xs text-slate-500">{log.target_type} #{log.target_id ?? '—'}</p></article>)}{auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit events recorded yet.</p> : null}</div>
-              <ListPagination page={Math.min(auditPage, auditPageCount)} pageCount={auditPageCount} total={auditLogs.length} onPageChange={setAuditPage} />
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Audit log</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review who performed recent actions, what changed, and when. The dashboard loads the latest 1,000 events.</p>
+              <label className="mt-4 block max-w-xl text-sm font-medium">Search loaded events
+                <input type="search" value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} placeholder="Action, actor, target, or event detail" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+              </label>
+              {auditActorError ? <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{auditActorError} Actor IDs remain visible below.</p> : null}
+              <div className="mt-5 space-y-3">
+                {visibleAuditLogs.map((log) => {
+                  const actor = auditActors.find((item) => item.id === log.actor_id)
+                  const detailEntries = Object.entries(log.details ?? {}).filter(([, value]) => value !== null && value !== undefined)
+                  return <article key={log.id} className="rounded-2xl border border-paper-300 p-4 dark:border-forest-700">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <strong className="capitalize">{log.action.replaceAll('_', ' ')}</strong>
+                      <time className="text-xs text-slate-500" dateTime={log.created_at}>{new Date(log.created_at).toLocaleString()}</time>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
+                      Actor: {actor ? `${actor.full_name?.trim() || actor.email} · ${actor.role}` : log.actor_id ? `Unknown actor (${log.actor_id.slice(0, 8)})` : 'System'}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">Target: {log.target_type}{log.target_id !== null ? ` #${log.target_id}` : ''}</p>
+                    {detailEntries.length ? <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      {detailEntries.map(([key, value]) => {
+                        const displayValue = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+                          ? String(value)
+                          : JSON.stringify(value)
+                        return <div key={key} className="min-w-0 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                          <dt className="font-semibold capitalize text-slate-500">{key.replaceAll('_', ' ')}</dt>
+                          <dd className="mt-0.5 break-words text-slate-800 dark:text-slate-200">{displayValue}</dd>
+                        </div>
+                      })}
+                    </dl> : null}
+                  </article>
+                })}
+                {auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit events recorded yet.</p> : null}
+                {auditLogs.length > 0 && filteredAuditLogs.length === 0 ? <p className="text-sm text-slate-500">No loaded audit events match this search.</p> : null}
+              </div>
+              <ListPagination page={Math.min(auditPage, auditPageCount)} pageCount={auditPageCount} total={filteredAuditLogs.length} onPageChange={setAuditPage} />
             </section>
           )}
 
           {section === 'contributions' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Community contributions</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review each submitted PDF before deciding whether to approve, request a revision, or reject it.</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Faculty lesson review</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review lesson PDFs before publishing. Approval adds the lesson to the resource shelf and offers the configured {defaultLessonReward}-point reward by default; it never creates a book.</p>
+                {lessonPolicyError ? <p role="status" className="mt-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{lessonPolicyError}</p> : null}
                 <button type="button" onClick={() => setShowContributionHistory((shown) => !shown)} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{showContributionHistory ? 'Hide review history' : `Review history (${reviewedContributions.length})`}</button>
               </div>
-              {pendingContributions.length ? <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={visiblePendingContributions.length > 0 && visiblePendingContributions.every((item) => selectedContributionIds.includes(item.id))} onChange={(event) => setSelectedContributionIds((current) => event.target.checked ? Array.from(new Set([...current, ...visiblePendingContributions.map((item) => item.id)])) : current.filter((id) => !visiblePendingContributions.some((item) => item.id === id)))} />Select pending contributions on this page</label>{selectedContributionIds.length ? <div className="flex flex-wrap items-center gap-2"><span className="text-xs">{selectedContributionIds.length} selected</span><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'approved', reward: '25', accessPoints: '0' })} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200">Approve selected</button><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'rejected', reward: '0', accessPoints: '0' })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:text-rose-200">Reject selected</button><button type="button" onClick={() => setSelectedContributionIds([])} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs dark:border-slate-700">Clear</button></div> : null}</div> : null}
+              {pendingContributions.length ? <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={visiblePendingContributions.length > 0 && visiblePendingContributions.every((item) => selectedContributionIds.includes(item.id))} onChange={(event) => setSelectedContributionIds((current) => event.target.checked ? Array.from(new Set([...current, ...visiblePendingContributions.map((item) => item.id)])) : current.filter((id) => !visiblePendingContributions.some((item) => item.id === id)))} />Select pending lessons on this page</label>{selectedContributionIds.length ? <div className="flex flex-wrap items-center gap-2"><span className="text-xs">{selectedContributionIds.length} selected</span><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'approved', reward: String(defaultLessonReward), rejectionReason: '' })} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200">Approve selected</button><button type="button" disabled={saving} onClick={() => setBulkContributionReview({ decision: 'rejected', reward: '0', rejectionReason: '' })} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:text-rose-200">Reject selected</button><button type="button" onClick={() => setSelectedContributionIds([])} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs dark:border-slate-700">Clear</button></div> : null}</div> : null}
               <div className="space-y-3">
                 {pendingContributions.length > 0 ? visiblePendingContributions.map((contribution) => (
                   <article key={contribution.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
@@ -1979,7 +2301,7 @@ export default function AdminPage() {
                         <h3 className="font-semibold text-slate-900 dark:text-slate-100">{contribution.title}</h3>
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">by {contribution.author} · from {memberDisplayName(students.find((student) => student.id === contribution.user_id), 'Unknown student')}</p>
                         {contribution.description ? <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{contribution.description}</p> : null}
-                        {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <a href={`/api/contributions/${contribution.id}/file`} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Open submitted PDF</a> : null}
+                        {(contribution.pdf_url || contribution.storage_file_id || contribution.storage_path) ? <button type="button" onClick={() => setInspectingContribution(contribution)} className="mt-3 inline-block text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300">Inspect submitted PDF</button> : <p className="mt-3 text-xs text-rose-600">No PDF attachment is available.</p>}
                       </div></div>
                       <div className="flex shrink-0 gap-2">
                         <button type="button" disabled={saving} onClick={() => void handleContributionRevision(contribution.id)} className="rounded-xl border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 disabled:opacity-50 dark:border-amber-900/50 dark:text-amber-300">Request revision</button>
@@ -1989,7 +2311,7 @@ export default function AdminPage() {
                     </div>
                   </article>
                 )) : (
-                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center dark:border-slate-700 dark:bg-slate-800/40"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-6 w-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" /><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4z" /></svg></span><p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-100">No pending contributions</p><p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">Member-submitted books will appear here when they are ready for review.</p></div>
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center dark:border-slate-700 dark:bg-slate-800/40"><span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="h-6 w-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" /><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4z" /></svg></span><p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-100">No pending lessons</p><p className="mx-auto mt-1 max-w-md text-sm text-slate-500 dark:text-slate-400">Faculty lesson PDFs will appear here when they are ready for review.</p></div>
                 )}
               </div>
               <ListPagination page={Math.min(contributionPage, contributionPageCount)} pageCount={contributionPageCount} total={pendingContributions.length} onPageChange={setContributionPage} />
@@ -2004,7 +2326,7 @@ export default function AdminPage() {
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage accounts and academics. Select a member to review or correct profile details.</p>
               </div>
               <div className="mb-6 flex flex-wrap gap-3">
-                <button type="button" onClick={() => setMemberToolModal('createMember')} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Create member account</button>
+                <button type="button" onClick={() => setMemberToolModal('createMember')} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Invite member</button>
                 <button type="button" onClick={() => setMemberToolModal('catalogs')} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Manage academic catalogs</button>
               </div>
               <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_10rem_12rem_auto]">
@@ -2061,23 +2383,27 @@ export default function AdminPage() {
                   }
                 }}
               />
-              {memberToolModal === 'createMember' ? <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setMemberToolModal(null) }}><section className="my-6 w-full max-w-3xl min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="create-member-title"><div className="flex items-start justify-between gap-4"><div><h3 id="create-member-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Create member account</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Provision a student, faculty, or librarian account with its academic details.</p></div><button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm dark:border-slate-700">Close</button></div>
+              {memberToolModal === 'createMember' ? <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setMemberToolModal(null) }}><section className="my-6 w-full max-w-3xl min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="create-member-title"><div className="flex items-start justify-between gap-4"><div><h3 id="create-member-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Send a secure email link so the member can set their password.</p></div><button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm dark:border-slate-700">Close</button></div>
               <form onSubmit={async (event) => { if (await handleCreateStudent(event)) setMemberToolModal(null) }} className="mt-5">
                 <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   <input type="text" required maxLength={120} value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() })} placeholder="Username (3–30 characters)" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <PasswordInput required minLength={8} value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} placeholder="Temporary password" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                   <select required aria-label="Account type" value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                     <option value="student">Student</option>
                     <option value="faculty">Faculty</option>
                     <option value="librarian">Librarian</option>
                   </select>
+                  {newStudent.role !== 'librarian' ? <label className="block min-w-0 text-sm font-medium">Institutional ID<input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={newStudent.institutionalId} onChange={(event) => {
+                    const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
+                    setNewStudent({ ...newStudent, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
+                  }} placeholder="2026-01042" className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label> : null}
                   {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium">Department<select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label> : null}
                   {newStudent.role === 'student' ? <select required value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Course</option>{academicCourses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select> : null}
                   {newStudent.role === 'student' ? <select required value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Year level</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select> : null}
                 </div>
-                <button type="submit" disabled={saving} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Creating...' : 'Create member account'}</button>
+                <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">The member will receive a secure email link to set their own password.</p>
+                <button type="submit" disabled={saving} className="mt-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Sending invite...' : 'Send invite'}</button>
               </form></section></div> : null}
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
@@ -2135,6 +2461,50 @@ export default function AdminPage() {
               <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Profile and academics</h3><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{selectedMember.role === 'student' ? <><div><dt className="text-slate-500">Course</dt><dd className="font-medium" title={selectedMember.course ? `Saved value: ${selectedMember.course}` : undefined}>{memberCourseDisplay(selectedMember.course, academicCourses)}{selectedMember.course && memberCourseDisplay(selectedMember.course, academicCourses) === 'Needs review' ? ` (${selectedMember.course})` : ''}</dd></div><div><dt className="text-slate-500">Year level</dt><dd className="font-medium" title={selectedMember.student_year ? `Saved value: ${selectedMember.student_year}` : undefined}>{memberYearDisplay(selectedMember.student_year)}{selectedMember.student_year && memberYearDisplay(selectedMember.student_year) === 'Needs review' ? ` (${selectedMember.student_year})` : ''}</dd></div></> : selectedMember.role === 'faculty' ? <div><dt className="text-slate-500">Faculty</dt><dd className="font-medium">{selectedMember.department || 'Not set'}</dd></div> : <div><dt className="text-slate-500">Account type</dt><dd className="font-medium">Librarian</dd></div>}</dl></section>
               <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account summary</h3><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.digitalLoans.length ?? 0} digital loan records</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.physicalLoans.length ?? 0} physical checkouts</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberFineStatusAvailable ? memberAccountHistory?.fines.filter((fine) => fine.status === 'unpaid').length ?? 0 : '—'} unpaid fines</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{(memberAccountHistory?.printPayments.length ?? 0) + (memberAccountHistory?.ebookPurchases.length ?? 0)} payment records</p></div></section>
             </div>
+            <section className="mt-6 rounded-2xl border border-slate-200 p-4 dark:border-slate-700" aria-labelledby="member-access-controls-title">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 id="member-access-controls-title" className="font-semibold text-slate-900 dark:text-slate-100">Account access &amp; restrictions</h3>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    Sign-in status: {memberSuspension?.memberId !== selectedMember.id || memberSuspension.loading
+                      ? 'Checking…'
+                      : memberSuspension.error
+                        ? 'Unavailable'
+                        : memberSuspension.suspended
+                          ? `Suspended${memberSuspension.bannedUntil ? ` until ${new Date(memberSuspension.bannedUntil).toLocaleString()}` : ''}`
+                          : 'Active'}
+                  </p>
+                  {memberSuspension?.memberId === selectedMember.id && memberSuspension.error
+                    ? <p role="alert" className="mt-1 text-sm text-rose-700 dark:text-rose-300">{memberSuspension.error}</p>
+                    : null}
+                </div>
+                {profile?.role === 'admin' ? <button
+                  type="button"
+                  disabled={saving || memberSuspension?.memberId !== selectedMember.id || memberSuspension.loading || memberSuspension.suspended === null}
+                  onClick={() => setMemberSuspensionDialog({
+                    memberId: selectedMember.id,
+                    memberName: memberDisplayName(selectedMember, selectedMember.email),
+                    suspended: !memberSuspension?.suspended,
+                    reason: '',
+                  })}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${memberSuspension?.suspended ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-rose-700 hover:bg-rose-600'}`}
+                >
+                  {memberSuspension?.suspended ? 'Lift suspension' : 'Suspend sign-in'}
+                </button> : null}
+              </div>
+              <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Suspending blocks sign-in; lifting it restores account access. This does not erase account history or waive fines.</p>
+              {memberAccountHistory ? <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                {memberAccountHistory.fines.some((fine) => fine.status === 'unpaid')
+                  ? <button type="button" onClick={() => router.push('/dashboard/admin/physical/finance')} className="rounded-lg border border-rose-200 px-3 py-2 font-semibold text-rose-800 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-200 dark:hover:bg-rose-950/30">Review unpaid fines &amp; payment options</button>
+                  : <span className="rounded-lg bg-emerald-50 px-3 py-2 font-medium text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">No unpaid fine holds</span>}
+                {memberAccountHistory.physicalLoans.some((loan) => (loan.status === 'checked_out' || loan.status === 'return_pending') && new Date(loan.due_date).getTime() < Date.now())
+                  ? <span className="rounded-lg bg-amber-50 px-3 py-2 font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Overdue physical items require librarian-verified return or case resolution.</span>
+                  : null}
+                {memberAccountHistory.physicalLoans.filter((loan) => loan.status === 'checked_out' || loan.status === 'return_pending').length >= 3
+                  ? <span className="rounded-lg bg-amber-50 px-3 py-2 font-medium text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Borrowing limit reached; a return is required before another checkout.</span>
+                  : null}
+              </div> : null}
+            </section>
             <section className="mt-6 space-y-5" aria-labelledby="member-account-history-title">
               <div><h3 id="member-account-history-title" className="font-semibold text-slate-900 dark:text-slate-100">Account history</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Borrowing, fines, receipts, payments, points, and contributions recorded for this member.</p></div>
               {memberAccountHistoryError ? <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{memberAccountHistoryError}</p> : null}
@@ -2149,37 +2519,9 @@ export default function AdminPage() {
                 <section><h4 className="text-sm font-semibold">Contributions</h4><div className="mt-2 space-y-2">{contributions.filter((contribution) => contribution.user_id === selectedMember.id).map((contribution) => <article key={`contribution-${contribution.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{contribution.title}</p><p className="text-xs text-slate-500">Submitted {contribution.created_at ? new Date(contribution.created_at).toLocaleDateString() : 'Date unavailable'}</p></div><span className="text-xs font-semibold capitalize">{contribution.status.replace(/_/g, ' ')}</span></article>)}{contributions.every((contribution) => contribution.user_id !== selectedMember.id) ? <p className="text-sm text-slate-500">No contributions recorded.</p> : null}</div></section>
               </> : null}
             </section>
-            <div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setRecognitionForm((current) => ({ ...current, studentId: selectedMember.id })); setSelectedMember(null); setQuickAction('recognition') }} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Give points</button><button type="button" onClick={() => { setSelectedMember(null); openMemberEditor(selectedMember) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit profile</button>{profile?.role === 'admin' ? <button type="button" onClick={() => { setSelectedMember(null); setConfirmAction({ type: 'deleteMember', id: selectedMember.id, label: memberDisplayName(selectedMember, selectedMember.email) }) }} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white">Delete account</button> : null}</div>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">{selectedMember.role === 'student' || selectedMember.role === 'faculty' ? <button type="button" onClick={() => { setTopUpMember(selectedMember); setSelectedMember(null) }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white">Record cash top-up</button> : null}<button type="button" onClick={() => { setSelectedMember(null); openMemberEditor(selectedMember) }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Edit profile</button>{profile?.role === 'admin' ? <button type="button" onClick={() => { setSelectedMember(null); setConfirmAction({ type: 'deleteMember', id: selectedMember.id, label: memberDisplayName(selectedMember, selectedMember.email) }) }} className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white">Delete account</button> : null}</div>
           </section>
         </div> : null}
-        <ActionModal
-          open={quickAction === 'recognition'}
-          title="Give student points"
-          description="Award verified recognition points directly from the admin dashboard."
-          confirmLabel="Award points"
-          busy={saving}
-          onClose={() => { if (!saving) setQuickAction(null) }}
-          onConfirm={() => {
-            if (!recognitionForm.studentId || !recognitionForm.reason.trim()) {
-              setError('Choose a student and enter a reason before awarding points.')
-              return
-            }
-            void submitRecognition()
-          }}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2"><SearchableMemberSelect members={students.filter((student) => student.role === 'student')} value={recognitionForm.studentId} onChange={(studentId) => setRecognitionForm((current) => ({ ...current, studentId }))} label="Student" placeholder="Type a student name or email”¦" /></div>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Points
-              <input required type="text" inputMode="numeric" pattern="[0-9]+" value={recognitionForm.points} onChange={(event) => setRecognitionForm((current) => ({ ...current, points: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Category
-              <select value={recognitionForm.category} onChange={(event) => setRecognitionForm({ ...recognitionForm, category: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="academic_assistance">Academic assistance</option><option value="community_contribution">Community contribution</option><option value="volunteer_work">Volunteer work</option><option value="academic_achievement">Academic achievement</option><option value="special_recognition">Special recognition</option></select>
-            </label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200 sm:col-span-2">Reason
-              <textarea required maxLength={500} value={recognitionForm.reason} onChange={(event) => setRecognitionForm((current) => ({ ...current, reason: event.target.value }))} rows={3} placeholder="What did the student do?" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
-            </label>
-          </div>
-        </ActionModal>
         {editingMember && memberEditForm ? (
           <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setEditingMember(null); setMemberEditForm(null) } }}>
             <section className="my-6 w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900" role="dialog" aria-modal="true" aria-labelledby="member-edit-title">
@@ -2198,6 +2540,12 @@ export default function AdminPage() {
                     <option value="librarian">Librarian</option>
                   </select>
                 </label>
+                {memberEditForm.role !== 'librarian' ? <label className="block text-sm font-medium">Institutional ID
+                  <input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={memberEditForm.institutionalId} onChange={(event) => {
+                    const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
+                    setMemberEditForm({ ...memberEditForm, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
+                  }} placeholder="2026-01042" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+                </label> : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   {memberEditForm.role === 'faculty' ? <label className="block text-sm font-medium">Department<select required value={memberEditForm.department} onChange={(event) => setMemberEditForm({ ...memberEditForm, department: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active || item.name === memberEditForm.department).map((item) => <option key={item.id} value={item.name}>{item.name}{item.is_active ? '' : ' (inactive)'}</option>)}</select></label> : null}
                   {memberEditForm.role === 'student' ? <>
@@ -2219,6 +2567,27 @@ export default function AdminPage() {
             </section>
           </div>
         ) : null}
+        {inspectingContribution ? <div className="fixed inset-0 z-[120] flex justify-end bg-slate-950/60" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setInspectingContribution(null) }}>
+          <aside className="flex h-full w-full max-w-5xl flex-col bg-white shadow-2xl dark:bg-slate-950" role="dialog" aria-modal="true" aria-labelledby="contribution-inspection-title">
+            <header className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 dark:border-slate-800">
+              <div className="min-w-0"><h2 id="contribution-inspection-title" className="truncate text-lg font-semibold">{inspectingContribution.title}</h2><p className="mt-1 text-sm text-slate-500">by {inspectingContribution.author} · submitted by {memberDisplayName(students.find((student) => student.id === inspectingContribution.user_id), 'Unknown student')}</p></div>
+              <button type="button" onClick={() => setInspectingContribution(null)} className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">Close</button>
+            </header>
+            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_20rem]">
+              <iframe title={`PDF inspection: ${inspectingContribution.title}`} src={`/api/contributions/${inspectingContribution.id}/file`} className="h-full min-h-[50vh] w-full bg-slate-100 dark:bg-slate-900" />
+              <section className="overflow-y-auto border-t border-slate-200 p-5 dark:border-slate-800 lg:border-l lg:border-t-0">
+                <h3 className="font-semibold">Submission details</h3>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300">{inspectingContribution.description || 'No description provided.'}</p>
+                <p className="mt-4 text-xs text-slate-500">Use the PDF preview to inspect scan quality, rights statements, and metadata before making a decision.</p>
+                <div className="mt-6 grid gap-2">
+                  <button type="button" disabled={saving} onClick={() => { const id = inspectingContribution.id; setInspectingContribution(null); void handleContributionReview(id, 'approved') }} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">Approve</button>
+                  <button type="button" disabled={saving} onClick={() => { const id = inspectingContribution.id; setInspectingContribution(null); void handleContributionReview(id, 'rejected') }} className="rounded-xl border border-rose-300 px-4 py-2.5 text-sm font-semibold text-rose-700 disabled:opacity-50 dark:border-rose-900/60 dark:text-rose-300">Reject with reason</button>
+                  <button type="button" disabled={saving} onClick={() => { setInspectingContribution(null); void handleContributionRevision(inspectingContribution.id) }} className="rounded-xl border border-amber-300 px-4 py-2.5 text-sm font-semibold text-amber-800 disabled:opacity-50 dark:border-amber-900/60 dark:text-amber-200">Request revision</button>
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div> : null}
         <ActionModal
           open={confirmAction?.type === 'archiveBook'}
           title={confirmAction?.type === 'archiveBook' && confirmAction.isArchived ? 'Remove this book from the catalog?' : 'Restore this book?'}
@@ -2284,10 +2653,44 @@ export default function AdminPage() {
           onConfirm={() => { if (confirmAction?.type === 'deleteMember') void executeDeleteMember(confirmAction.id, confirmAction.label ?? 'Member') }}
         />
         <ActionModal
+          open={memberSuspensionDialog !== null}
+          title={memberSuspensionDialog?.suspended ? 'Suspend member sign-in?' : 'Lift account suspension?'}
+          description={memberSuspensionDialog?.suspended
+            ? `${memberSuspensionDialog.memberName} will be blocked from signing in until an administrator lifts the suspension.`
+            : `${memberSuspensionDialog?.memberName ?? 'This member'} will be able to sign in again. Existing fines and circulation holds remain in effect.`}
+          confirmLabel={memberSuspensionDialog?.suspended ? 'Suspend sign-in' : 'Lift suspension'}
+          tone={memberSuspensionDialog?.suspended ? 'danger' : 'default'}
+          busy={saving}
+          confirmDisabled={(memberSuspensionDialog?.reason.trim().length ?? 0) < 3}
+          onClose={() => setMemberSuspensionDialog(null)}
+          onConfirm={() => void executeMemberSuspensionChange()}
+        >
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">Required reason
+            <textarea
+              required
+              minLength={3}
+              maxLength={500}
+              rows={3}
+              value={memberSuspensionDialog?.reason ?? ''}
+              onChange={(event) => setMemberSuspensionDialog((current) => current ? { ...current, reason: event.target.value, error: undefined } : current)}
+              className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+              placeholder={memberSuspensionDialog?.suspended ? 'Why is sign-in being suspended?' : 'Why is the suspension being lifted?'}
+            />
+          </label>
+          {memberSuspensionDialog?.error ? <p role="alert" className="mt-2 text-sm text-rose-700 dark:text-rose-300">{memberSuspensionDialog.error}</p> : null}
+        </ActionModal>
+        <StaffCashPointTopUpModal
+          member={topUpMember}
+          open={topUpMember !== null}
+          onClose={() => setTopUpMember(null)}
+          onCompleted={() => { void loadData() }}
+        />
+        <ActionModal
           open={reviewDialog !== null}
-          title={reviewDialog?.decision === 'approved' ? 'Approve contribution' : 'Reject contribution'}
-          description={reviewDialog?.decision === 'approved' ? 'Set the reward and the points cost for each seven-day access period.' : 'Reject this contribution and notify the student.'}
-          confirmLabel={reviewDialog?.decision === 'approved' ? 'Approve contribution' : 'Reject contribution'}
+          title={reviewDialog?.decision === 'approved' ? 'Approve lesson' : 'Reject lesson'}
+          description={reviewDialog?.decision === 'approved' ? `Approved lessons appear in the library; they never create book catalog entries. Set an optional reward of 0–100 points (default ${defaultLessonReward}).` : 'Reject this lesson and notify the faculty member.'}
+          confirmLabel={reviewDialog?.decision === 'approved' ? 'Approve lesson' : 'Reject lesson'}
+          confirmDisabled={reviewDialog?.decision === 'rejected' && !reviewDialog.rejectionReason}
           tone={reviewDialog?.decision === 'approved' ? 'default' : 'danger'}
           busy={saving}
           onClose={() => setReviewDialog(null)}
@@ -2295,23 +2698,22 @@ export default function AdminPage() {
         >
           {reviewDialog?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Reward points<input type="number" min="0" step="1" value={reviewDialog.reward} onChange={(event) => setReviewDialog({ ...reviewDialog, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
-            <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Access cost / 7 days<input type="number" min="0" value={reviewDialog.accessPoints} onChange={(event) => setReviewDialog({ ...reviewDialog, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
-          </div> : null}
+          </div> : reviewDialog ? <label className="block text-sm font-medium">Rejection reason<select required value={reviewDialog.rejectionReason} onChange={(event) => setReviewDialog({ ...reviewDialog, rejectionReason: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a reason</option><option>Poor Scan Quality</option><option>Copyright Violation</option><option>Incorrect Metadata</option></select></label> : null}
         </ActionModal>
         <ActionModal
           open={bulkContributionReview !== null}
-          title={bulkContributionReview?.decision === 'approved' ? 'Approve selected contributions?' : 'Reject selected contributions?'}
-          description={`${selectedContributionIds.length} pending contribution${selectedContributionIds.length === 1 ? '' : 's'} will be processed with the same decision. Some may fail if their state has changed.`}
+          title={bulkContributionReview?.decision === 'approved' ? 'Approve selected lessons?' : 'Reject selected lessons?'}
+          description={`${selectedContributionIds.length} pending lesson${selectedContributionIds.length === 1 ? '' : 's'} will be processed with the same decision. Some may fail if their state has changed.`}
           confirmLabel={bulkContributionReview?.decision === 'approved' ? 'Approve selected' : 'Reject selected'}
           tone={bulkContributionReview?.decision === 'rejected' ? 'danger' : 'default'}
+          confirmDisabled={bulkContributionReview?.decision === 'rejected' && !bulkContributionReview.rejectionReason}
           busy={saving}
           onClose={() => setBulkContributionReview(null)}
           onConfirm={() => void executeBulkContributionReview()}
         >
           {bulkContributionReview?.decision === 'approved' ? <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-medium">Reward points per contribution<input type="number" min="0" step="1" value={bulkContributionReview.reward} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
-            <label className="text-sm font-medium">Access cost / 7 days<input type="number" min="0" step="1" value={bulkContributionReview.accessPoints} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, accessPoints: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
-          </div> : null}
+            <label className="text-sm font-medium">Reward points per lesson (0–100)<input type="number" min="0" max="100" step="1" value={bulkContributionReview.reward} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, reward: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" /></label>
+          </div> : bulkContributionReview ? <label className="block text-sm font-medium">Rejection reason for all selected PDFs<select required value={bulkContributionReview.rejectionReason} onChange={(event) => setBulkContributionReview({ ...bulkContributionReview, rejectionReason: event.target.value })} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select a reason</option><option>Poor Scan Quality</option><option>Copyright Violation</option><option>Incorrect Metadata</option></select></label> : null}
         </ActionModal>
         <ActionModal
           open={revisionDialog !== null}

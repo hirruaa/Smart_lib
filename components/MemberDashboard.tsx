@@ -13,11 +13,13 @@ import ActionModal from '@/components/ActionModal'
 import { StudentDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
+import { dashboardPathForRole } from '@/utils/roles'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
 
 type Book = {
   id: number
+  created_at?: string | null
   title: string
   author: string
   category: string
@@ -91,7 +93,7 @@ type PhysicalLoan = {
   copy_id: number | null
   duration_days: number
   fee_amount: number
-  payment_method: 'cash' | 'gcash'
+  payment_method: string
   payment_status: 'unpaid' | 'pending_verification' | 'paid'
   status: 'pending' | 'checked_out' | 'return_pending' | 'returned' | 'rejected' | 'cancelled' | 'lost' | 'expired'
   requested_at: string
@@ -116,6 +118,31 @@ function getPhysicalCopyToken(qrData: string) {
 }
 const physicalTitleGroupKey = (book: Pick<Book, 'title' | 'author'>) =>
   [book.title, book.author].map((value) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).join('|')
+const normalizeCatalogSearchText = (value: string) =>
+  value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const catalogSearchScore = (book: Book, query: string) => {
+  const normalizedQuery = normalizeCatalogSearchText(query)
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean)
+  if (!terms.length) return 0
+
+  const title = normalizeCatalogSearchText(book.title)
+  const author = normalizeCatalogSearchText(book.author)
+  const category = normalizeCatalogSearchText(book.category)
+  const description = normalizeCatalogSearchText(book.description ?? '')
+  const isbn = normalizeCatalogSearchText(book.isbn ?? '')
+  const fields = [title, author, category, description, isbn]
+  if (!terms.every((term) => fields.some((field) => field.includes(term)))) return -1
+
+  let score = title === normalizedQuery ? 100 : title.startsWith(normalizedQuery) ? 60 : 0
+  for (const term of terms) {
+    if (title.includes(term)) score += 12
+    else if (author.includes(term)) score += 7
+    else if (category.includes(term)) score += 5
+    else if (isbn.includes(term)) score += 4
+    else if (description.includes(term)) score += 1
+  }
+  return score
+}
 function LineIcon({ children, className }: { children: React.ReactNode; className?: string }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
 }
@@ -182,6 +209,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const initialDataLoaded = useRef(false)
   const [loanActionId, setLoanActionId] = useState<number | null>(null)
   const [confirmAction, setConfirmAction] = useState<{ type: 'renew'; id: number } | null>(null)
@@ -208,6 +236,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const reportDashboardLoadError = (message: string) => {
     if (initialDataLoaded.current) {
       console.error(`[SmartLib] Dashboard refresh failed: ${message}`)
+      setRefreshError(message)
       return
     }
     setLoadError(message)
@@ -516,6 +545,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         error,
       } = await supabase.auth.getUser()
 
+      if (error) {
+        reportDashboardLoadError(`Unable to verify your session. Refresh the page or sign in again. (${error.message})`)
+        return
+      }
+
       const currentUser = user
       if (!currentUser) {
         router.replace('/login')
@@ -538,15 +572,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const fullName = profileData?.full_name ?? ''
 
       if (role !== memberType) {
-        if (role === 'admin' || role === 'librarian') {
-          router.replace('/dashboard/admin')
-        } else if (role === 'faculty') {
-          router.replace('/dashboard/faculty')
-        } else if (role === 'student') {
-          router.replace('/dashboard/student')
-        } else {
-          router.replace('/dashboard')
-        }
+        router.replace(dashboardPathForRole(role))
         return
       }
 
@@ -556,7 +582,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, availabilityAlertsResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, title, author, category, description, isbn, cover_image_url, access_points, access_costs, access_mode, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
+          .select('id, created_at, title, author, category, description, isbn, cover_image_url, access_points, access_costs, access_mode, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -582,6 +608,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       }
       if (contributionResult.error) {
         reportDashboardLoadError(`Unable to verify permanent contribution access. (${contributionResult.error.message})`)
+        return
+      }
+      if (physicalCatalogResult.error) {
+        reportDashboardLoadError(`Unable to load the physical library catalog. Apply the required Supabase schema, then try again. (${physicalCatalogResult.error.message})`)
         return
       }
       if (physicalLoansResult.error && !isMissingTableError(physicalLoansResult)) {
@@ -641,10 +671,15 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       })))
       initialDataLoaded.current = true
       setLoadError(null)
+      setRefreshError(null)
       setDataReady(true)
     }
 
-    loadData()
+    void loadData().catch((cause: unknown) => {
+      reportDashboardLoadError(cause instanceof Error
+        ? `Unable to load your dashboard. Please refresh and try again. (${cause.message})`
+        : 'Unable to load your dashboard. Please refresh and try again.')
+    })
   }, [router, dataReloadToken])
 
   useEffect(() => {
@@ -674,6 +709,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
   const [selectedFormat, setSelectedFormat] = useState<'all' | 'digital' | 'physical'>('all')
+  const [availablePhysicalOnly, setAvailablePhysicalOnly] = useState(false)
 
   const catalogBooks = useMemo(() => {
     const grouped = new Map<string, Book[]>()
@@ -711,42 +747,33 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const filteredBooks = useMemo(
     () => {
       const activeSearch = debouncedSearch.trim().toLowerCase()
-      const searchTokens = activeSearch ? activeSearch.split(/\s+/) : []
 
       const results = catalogBooks
-        .map((book) => ({
-          ...book,
-          status: 'Digital access',
-        }))
         .filter((book) => {
-          const matchesQuery =
-            searchTokens.length === 0 ||
-            searchTokens.every(
-              (token) =>
-                book.title.toLowerCase().includes(token) ||
-                book.author.toLowerCase().includes(token) ||
-                book.category.toLowerCase().includes(token) ||
-                (book.isbn && book.isbn.toLowerCase().includes(token))
-            )
-
+          const matchesQuery = !activeSearch || catalogSearchScore(book, activeSearch) >= 0
           const matchesCategory =
             selectedCategory === 'All' ||
             book.category.toLowerCase() === selectedCategory.toLowerCase()
 
           const matchesFormat = selectedFormat === 'all' ||
             (selectedFormat === 'physical' ? book.catalog_type !== 'digital' : book.catalog_type !== 'physical')
+          const matchesAvailability = !availablePhysicalOnly ||
+            (book.catalog_type !== 'digital' && (book.physical_available_copies ?? 0) > 0)
 
-          return matchesQuery && matchesCategory && matchesFormat
+          return matchesQuery && matchesCategory && matchesFormat && matchesAvailability
         })
 
       return results.sort((a, b) => {
         if (catalogSort === 'title') return a.title.localeCompare(b.title)
         if (catalogSort === 'author') return a.author.localeCompare(b.author)
-        if (catalogSort === 'newest') return b.id - a.id
-        return 0
+        if (catalogSort === 'newest') {
+          const newestFirst = Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? '')
+          return (Number.isNaN(newestFirst) ? 0 : newestFirst) || b.id - a.id
+        }
+        return catalogSearchScore(b, activeSearch) - catalogSearchScore(a, activeSearch) || a.title.localeCompare(b.title)
       })
     },
-    [catalogBooks, debouncedSearch, selectedCategory, selectedFormat, catalogSort]
+    [catalogBooks, debouncedSearch, selectedCategory, selectedFormat, availablePhysicalOnly, catalogSort]
   )
 
   const activeLoans = useMemo(
@@ -1241,7 +1268,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <div className="student-nav-group">
               <p className="student-nav-group-label">Your activity</p>
               <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Transactions" title={sidebarCollapsed ? 'Transactions' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Transactions</span></button>
+              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Loans and charges" title={sidebarCollapsed ? 'Loans and charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
             </div>
             <div className="student-nav-group">
               <p className="student-nav-group-label">Tools</p>
@@ -1257,28 +1284,88 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           </div>
         </aside>
         <main id="overview" className="dashboard-workspace student-workspace space-y-8">
+        {refreshError ? <section role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+          <p>{refreshError}</p>
+          <button type="button" onClick={() => setDataReloadToken((token) => token + 1)} className="rounded-lg border border-amber-700 px-3 py-1.5 font-semibold hover:bg-amber-100 dark:border-amber-300 dark:hover:bg-amber-900">Retry refresh</button>
+        </section> : null}
         {!dataReady ? (
           <StudentDashboardSkeleton />
         ) : (
           <>
           <header className="dashboard-hero student-hero rounded-[2rem] p-6 lg:p-8">
           <button type="button" className="student-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="member-navigation" aria-expanded={sidebarOpen} aria-label="Open navigation"><MenuIcon /></button>
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+          <div className="student-hero-top">
+            <div className="student-hero-intro">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-celadon">{memberType === 'faculty' ? 'Faculty Dashboard' : 'Student Dashboard'}</p>
               <h1 className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">Hello, {profile?.full_name?.trim() || (memberType === 'faculty' ? 'faculty member' : 'student')}</h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{memberType === 'faculty' ? 'Browse, borrow, and read learning materials with the same library access and points features available to students.' : 'Browse the library, track active access, and manage your requests in one place.'}</p>
               {memberType === 'faculty' && profile?.department ? <p className="mt-2 text-xs font-semibold text-pine-700 dark:text-pine-200">Faculty · {profile.department}</p> : null}
+            </div>
+            <div className="student-hero-summary" aria-label="Your library summary">
+              <section className="student-hero-stat student-hero-points">
+                <div className="student-hero-stat-value">
+                  <span>Points</span>
+                  <strong>{profile?.points_balance ?? 0}</strong>
+                </div>
+                <button type="button" onClick={() => setWalletOpen(true)}>Wallet</button>
+              </section>
+              <section className="student-hero-stat student-hero-lending">
+                <div className="student-hero-stat-value">
+                  <span>Active loans</span>
+                  <strong>{activePhysicalLoanCount}</strong>
+                </div>
+                <div className="student-hero-stat-value">
+                  <span>Unpaid charges</span>
+                  <strong>{unpaidFineCount}</strong>
+                </div>
+                <p className={unpaidFineCount > 0 || pendingPhysicalLoanCount > 0 ? 'student-hero-stat-notice' : 'student-hero-stat-detail'}>
+                  {unpaidFineCount > 0
+                    ? `${unpaidFineCount} outstanding charge${unpaidFineCount === 1 ? '' : 's'} to resolve with library staff`
+                    : pendingPhysicalLoanCount > 0
+                      ? `${pendingPhysicalLoanCount} request${pendingPhysicalLoanCount === 1 ? '' : 's'} awaiting librarian confirmation`
+                      : `${physicalLoans.length} total physical request${physicalLoans.length === 1 ? '' : 's'}`}
+                </p>
+                <button type="button" onClick={() => setPaymentsOpen(true)}>View loans and charges</button>
+              </section>
+              <section className="student-hero-stat student-hero-reading">
+                <div className="student-hero-stat-value">
+                  <span>Reading now</span>
+                  <strong>{continueReading.length}</strong>
+                </div>
+                <div className="student-hero-stat-value">
+                  <span>Completed</span>
+                  <strong>{borrowRequests.filter((request) => request.status === 'returned').length}</strong>
+                </div>
+                <p className="student-hero-stat-detail">
+                  {continueReading.length > 0
+                    ? `${Object.keys(readingProgress).filter((bookId) => continueReading.some((loan) => loan.book_id === Number(bookId))).length} books with saved progress`
+                    : 'No active e-books to resume'}
+                </p>
+                <div className="student-hero-stat-actions">
+                  <button type="button" onClick={() => setHistoryOpen(true)}>History</button>
+                  <button type="button" onClick={() => {
+                    if (continueReading.length > 0) setContinueReadingOpen(true)
+                    else document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })
+                  }}>{continueReading.length > 0 ? 'Continue' : 'Browse'}</button>
+                </div>
+              </section>
             </div>
             <div className="student-hero-actions">
               <button type="button" onClick={() => setRequestsOpen(true)} className="student-notification-button" aria-label="Open borrow requests" title="Borrow requests"><RequestIcon />{borrowRequests.filter((request) => request.status === 'pending').length > 0 ? <span className="student-notification-badge" aria-hidden="true">{borrowRequests.filter((request) => request.status === 'pending').length}</span> : null}</button>
               <button type="button" onClick={() => setNotificationsOpen(true)} className="student-notification-button" aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'} title="Notifications"><BellIcon />{alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}</button>
             </div>
           </div>
+          <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' }) }}>
+            <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
+            <SearchIcon />
+            <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Find a book, author, ISBN, or subject…" />
+            {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
+            <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
+          </form>
         </header>
 
         {urgentLoans.length > 0 ? (
-          <div className="rounded-[1.75rem] border border-amber-300 bg-amber-50/90 p-5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
+          <div className="student-priority-alert rounded-[1.75rem] border border-amber-300 bg-amber-50/90 p-5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
                 <span className="text-xl" aria-hidden="true">⚠️</span>
@@ -1312,75 +1399,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
         <BookAssistant />
 
-        {/* Student Personal Study Analytics Strip */}
-        <div className="student-analytics-strip grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="student-stat-card student-points-card rounded-2xl border border-pine-200 bg-pine-50 p-5 shadow-sm dark:border-forest-700 dark:bg-forest-800/70">
-            <span className="text-xs font-semibold uppercase tracking-wider text-pine-700 dark:text-pine-200">Points balance</span>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">{profile?.points_balance ?? 0}</span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">points</span>
-            </div>
-            <div className="student-stat-actions mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => setWalletOpen(true)} className="rounded-xl bg-forest-900 px-3 py-2 text-xs font-semibold text-paper-100 hover:bg-forest-800 dark:bg-paper-100 dark:text-forest-900">Wallet</button>
-            </div>
-          </div>
-
-          <div className="student-stat-card physical-lending-card rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <div className="physical-lending-heading">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Physical lending</span>
-            </div>
-            <div className="physical-lending-metrics">
-              <div><span className="physical-lending-count">{activePhysicalLoanCount}</span><span>active loans</span></div>
-              <div><span className="physical-lending-count">{unpaidFineCount}</span><span>unpaid charges</span></div>
-            </div>
-            <div className="physical-lending-status" aria-live="polite">
-              {unpaidFineCount > 0
-                ? <p className="physical-lending-pending">{unpaidFineCount} outstanding charge{unpaidFineCount === 1 ? '' : 's'} to resolve with library staff</p>
-                : pendingPhysicalLoanCount > 0
-                  ? <p className="physical-lending-pending">{pendingPhysicalLoanCount} request{pendingPhysicalLoanCount === 1 ? '' : 's'} awaiting librarian confirmation</p>
-                  : <p>{physicalLoans.length} total physical request{physicalLoans.length === 1 ? '' : 's'}</p>}
-            </div>
-            <div className="physical-lending-actions">
-              <button type="button" onClick={() => setPaymentsOpen(true)} className="secondary-action">Transactions</button>
-            </div>
-          </div>
-
-          <div className="student-stat-card student-reading-summary rounded-2xl border border-paper-300 bg-white/70 p-5 shadow-sm dark:border-forest-800 dark:bg-forest-900/60">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Reading</span>
-            <div className="student-reading-metrics mt-3">
-              <div><strong>{continueReading.length}</strong><span>available now</span></div>
-              <div><strong>{borrowRequests.filter((request) => request.status === 'returned').length}</strong><span>completed</span></div>
-            </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{continueReading.length > 0 ? `${Object.keys(readingProgress).filter((bookId) => continueReading.some((loan) => loan.book_id === Number(bookId))).length} books with saved progress` : 'No active e-books to resume'}</p>
-            <div className="student-reading-actions mt-auto grid grid-cols-2 gap-2 pt-3">
-              <button type="button" onClick={() => setHistoryOpen(true)} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold">History</button>
-              <button type="button" onClick={() => {
-                if (continueReading.length > 0) setContinueReadingOpen(true)
-                else document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })
-              }} className="student-reading-now-action !mt-0">
-                {continueReading.length > 0 ? 'Continue' : 'Browse'}
-              </button>
-            </div>
-          </div>
-
-        </div>
-
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-6">
             <div id="explore" className="catalog-panel rounded-[2rem] p-6 lg:p-8">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
               <div className="catalog-tools">
                 <form id="catalog-controls" className="catalog-toolbar" onSubmit={(event) => event.preventDefault()}>
-                  <label className="catalog-search-box">
-                    <SearchIcon />
-                    <input
-                      value={searchInput}
-                      onChange={(event) => setSearchInput(event.target.value)}
-                      placeholder="Search title, author or category"
-                      aria-label="Search title, author or category"
-                    />
-                    {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear search">×</button> : null}
-                  </label>
                   <label className="catalog-sort-box">
                     <span className="sr-only">Sort by</span>
                     <SortIcon />
@@ -1397,14 +1421,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   </label>
                   <button
                     type="button"
-                    className={`catalog-filter-toggle${selectedCategory !== 'All' || selectedFormat !== 'all' ? ' has-active-filters' : ''}`}
+                    className={`catalog-filter-toggle${selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? ' has-active-filters' : ''}`}
                     onClick={() => setCatalogControlsOpen((current) => !current)}
                     aria-expanded={catalogControlsOpen}
                     aria-controls="catalog-filter-menu"
                   >
                     <FilterIcon />
                     <span>Filters</span>
-                    {selectedCategory !== 'All' || selectedFormat !== 'all' ? <span className="catalog-filter-count">{Number(selectedCategory !== 'All') + Number(selectedFormat !== 'all')}</span> : null}
+                    {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? <span className="catalog-filter-count">{Number(selectedCategory !== 'All') + Number(selectedFormat !== 'all') + Number(availablePhysicalOnly)}</span> : null}
                   </button>
                 </form>
                 {catalogControlsOpen ? (
@@ -1423,8 +1447,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         <option value="physical">Physical</option>
                       </select>
                     </label>
-                    {selectedCategory !== 'All' || selectedFormat !== 'all' ? (
-                      <button type="button" className="catalog-clear-filters" onClick={() => { setSelectedCategory('All'); setSelectedFormat('all') }}>Clear filters</button>
+                    {selectedFormat !== 'digital' ? <label className="catalog-availability-filter">
+                      <input type="checkbox" checked={availablePhysicalOnly} onChange={(event) => setAvailablePhysicalOnly(event.target.checked)} />
+                      <span>Physical copies available now</span>
+                    </label> : null}
+                    {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? (
+                      <button type="button" className="catalog-clear-filters" onClick={() => { setSelectedCategory('All'); setSelectedFormat('all'); setAvailablePhysicalOnly(false) }}>Clear filters</button>
                     ) : null}
                   </div>
                 ) : null}
@@ -1463,6 +1491,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           <div className="flex flex-wrap items-center gap-2"><p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p><span className="rounded-full border border-paper-300 bg-paper-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:border-forest-700 dark:bg-forest-800 dark:text-slate-300">{book.catalog_type === 'physical' ? 'Physical' : book.catalog_type === 'hybrid' ? 'Digital + physical' : 'Digital'}</span></div>
                           <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
                           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
+                          {book.description?.trim() ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{book.description}</p> : null}
                           {book.catalog_type !== 'digital' ? <p className="mt-2 text-xs font-medium text-pine-700 dark:text-pine-200">{book.physical_available_copies ?? 0} available · {book.physical_registered_copies ?? 0} total copies</p> : null}
                         </div>
                       </div>
@@ -1930,7 +1959,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               {filteredPhysicalActivity.map((item) => {
                 if (item.kind === 'loans') {
                   const loan = item.loan
-                  return <article key={item.key} className={loan.payment_status === 'paid' ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'modal-record'}><div className="min-w-0"><p className="font-semibold">{loan.title ?? 'Book #' + loan.book_id}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status === 'pending' ? 'Waiting for librarian confirmation' : loan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'gcash' ? 'GCash' : 'Cash'} · ₱{Number(loan.fee_amount).toFixed(2)}</p><p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ' · Due ' + new Date(loan.due_date).toLocaleDateString() : ''}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</article>
+                  return <article key={item.key} className={loan.payment_status === 'paid' ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'modal-record'}><div className="min-w-0"><p className="font-semibold">{loan.title ?? 'Book #' + loan.book_id}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status === 'pending' ? 'Waiting for librarian confirmation' : loan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'cash' ? 'Cash at the desk' : 'Legacy online payment'} · ₱{Number(loan.fee_amount).toFixed(2)}</p>{loan.payment_method !== 'cash' && loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">This older request cannot be processed. Remove it and submit a new cash request.</p> : null}<p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ' · Due ' + new Date(loan.due_date).toLocaleDateString() : ''}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</article>
                 }
                 if (item.kind === 'charges') {
                   const fine = item.fine
@@ -1950,7 +1979,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         </section>
       </div> : null}
       {physicalReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPhysicalReceipt(null) }}>
-        <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-receipt-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library receipt</p><h2 id="physical-receipt-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical-book receipt</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalReceipt(null)} aria-label="Close physical receipt">×</button></div><div className="mt-5 grid gap-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 text-sm dark:border-forest-700 dark:bg-forest-900/60"><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Receipt number</span><strong className="font-mono text-pine-700 dark:text-pine-200">{physicalReceipt.receipt_number}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Book</span><strong className="text-right text-slate-900 dark:text-slate-100">{physicalReceipt.title}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Amount paid</span><strong>₱{Number(physicalReceipt.fee_amount).toFixed(2)}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Payment</span><span className="capitalize">{physicalReceipt.payment_method} · {physicalReceipt.payment_status.replace('_', ' ')}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Checked out</span><span>{physicalReceipt.checked_out_at ? new Date(physicalReceipt.checked_out_at).toLocaleString() : 'Pending checkout'}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Return date</span><span>{physicalReceipt.due_date ? new Date(physicalReceipt.due_date).toLocaleDateString() : 'Not assigned'}</span></div>{physicalReceipt.transaction_reference ? <div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Transaction reference</span><span className="break-all text-right">{physicalReceipt.transaction_reference}</span></div> : null}</div></section>
+        <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="physical-receipt-title"><div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Library receipt</p><h2 id="physical-receipt-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Physical-book receipt</h2></div><button type="button" className="notification-modal-close" onClick={() => setPhysicalReceipt(null)} aria-label="Close physical receipt">×</button></div><div className="mt-5 grid gap-3 rounded-2xl border border-paper-300 bg-paper-50 p-4 text-sm dark:border-forest-700 dark:bg-forest-900/60"><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Receipt number</span><strong className="font-mono text-pine-700 dark:text-pine-200">{physicalReceipt.receipt_number}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Book</span><strong className="text-right text-slate-900 dark:text-slate-100">{physicalReceipt.title}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Amount paid</span><strong>₱{Number(physicalReceipt.fee_amount).toFixed(2)}</strong></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Payment</span><span className="capitalize">{physicalReceipt.payment_method === 'cash' ? 'Cash at the desk' : 'Legacy online payment (historical)'} · {physicalReceipt.payment_status.replace('_', ' ')}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Checked out</span><span>{physicalReceipt.checked_out_at ? new Date(physicalReceipt.checked_out_at).toLocaleString() : 'Pending checkout'}</span></div><div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Return date</span><span>{physicalReceipt.due_date ? new Date(physicalReceipt.due_date).toLocaleDateString() : 'Not assigned'}</span></div>{physicalReceipt.transaction_reference ? <div className="flex items-start justify-between gap-4"><span className="text-slate-500 dark:text-slate-400">Legacy transaction reference</span><span className="break-all text-right">{physicalReceipt.transaction_reference}</span></div> : null}</div></section>
       </div> : null}
       {memberReceipt ? <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMemberReceipt(null) }}>
         <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="member-receipt-title">

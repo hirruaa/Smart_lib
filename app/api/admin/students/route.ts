@@ -3,7 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
-import { isAdminRole } from '@/utils/roles'
+import { isAdminRole, isStaffRole } from '@/utils/roles'
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
@@ -21,8 +21,8 @@ export async function POST(request: Request) {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (profileError) return apiError('Unable to verify administrator access.', 500, profileError)
-  if (!isAdminRole(profile?.role)) return NextResponse.json({ error: 'Administrator access required' }, { status: 403 })
+  if (profileError) return apiError('Unable to verify staff access.', 500, profileError)
+  if (!isStaffRole(profile?.role)) return NextResponse.json({ error: 'Librarian or administrator access required.' }, { status: 403 })
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -34,22 +34,35 @@ export async function POST(request: Request) {
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
-  const password = typeof body.password === 'string' ? body.password : ''
   const role = body.role === 'faculty' || body.role === 'librarian' ? body.role : body.role === 'student' || body.role === undefined ? 'student' : null
   const fullName = boundedText(body.fullName ?? '', 120)
   const school = 'Mary the Queen College of Quezon City'
   const department = boundedText(body.department ?? '', 120)
   const course = boundedText(body.course ?? '', 120)
   const studentYear = boundedText(body.studentYear ?? '', 40)
+  const institutionalIdInput = typeof body.institutionalId === 'string' ? body.institutionalId : ''
+  const institutionalIdDigits = institutionalIdInput.replace(/\D/g, '')
+  const institutionalId = institutionalIdDigits.length === 9
+    ? `${institutionalIdDigits.slice(0, 4)}-${institutionalIdDigits.slice(4)}`
+    : institutionalIdInput.trim()
+  const identityVerified = body.identityVerified === true
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
   if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) return NextResponse.json({ error: 'Username must be 3–30 characters and use letters, numbers, periods, underscores, or hyphens.' }, { status: 400 })
-  if (password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
   if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
+  if (profile.role === 'librarian' && role === 'librarian') {
+    return NextResponse.json({ error: 'Librarians may invite student and faculty members only.' }, { status: 403 })
+  }
+  if (profile.role === 'librarian' && !identityVerified) {
+    return NextResponse.json({ error: 'Confirm that the member’s physical school ID was checked in person.' }, { status: 400 })
+  }
   if (fullName === null || !fullName.trim()) return NextResponse.json({ error: 'Enter the member’s full name.' }, { status: 400 })
   if (role === 'faculty' && !department) return NextResponse.json({ error: 'Choose a faculty.' }, { status: 400 })
   if (role === 'student' && (!course || !studentYear)) {
     return NextResponse.json({ error: 'Choose a course program and year level for the student account.' }, { status: 400 })
+  }
+  if (role !== 'librarian' && !/^\d{4}-\d{5}$/.test(institutionalId)) {
+    return NextResponse.json({ error: 'Enter a 9-digit institutional ID (for example, 2026-01042).' }, { status: 400 })
   }
   if (department === null || course === null || studentYear === null) {
     return NextResponse.json({ error: 'Profile details exceed the allowed length.' }, { status: 400 })
@@ -62,6 +75,12 @@ export async function POST(request: Request) {
     .from('profiles').select('id').eq('username', username).maybeSingle()
   if (usernameLookupError) return apiError('Unable to verify username availability.', 503, usernameLookupError)
   if (usernameMatch) return NextResponse.json({ error: 'That username is already in use.' }, { status: 409 })
+  if (institutionalId) {
+    const { data: idMatch, error: idLookupError } = await adminClient
+      .from('profiles').select('id').eq('institutional_id', institutionalId).maybeSingle()
+    if (idLookupError) return apiError('Unable to verify institutional ID availability.', 503, idLookupError)
+    if (idMatch) return NextResponse.json({ error: 'That institutional ID is already assigned to another member.' }, { status: 409 })
+  }
   if (role === 'faculty') {
     const { data: departmentChoice, error: departmentError } = await adminClient
       .from('academic_departments')
@@ -81,11 +100,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Choose a valid year level.' }, { status: 400 })
     }
   }
-  const { data: created, error } = await adminClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: {
+  const { data: created, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
+    redirectTo: new URL('/auth/callback?next=/reset-password', process.env.NEXT_PUBLIC_SITE_URL || request.url).toString(),
+    data: {
       full_name: fullName,
       username,
       member_type: role,
@@ -93,12 +110,15 @@ export async function POST(request: Request) {
       department,
       course: role === 'student' ? course : '',
       student_year: role === 'student' ? studentYear : '',
+      institutional_id: institutionalId || '',
     },
   })
 
-  if (error) return apiError('Unable to create the member account. The email may already be registered.', 409, error)
+  if (error) return apiError('Unable to send the account invitation. The email may already be registered or Auth email delivery may be unavailable.', 409, error)
 
-  if (created.user) {
+  if (!created.user) return NextResponse.json({ error: 'The invitation was created without a member account. Contact an administrator.' }, { status: 500 })
+
+  {
     const { error: profileUpdateError } = await adminClient.from('profiles').update({
       full_name: fullName || null,
       username,
@@ -106,16 +126,34 @@ export async function POST(request: Request) {
       department: department || null,
       course: role === 'student' ? course || null : null,
       student_year: role === 'student' ? studentYear || null : null,
+      institutional_id: institutionalId || null,
       role,
     }).eq('id', created.user.id)
     if (profileUpdateError) {
       const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-      if (rollbackError) console.error('Unable to roll back member creation after profile setup failed.', rollbackError)
-      return apiError('Unable to save the new member profile.', 500, profileUpdateError)
+      if (rollbackError) console.error('Unable to roll back member invitation after profile setup failed.', rollbackError)
+      return apiError('Unable to save the invited member profile.', 500, profileUpdateError)
     }
   }
 
-  return NextResponse.json({ success: true, email, username })
+  const { error: auditError } = await adminClient.from('audit_logs').insert({
+    actor_id: user.id,
+    action: 'member_invited',
+    target_type: 'profile',
+    details: {
+      target_user_id: created.user.id,
+      role,
+      identity_verified_in_person: profile.role === 'librarian' ? identityVerified : null,
+      verification_method: profile.role === 'librarian' ? 'school_id_checked_in_person' : null,
+    },
+  })
+  if (auditError) {
+    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
+    if (rollbackError) console.error('Unable to roll back member invitation after audit logging failed.', rollbackError)
+    return apiError('Unable to record the member invitation audit event.', 500, auditError)
+  }
+
+  return NextResponse.json({ success: true, email, username, userId: created.user.id })
 }
 
 export async function DELETE(request: Request) {

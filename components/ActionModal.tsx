@@ -19,7 +19,7 @@ type ActionModalProps = {
 
 export default function ActionModal({ open, title, description, confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'default', busy = false, confirmDisabled = false, onClose, onConfirm, children }: ActionModalProps) {
   return (
-    <BaseModal open={open} title={title} description={description} onClose={busy ? () => undefined : onClose}>
+    <BaseModal open={open} title={title} description={description} onClose={busy ? () => undefined : onClose} layer="foreground">
       {children}
       <div className="mt-6 flex justify-end gap-3">
         <button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{cancelLabel}</button>

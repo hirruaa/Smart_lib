@@ -10,11 +10,13 @@ type BaseModalProps = {
   onClose: () => void
   children: ReactNode
   size?: 'sm' | 'md' | 'lg'
+  layer?: 'background' | 'default' | 'foreground'
+  variant?: 'modal' | 'drawer'
 }
 
 const sizeClasses = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl' }
 
-export default function BaseModal({ open, title, eyebrow, description, onClose, children, size = 'md' }: BaseModalProps) {
+export default function BaseModal({ open, title, eyebrow, description, onClose, children, size = 'md', layer = 'default', variant = 'modal' }: BaseModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   const onCloseRef = useRef(onClose)
@@ -49,8 +51,8 @@ export default function BaseModal({ open, title, eyebrow, description, onClose, 
   const titleId = `modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   const descriptionId = description ? `${titleId}-description` : undefined
   return (
-    <div className="base-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className={`base-modal ${sizeClasses[size]}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <div className={`base-modal-backdrop${layer === 'default' ? '' : ` base-modal-backdrop--${layer}`}${variant === 'drawer' ? ' base-modal-backdrop--drawer' : ''}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section className={`base-modal ${sizeClasses[size]}${variant === 'drawer' ? ' base-modal--drawer' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <header className="base-modal-header"><div>{eyebrow ? <p className="base-modal-eyebrow">{eyebrow}</p> : null}<h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId} className="base-modal-description">{description}</p> : null}</div><button ref={closeRef} type="button" className="base-modal-close" onClick={onClose} aria-label={`Close ${title}`}>&times;</button></header>
         <div className="base-modal-content">{children}</div>
       </section>

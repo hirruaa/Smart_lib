@@ -24,12 +24,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
     { data: contribution, error: contributionError },
   ] = await Promise.all([
     supabase.from('profiles').select('role').eq('id', user.id).maybeSingle(),
-    supabase.from('book_contributions').select('id,user_id,pdf_url,storage_provider,storage_file_id,storage_path,file_name,mime_type').eq('id', contributionId).maybeSingle(),
+    supabase.from('book_contributions').select('id,user_id,status,material_type,pdf_url,storage_provider,storage_file_id,storage_path,file_name,mime_type').eq('id', contributionId).maybeSingle(),
   ])
   if (profileError) return apiError('Unable to verify your library role.', 500, profileError)
   if (contributionError) return apiError('Unable to retrieve this contribution.', 500, contributionError)
   if (!contribution) return NextResponse.json({ error: 'Contribution not found.' }, { status: 404 })
-  if (!isStaffRole(profile?.role) && contribution.user_id !== user.id) {
+  const isPublishedLesson = contribution.status === 'approved' && contribution.material_type === 'lesson'
+  if (!isStaffRole(profile?.role) && contribution.user_id !== user.id && !isPublishedLesson) {
     return NextResponse.json({ error: 'You are not allowed to open this contribution.' }, { status: 403 })
   }
 

@@ -46,10 +46,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- --hostname 127.0.0.1 --port 3100',
-    url: baseURL,
+    command: 'npm run dev:isolated -- --hostname 127.0.0.1 --port 3100',
+    url: `${baseURL}/login`,
     env: {
-      NEXT_PUBLIC_SITE_URL: 'http://localhost:3100',
+      NEXT_PUBLIC_SITE_URL: baseURL,
       NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
       SUPABASE_SERVICE_ROLE_KEY: supabaseServiceRoleKey,

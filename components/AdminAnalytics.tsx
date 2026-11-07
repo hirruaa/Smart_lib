@@ -15,6 +15,7 @@ interface AdminAnalyticsProps {
   totalBooks: number
   totalStudents: number
   totalRequests: number
+  totalApprovedRequests: number
   totalLoansActive: number
   totalReturned: number
   categoryStats: CategoryStat[]
@@ -26,6 +27,7 @@ export default function AdminAnalytics({
   totalBooks,
   totalStudents,
   totalRequests,
+  totalApprovedRequests,
   totalLoansActive,
   totalReturned,
   categoryStats,
@@ -33,8 +35,8 @@ export default function AdminAnalytics({
   storageCount,
 }: AdminAnalyticsProps) {
   const fulfillmentRate = totalRequests > 0
-    ? Math.round(((totalLoansActive + totalReturned) / totalRequests) * 100)
-    : 100
+    ? Math.round((totalApprovedRequests / totalRequests) * 100)
+    : 0
 
   // Calculate highest request month for chart normalization
   const maxMonthValue = Math.max(1, ...monthlyStats.map((m) => Math.max(m.requests, m.approved)))
@@ -59,7 +61,7 @@ export default function AdminAnalytics({
               {fulfillmentRate}%
             </span>
             <span className="text-xs text-emerald-600 dark:text-emerald-400">
-              Granted or returned
+              Approved requests
             </span>
           </div>
           <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-emerald-100 dark:bg-emerald-950">
@@ -181,7 +183,7 @@ export default function AdminAnalytics({
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
           <div>
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Catalog Category Distribution
+              Catalog Discipline Distribution
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Active inventory allocation by academic discipline
@@ -190,7 +192,7 @@ export default function AdminAnalytics({
 
           <div className="mt-6 space-y-3.5">
             {categoryStats.length === 0 ? (
-              <p className="text-xs text-slate-400">No categories found in catalog.</p>
+              <p className="text-xs text-slate-400">No disciplines found in catalog.</p>
             ) : (
               categoryStats.slice(0, 6).map((cat, idx) => {
                 const percentage = Math.round((cat.count / Math.max(1, totalBooks)) * 100)

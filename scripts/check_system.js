@@ -32,11 +32,26 @@ const requiredHybridObjects = [
   'request_physical_book',
   'admin_confirm_physical_checkout',
   'admin_close_physical_loan',
-  'physical_payment_proofs',
+  'physical_request_cash_only',
+  'enforce_physical_cash_only',
 ]
 
 for (const objectName of requiredHybridObjects) {
   if (!schema.includes(objectName)) throw new Error(`Missing schema object: ${objectName}`)
+}
+
+const cashOnlyMigrationPath = path.join(root, 'supabase/migrations/20261107_cash_only_physical_payments.sql')
+if (!fs.existsSync(cashOnlyMigrationPath)) throw new Error('Missing cash-only physical payments migration')
+const cashOnlyMigration = fs.readFileSync(cashOnlyMigrationPath, 'utf8')
+for (const token of [
+  "p_payment_method is distinct from 'cash'",
+  'Historical online-payment details are read-only',
+  'physical_payment_proofs_upload_own',
+  'physical_payment_proofs_read_own_or_admin',
+  'physical_payment_proofs_delete_unlinked_own',
+  'public.accept_physical_waitlist_offer',
+]) {
+  if (!cashOnlyMigration.includes(token)) throw new Error(`Cash-only migration is missing: ${token}`)
 }
 
 const requiredFiles = [
@@ -47,12 +62,23 @@ const requiredFiles = [
   'app/dashboard/faculty/page.tsx',
   'components/MemberDashboard.tsx',
   'components/PhysicalBorrowModal.tsx',
+  'components/StudyRoom.tsx',
+  'app/api/reader/library/route.ts',
   'utils/libraryContracts.ts',
   'supabase/migrations/20261013_faculty_signup_departments.sql',
 ]
 
 for (const file of requiredFiles) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Missing application file: ${file}`)
+}
+
+const studyRoom = fs.readFileSync(path.join(root, 'components/StudyRoom.tsx'), 'utf8')
+for (const token of ['My digital library', 'Study notebook', 'studyItemsTruncated', 'onDraftChange', 'window.history.replaceState', 'window.confirm']) {
+  if (!studyRoom.includes(token)) throw new Error(`Study Room is missing: ${token}`)
+}
+const readerLibraryApi = fs.readFileSync(path.join(root, 'app/api/reader/library/route.ts'), 'utf8')
+for (const token of ["supabase.auth.getUser()", "borrow_requests", "book_access_grants", "study_notes", "highlights"]) {
+  if (!readerLibraryApi.includes(token)) throw new Error(`Reader library endpoint is missing access/study data handling: ${token}`)
 }
 
 const libraryContracts = fs.readFileSync(path.join(root, 'utils/libraryContracts.ts'), 'utf8')
@@ -64,6 +90,14 @@ const memberDashboard = fs.readFileSync(path.join(root, 'components/MemberDashbo
 const adminDashboard = fs.readFileSync(path.join(root, 'app/dashboard/admin/page.tsx'), 'utf8')
 const facultyDashboard = fs.readFileSync(path.join(root, 'app/dashboard/faculty/page.tsx'), 'utf8')
 const sharedShellStyles = fs.readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+const physicalCirculation = fs.readFileSync(path.join(root, 'components/PhysicalCirculationAdminPage.tsx'), 'utf8')
+const librarianReports = fs.readFileSync(path.join(root, 'components/LibrarianDeskReports.tsx'), 'utf8')
+for (const token of ['librarian-sidebar', 'Daily records', 'Inventory', 'LibrarianDailyRecord']) {
+  if (!physicalCirculation.includes(token)) throw new Error(`Librarian workspace is missing: ${token}`)
+}
+for (const token of ['Sales &amp; borrowing history', 'Cash · checkout fees', 'Other receipts', 'Refunds recorded', 'Books borrowed on this date']) {
+  if (!librarianReports.includes(token)) throw new Error(`Librarian daily records are missing: ${token}`)
+}
 for (const [name, source] of [
   ['member dashboard', memberDashboard],
   ['admin dashboard', adminDashboard],
@@ -77,6 +111,21 @@ for (const token of ['.dashboard-hero', '.dashboard-panel', '.dashboard-sidebar-
 }
 if (!facultyDashboard.includes("MemberDashboard memberType=\"faculty\"")) {
   throw new Error('Faculty dashboard is not using the shared member dashboard shell')
+}
+for (const token of ['dashboard-catalog-search', "document.getElementById('explore')?.scrollIntoView", 'View loans and charges']) {
+  if (!memberDashboard.includes(token)) throw new Error(`Member dashboard is missing a direct discovery/activity action: ${token}`)
+}
+if (memberDashboard.includes('<label className="catalog-search-box">')) {
+  throw new Error('Member dashboard has duplicate catalog search controls')
+}
+for (const token of ["navigateToSection('contributions')", "navigateToSection('requests')", "label: 'Digital access records', value: requests.length"]) {
+  if (!adminDashboard.includes(token)) throw new Error(`Admin dashboard is missing the simplified overview action/metric: ${token}`)
+}
+if (adminDashboard.includes("['Pending digital requests', pendingRequests.length]")) {
+  throw new Error('Admin dashboard repeats the digital access request count')
+}
+for (const token of ['.dashboard-catalog-search', '.admin-attention-card']) {
+  if (!sharedShellStyles.includes(token)) throw new Error(`Missing dashboard interaction style: ${token}`)
 }
 
 for (const migrationFile of [
@@ -92,4 +141,4 @@ for (const migrationFile of [
   }
 }
 
-console.log(`System check passed: ${requiredSchemaObjects.length + requiredHybridObjects.length} schema objects, ${requiredFiles.length} application files, shared dashboard shell, and digital access migration verified.`)
+console.log(`System check passed: ${requiredSchemaObjects.length + requiredHybridObjects.length} schema objects, cash-only physical payments, continuous Study Room, ${requiredFiles.length} application files, shared dashboard shell, and digital access migration verified.`)

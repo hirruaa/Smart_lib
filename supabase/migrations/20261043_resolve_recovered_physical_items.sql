@@ -44,7 +44,7 @@ grant execute on function public.admin_waive_physical_fine(bigint, text) to auth
 -- Recovered lost books must not keep an unpaid replacement assessment. If the
 -- recovered copy is damaged, record its separate staff-assessed charge here.
 drop function if exists public.admin_resolve_lost_physical_loan(bigint, text);
-create function public.admin_resolve_lost_physical_loan(
+create or replace function public.admin_resolve_lost_physical_loan(
   p_request_id bigint,
   p_copy_condition text,
   p_damage_amount numeric default 0,

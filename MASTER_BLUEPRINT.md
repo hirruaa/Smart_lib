@@ -24,7 +24,7 @@ It augments the librarian's manual inventory and service; it does not replace st
 1. Give members a current, searchable view of the physical collection and copy availability.
 2. Reduce paper/manual tracking through individual-copy records, QR labels, requests, checkouts, returns, receipts, and reminders.
 3. Offer digital reading where a file is available, with access rules independent of physical stock.
-4. Keep membership details, borrowing activity, payment evidence, study notes, and staff actions protected by role-aware access control.
+4. Keep membership details, borrowing activity, financial records, study notes, and staff actions protected by role-aware access control.
 5. Keep operational cost and staff workflow simple enough for a school with limited funding.
 
 ### 1.3 Personas and primary use cases
@@ -64,7 +64,7 @@ Admin and librarian are one role (`admin`). Faculty currently shares the student
 - E-books are online resources and do not run out. Legacy `books.total_copies` and `available_copies` must not grant or deny digital access.
 - QR scan identifies the title/copy; it must not itself authorize checkout or expose a borrower.
 - A request is not a checkout. The staff confirmation at the desk is the source of truth for physical handover and payment receipt.
-- OCR and AI output are advisory. Never treat an image, extracted reference, or model score as payment verification or as the final contribution decision.
+- AI output is advisory; it is never a substitute for the final contribution decision.
 - A late/missing physical book triggers a library follow-up and an explicit staff decision. Any monetary fine, grace period, or replacement charge requires an approved school policy; do not invent or automatically charge one.
 
 ### 1.6 MVP success criteria
@@ -72,7 +72,7 @@ Admin and librarian are one role (`admin`). Faculty currently shares the student
 - A visitor can find the collection and understand whether a trip is worthwhile.
 - A member can see a physical title's available count and location without seeing who borrowed other copies.
 - Staff can add one title with initial copies, generate QR labels, record checkout/return, and recover from a missing or damaged copy.
-- A test account cannot access another member's profile, requests, payment proof, receipts, annotations, or assistant history.
+- A test account cannot access another member's profile, requests, receipts, annotations, or assistant history.
 - Digital access works independently from physical stock.
 - Every payment status shown to members matches the staff decision and resulting access/receipt.
 - Reminder delivery is configured and operationally observable before the first real loan is issued.
@@ -85,9 +85,9 @@ Admin and librarian are one role (`admin`). Faculty currently shares the student
 |---|---|---|
 | Web app | Next.js 14 App Router, React 18, TypeScript 5.6 | Keep the existing stack for MVP; upgrade deliberately, not as part of circulation feature work |
 | Data/API | Supabase Postgres, Supabase Auth, JS client, SQL functions/RPCs, RLS | Keep business invariants in transactional database functions; keep UI/API as thin callers |
-| File storage | Supabase Storage; optional Google Drive integration; protected PDFs and private payment proof buckets | Keep covers public catalog assets, payment evidence private, and e-books private behind reader authorization |
+| File storage | Supabase Storage; optional Google Drive integration; protected PDFs | Keep covers public catalog assets and e-books private behind reader authorization |
 | Reader | `react-pdf` / `pdfjs-dist` optional dependencies and server-side PDF access route | Treat focus/visibility blur and watermark as deterrents, never promise screenshot prevention |
-| AI | Google Gemini server-side utility for contribution screening and optional receipt-reference OCR | Optional feature behind server-only credentials, clear consent, strict size limits, and human review |
+| AI | Google Gemini server-side utility for contribution screening | Optional feature behind server-only credentials, clear consent, strict size limits, and human review |
 | QR | `qrcode` library creates per-copy labels | QR encodes a locator only; revalidate current status and eligibility server-side |
 | Hosting / scheduler | Deployment host is not established by the source review; a reminder route expects a cron caller | Choose one managed Node host and a reliable scheduler running at least every 15 minutes; document health, secrets, backups, and restore procedure |
 
@@ -129,11 +129,11 @@ These are **proposed acceptance targets**, not measured current performance:
 2. Fix role routing: profile data and admin screens support `faculty`, while the dashboard resolver currently normalizes only `admin` and `student`. Faculty must route into the intended member workspace, never an unresolved-role error.
 3. Review all `SECURITY DEFINER` RPCs for fixed `search_path`, explicit role checks, caller ownership checks, parameter validation, transaction scope, and restricted execute grants.
 4. Keep `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, and `GEMINI_API_KEY` server-only. Never place them in `NEXT_PUBLIC_*` variables or client bundles.
-5. Keep payment proof and protected reading files private; issue short-lived URLs or stream bytes only after authorization. Do not put references, proofs, or identity fields in public catalog responses.
-6. Add rate limits to login-sensitive, OCR, contribution-screening, and request endpoints; impose upload and request quotas.
+5. Keep protected reading files private; issue short-lived URLs or stream bytes only after authorization. Do not put transaction references or identity fields in public catalog responses.
+6. Add rate limits to login-sensitive, contribution-screening, and request endpoints; impose upload and request quotas.
 7. Validate uploaded files by actual content/signature where practical, not MIME declaration alone; use random storage object names and prevent path traversal.
-8. Establish a consent/retention policy for sending extracted contribution text and GCash images to Gemini. Do not send unnecessary personal data; provide a manual fallback when AI is disabled or unavailable.
-9. Use idempotency and duplicate-reference detection for payment submissions; log reviewer, amount, timestamp, decision, and receipt issuance.
+8. Establish a consent/retention policy for sending extracted contribution text to Gemini. Do not send unnecessary personal data; provide a manual fallback when AI is disabled or unavailable.
+9. Make cash checkout idempotent and auditable; log staff, amount, timestamp, and receipt issuance.
 10. Never claim browser blur prevents OS screenshots. Offer an accessible alternative and explain its limits.
 
 ### 2.5 Data-flow improvements recommended
@@ -154,9 +154,9 @@ These are **proposed acceptance targets**, not measured current performance:
 | Area | Routes / screen | Current behavior |
 |---|---|---|
 | Public | `/`, `/login`, `/register`, `/verify-email`, `/reset-password`, `/privacy`, `/terms` | Landing/auth/legal screens; no public physical-catalog route today |
-| Student and faculty | `/dashboard/student`, `/library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus unified digital and physical catalog, library, reader, in-reader notes/highlights/progress, assistant, profile, and points surfaces |
+| Student and faculty | `/dashboard/student`, `/library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus unified digital and physical catalog, library, continuous Study Room with per-book progress and cross-book notes/highlights, assistant, profile, and points surfaces |
 | Administrator | `/dashboard/admin`, `/dashboard/admin/physical`, `/dashboard/admin/ebook-payments` | Admin management, physical circulation, and reconciliation of legacy e-book payment submissions |
-| Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*` (reader annotations only), `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
+| Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/reader/library`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*` (reader annotations only), `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
 
 ### 3.2 Recommended navigation flow
 
@@ -174,13 +174,13 @@ Public landing
        │    │    └─ Librarian verifies payment and identity → checkout + receipt
        │    │          └─ reminder → return / renew if policy allows / report missing
        │    ├─ Waitlist → offer → request/claim → checkout
-       │    ├─ Continue reading → reader → in-reader notes/highlights/progress
+       │    ├─ Continue reading → continuous Study Room → switch authorized books; resume per-book progress; browse notes/highlights by book and page
        │    └─ Assistant / points / profile / contributions
        └─ admin → member and catalog management
             ├─ Add title and initial copies → create QR labels
             ├─ Configure fee/loan terms
-            ├─ Verify cash or GCash at desk → checkout/return/lost resolution
-            ├─ Reconcile pre-pause e-book payment submissions only
+            ├─ Collect cash at desk → checkout/return/lost resolution
+            ├─ Reconcile historical online-payment records only
             └─ Review contributions (Gemini advisory; admin makes final decision)
 ```
 
@@ -224,8 +224,7 @@ Treat every transition as a state machine with permitted transition rules, audit
 | Physical title details | Larger cover, description, location, live copy states, loan terms/fees, expected returns, waitlist/request button; clear message that only librarian checkout confirms borrowing/payment |
 | Admin physical catalog | “Add title” form separate from “Add copies”; copy quantity and code prefix; cover/metadata; preview; generated QR batch download/print; availability list and lifecycle actions |
 | Student dashboard | Continue reading, active/pending requests, reminders, points summary, quick links; distinct digital versus physical actions |
-| Admin circulation | Queue prioritized by pending checkout/overdue/lost; borrower identity visible only to staff; proof/reference side-by-side; confirm/reject/return controls; audit details |
-| Payment review | Amount, title, member, reference, proof, submission timestamp; staff verification checklist; disabled approval until proof loads; status and receipt result |
+| Admin circulation | Queue prioritized by pending cash checkout/overdue/lost; borrower identity visible only to staff; cash amount and identity confirmation; approve/reject/return controls; audit details |
 | Reader | Reading canvas, navigation/progress, notes/highlights, accessible session-cover explanation, error recovery; no false screenshot-protection claim |
 
 ### 4.4 Content and empty states
@@ -244,7 +243,7 @@ Treat every transition as a state machine with permitted transition rules, audit
 |---|---|---|
 | Identity and academics | `profiles`, `faculty_ranks`, `academic_courses` | Auth user has one profile/role; faculty use a department; student school/course/year fields are stored on profile |
 | Catalog | `books` | Shared bibliographic record; `catalog_type` distinguishes digital, physical, hybrid; optional `cover_image_url`; legacy digital copy-count fields are not authoritative |
-| Digital access | `borrow_requests`, `book_access_grants`, `point_transactions`, legacy `ebook_purchase_requests` | Free/points access is automatically granted in the digital-loan transaction; old GCash purchase rows are retained for reconciliation and new submissions are disabled |
+| Digital access | `borrow_requests`, `book_access_grants`, `point_transactions`, legacy `ebook_purchase_requests` | Free/points access is automatically granted in the digital-loan transaction; historical online-purchase rows are retained for reconciliation and new submissions are disabled |
 | Physical circulation | `physical_book_copies`, `physical_loan_options`, `physical_book_requests`, `physical_book_waitlist`, `physical_reminder_events` | Each copy belongs to a title; requests bind member/title/copy/fee/payment; waitlist is member/title; reminder event is unique by loan/type/date |
 | Learning | `reading_progress`, `study_notes`, `highlights`, `study_drawings` | Member-owned reading progress and annotations |
 | Engagement/admin | `notifications`, `email_queue`, `audit_logs`, `recognition_awards`, `rewards`, `achievements`, `user_achievements` | User messaging, async outbox, staff audit, points/reward/achievement features |
@@ -269,7 +268,7 @@ assistant_sessions 1—N assistant_messages
 | Data/action | Anonymous visitor (recommended) | Authenticated member | Admin |
 |---|---|---|---|
 | Published title metadata, covers, aggregate copy availability | Read-only catalog projection | Read | Read/manage |
-| Copy QR token, private request/payment proof, borrower identity | No | Only own records; no other member's identity | Operational access as required |
+| Copy QR token, historical payment evidence, borrower identity | No | Only own records; no other member's identity | Operational access as required |
 | Digital PDF | No | Only active loan/grant/contribution access | Read for administration |
 | Own profile, notes, progress, requests, notifications | No | Read/update own permitted data | Read/manage only for supported admin tasks |
 | Create physical request / waitlist membership | No | Own identity only via authenticated RPC | May manage via admin actions |
@@ -281,8 +280,8 @@ assistant_sessions 1—N assistant_messages
 - Do not return `physical_book_requests` or `physical_book_waitlist` to the public catalog.
 - Availability is an aggregate computed from copy records; publish status and timestamp only.
 - Keep proof images in private buckets and PDF storage protected; public covers contain no personal information.
-- Store payment provider, normalized reference, amount, request, verifier, decision timestamp, and receipt number. Do not store card/bank credentials.
-- Define deletion/retention for rejected payment proof, old study data, AI-transmitted text/images, and inactive member accounts.
+- Keep cash receipts and historical financial records auditable; do not store card/bank credentials.
+- Define deletion/retention for historical payment records, old study data, AI-transmitted text, and inactive member accounts.
 - Profiles currently include free-text school/department/course/year fields; admin-managed rank/course catalogs exist. Normalize school/department only when the institution confirms the canonical lists and governance owner.
 - Make database migrations the canonical, versioned source. The current repository contains a base schema plus sequential SQL change files; run them in documented order and avoid maintaining divergent handwritten schema descriptions.
 
@@ -294,7 +293,7 @@ assistant_sessions 1—N assistant_messages
 | 1. Database and authorization baseline | P0 | Apply the complete migration chain to a staging copy; verify role checks, RLS, RPC grants, storage policies, idempotency, and FIFO queue behavior | Student/faculty/admin and anonymous read-only access behave correctly; cross-user/private reads and unverified payment access are denied |
 | 2. Inventory and discoverability | P0 | Load an authoritative initial physical inventory; allow read-only public catalog; expose availability/location/as-of; add public contact and opening hours; reconcile copy totals from copy rows | Librarian can reconcile a sample shelf; members/visitors see correct non-identifying availability |
 | 3. Circulation operations | P0 | Verify add-title/copy/QR flow; implement fair expiring waitlist offers; atomic checkout/return/payment state and audit events; close overdue/missing/damaged handling | Staff completes a complete loan lifecycle and recovery without duplicate copy allocation |
-| 4. Notifications and payments | P1 | Configure daily reminder schedule; deliver/monitor outbox events; select and configure a payment provider, signed webhooks, idempotency, and automatic grant/receipt issuance | Reminder retries observable; free/points access remains instant; after provider setup, confirmed payment unlocks without staff approval and unconfirmed payment grants nothing |
+| 4. Notifications and payments | P1 | Configure daily reminder schedule and deliver/monitor outbox events; preserve the cash-only desk workflow | Reminder retries observable; cash collection and receipts remain attributable to staff |
 | 5. Learning, contribution, privacy | P1 | Validate reader file access, session blur messaging, data retention and Gemini disclosures; keep AI optional; admin contribution decision/reward remains final | Consent and privacy behavior documented; manual fallback works when AI unavailable |
 | 6. Usability and accessibility | P1 | Mobile-first catalog/admin review screens, search filters, accessible forms/focus/contrast, clear empty/error states, print labels and receipts | Representative student/faculty/admin tasks pass keyboard and small-screen review |
 | 7. Pilot and launch readiness | P0 release gate | Staff/member acceptance test, backup and restore rehearsal, monitoring, support contact, migration rollback plan, real data verification | Librarian signs off inventory and workflow; no unverified fee, payment, or access automation |
@@ -305,9 +304,9 @@ assistant_sessions 1—N assistant_messages
 1. Should the physical catalog be public without sign-in? **Recommended:** yes, read-only, with no borrower/request data.
 2. What are official physical loan durations, fees, renewals, late grace periods, and lost/damaged replacement rules? Do not automate a fine until approved in writing.
 3. How long is a returned-copy waitlist offer held, and what constitutes a decline/expiry?
-4. Is GCash the only online payment channel? Who checks the merchant account and what evidence satisfies verification?
+4. Confirm the cash-only desk payment process and the school-approved financial record retention period.
 5. Which school/department/course values are canonical, and who maintains them?
-6. What notice/consent and retention limits apply to uploaded receipts, contribution PDFs, AI processing, and student study notes?
+6. What notice/consent and retention limits apply to historical receipts, contribution PDFs, AI processing, and student study notes?
 
 ### Source files reviewed
 

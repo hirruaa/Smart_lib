@@ -157,27 +157,10 @@ with check (
   and exists (select 1 from public.profiles where id = auth.uid() and role = 'faculty')
 );
 
--- Public Auth sign-up is closed. Accounts can only be provisioned through the
--- server-side Supabase Auth Admin API, which runs with the service_role claim.
-create or replace function public.reject_public_account_registration()
-returns trigger
-language plpgsql
-security invoker
-set search_path = public, auth
-as $$
-begin
-  if coalesce(auth.role(), '') <> 'service_role'
-     and current_user not in ('postgres', 'supabase_admin') then
-    raise exception 'Public account registration is disabled. Contact the college administrator.';
-  end if;
-  return new;
-end;
-$$;
-
+-- Public Auth sign-up must be disabled in Supabase Auth configuration. An
+-- auth.users trigger cannot distinguish Auth Admin invitations from sign-ups.
 drop trigger if exists trg_reject_public_account_registration on auth.users;
-create trigger trg_reject_public_account_registration
-before insert on auth.users
-for each row execute function public.reject_public_account_registration();
+drop function if exists public.reject_public_account_registration();
 
 -- Only faculty may submit or revise supplementary academic materials.
 create or replace function public.guard_faculty_contributions()
