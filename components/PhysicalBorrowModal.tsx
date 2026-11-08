@@ -22,8 +22,6 @@ type Props = {
   onViewReceipt: (request: PhysicalRequest) => void
 }
 
-const input = 'mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100'
-
 export default function PhysicalBorrowModal({ open, book, userId, activeLoanCount, loanLimit, copyId = null, onClose, onComplete, onViewReceipt }: Props) {
   const [options, setOptions] = useState<LoanOption[]>([])
   const [availableCopies, setAvailableCopies] = useState(0)
@@ -222,9 +220,31 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
           {request.status === 'checked_out' ? <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 text-xs dark:border-slate-700 dark:bg-slate-950"><p className="flex justify-between gap-3"><span className="text-slate-500">Amount paid</span><strong>₱{Number(request.fee_amount).toFixed(2)}</strong></p>{request.receipt_number ? <p className="mt-2 flex justify-between gap-3"><span className="text-slate-500">Receipt number</span><strong className="font-mono">{request.receipt_number}</strong></p> : null}{request.due_date ? <p className="mt-2 flex justify-between gap-3"><span className="text-slate-500">Due date</span><strong>{new Date(request.due_date).toLocaleDateString()}</strong></p> : null}</div> : null}
           {request.status === 'checked_out' && request.receipt_number ? <button type="button" onClick={() => onViewReceipt(request)} className="pine-action mt-3 w-full rounded-xl px-4 py-2.5 text-sm font-semibold">View / print receipt</button> : request.status === 'pending' ? <button type="button" disabled={saving} onClick={confirmCancelRequest} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">Remove request</button> : null}
         </div> : requestAvailable && loanLimitReached ? <button type="button" disabled aria-describedby="physical-loan-limit-note" className="pine-action w-full cursor-not-allowed rounded-xl px-4 py-3 text-sm font-semibold opacity-60">Active loan limit reached</button> : requestAvailable && options.length > 0 ? <>
-          <label className="block text-sm font-medium">Loan period<select required value={selectedOption} onChange={(event) => setSelectedOption(event.target.value)} className={input}>{options.map((option) => <option key={option.id} value={option.id}>{option.duration_days} days</option>)}</select></label>
-          <label className="block text-sm font-medium">Amount / cost (₱)<input readOnly aria-readonly="true" value={Number(options.find((option) => option.id === Number(selectedOption))?.fee_amount ?? 0).toFixed(2)} className={`${input} cursor-not-allowed border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300`} /><span className="mt-1 block text-xs text-slate-500">Set by the library; members cannot change this amount.</span></label>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900/60"><span className="font-medium">Payment method</span><span className="ml-2 text-slate-600 dark:text-slate-300">Cash at library desk</span><span className="mt-1 block text-xs text-slate-500">The fee is collected by staff when checkout is confirmed.</span></div>
+          <div role="group" aria-label="Choose loan period">
+            <p className="mb-2 text-sm font-medium">Loan period</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {options.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setSelectedOption(String(option.id))}
+                  aria-pressed={selectedOption === String(option.id)}
+                  className="access-duration-option rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-slate-900 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <span className="block text-sm font-semibold">{option.duration_days} {option.duration_days === 1 ? 'day' : 'days'}</span>
+                  <span className="access-duration-caption mt-1 block text-xs">₱{Number(option.fee_amount).toFixed(2)} · Set by the library</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-900/60">
+            <div className="flex items-center justify-between gap-4">
+              <span className="font-semibold">Loan terms</span>
+              <span className="font-semibold">₱{Number(options.find((option) => option.id === Number(selectedOption))?.fee_amount ?? 0).toFixed(2)}</span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">The fee is set by the library and collected in cash by staff when checkout is confirmed.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-900/60"><p className="font-semibold">Payment method</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Cash at library desk</p></div>
           <button type="button" disabled={saving} onClick={submitRequest} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Submitting...' : 'Submit borrow request'}</button>
         </> : !requestAvailable ? <div>{availabilityAlertEnabled ? <div className="space-y-3"><p className="text-sm text-slate-600 dark:text-slate-300">You will be notified when a copy becomes available. The alert does not reserve a copy; borrowing is first come, first served.</p><button type="button" disabled={saving} onClick={confirmDisableAvailabilityAlert} className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50 dark:border-slate-600">{saving ? 'Saving...' : 'Turn off alerts'}</button></div> : <button type="button" disabled={saving} onClick={confirmEnableAvailabilityAlert} className="pine-action w-full rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-50">{saving ? 'Saving...' : 'Notify me when available'}</button>}</div> : <p className="text-sm text-slate-500">Loan periods are not configured for this title yet.</p>}
       </div>}

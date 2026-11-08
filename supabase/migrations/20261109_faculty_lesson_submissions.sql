@@ -2,9 +2,16 @@ begin;
 
 alter table public.book_contributions
   add column if not exists material_type text not null default 'lesson';
+
+-- This one-time backfill runs without an authenticated faculty user.
+drop trigger if exists trg_faculty_contributions_only on public.book_contributions;
 update public.book_contributions
 set material_type = 'legacy_book'
 where approved_book_id is not null;
+create trigger trg_faculty_contributions_only
+before insert or update on public.book_contributions
+for each row execute function public.guard_faculty_contributions();
+
 alter table public.book_contributions
   drop constraint if exists book_contributions_material_type_check;
 alter table public.book_contributions

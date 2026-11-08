@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { adminClient, clearBrowserSession, createPhysicalBook, createTestUser, createUserClient, removeTestBook, removeTestUser, signInInBrowser } from './support'
+import { adminClient, clearBrowserSession, createDigitalBook, createPhysicalBook, createTestUser, createUserClient, removeTestBook, removeTestUser, signInInBrowser } from './support'
 
 test('admin dashboard keeps circulation processing in the librarian workspace', async ({ page }) => {
   const admin = await createTestUser('admin')
@@ -39,7 +39,7 @@ test('admin dashboard keeps circulation processing in the librarian workspace', 
     await expect(page.getByRole('heading', { name: 'Your library at a glance' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Library activity' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Analytics' })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Financial ledger / fines' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Transactions' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Circulation management' })).toHaveCount(0)
     await expect(page.getByText('Physical checkout and return processing stays with the librarian desk.')).toBeVisible()
 
@@ -56,7 +56,7 @@ test('admin navigation sections and primary management dialogs render and close'
   try {
     await signInInBrowser(page, admin)
 
-    await page.getByRole('button', { name: 'Financial ledger / fines' }).click()
+    await page.getByRole('button', { name: 'Transactions' }).click()
     await expect(page.getByRole('heading', { name: 'Transactions', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Print payments & receipts' }).click()
     const printDialog = page.getByRole('dialog', { name: 'Print payments and receipts' })
@@ -69,6 +69,13 @@ test('admin navigation sections and primary management dialogs render and close'
     await page.getByRole('button', { name: 'Invite member' }).click()
     const inviteDialog = page.getByRole('dialog', { name: 'Invite member' })
     await expect(inviteDialog).toBeVisible()
+    await expect(inviteDialog.getByRole('textbox', { name: 'Full name' })).toBeVisible()
+    await expect(inviteDialog.getByRole('textbox', { name: 'Username' })).toBeVisible()
+    await expect(inviteDialog.getByRole('textbox', { name: 'Email address' })).toBeVisible()
+    await expect(inviteDialog.getByRole('combobox', { name: 'Account type' })).toBeVisible()
+    await expect(inviteDialog.getByRole('textbox', { name: 'Institutional ID' })).toBeVisible()
+    await expect(inviteDialog.getByRole('combobox', { name: 'Course' })).toBeVisible()
+    await expect(inviteDialog.getByRole('combobox', { name: 'Year level' })).toBeVisible()
     await inviteDialog.getByRole('button', { name: 'Close' }).click()
     await expect(inviteDialog).toHaveCount(0)
 
@@ -81,6 +88,8 @@ test('admin navigation sections and primary management dialogs render and close'
     await page.getByRole('button', { name: '+ Add digital title' }).click()
     const digitalBookDialog = page.getByRole('dialog', { name: 'Add digital title' })
     await expect(digitalBookDialog).toBeVisible()
+    await expect(digitalBookDialog.getByRole('textbox', { name: 'Subject' })).toBeVisible()
+    await expect(digitalBookDialog.getByRole('textbox', { name: 'Genre' })).toHaveCount(0)
     await digitalBookDialog.getByRole('button', { name: 'Close' }).click()
     await expect(digitalBookDialog).toHaveCount(0)
 
@@ -89,6 +98,8 @@ test('admin navigation sections and primary management dialogs render and close'
     await page.getByRole('button', { name: 'Add physical book' }).click()
     const physicalBookDialog = page.getByRole('dialog', { name: 'Add a physical book to the catalog' })
     await expect(physicalBookDialog).toBeVisible()
+    await expect(physicalBookDialog.getByRole('textbox', { name: 'Subject' })).toBeVisible()
+    await expect(physicalBookDialog.getByRole('textbox', { name: 'Genre' })).toHaveCount(0)
     await physicalBookDialog.getByRole('button', { name: 'Close' }).click()
     await expect(physicalBookDialog).toHaveCount(0)
 
@@ -119,6 +130,47 @@ test('admin navigation sections and primary management dialogs render and close'
   }
 })
 
+test('admin sees saved digital access mode and point costs without closing book details', async ({ page }) => {
+  const admin = await createTestUser('admin')
+  const title = `E2E Access Mode ${randomUUID()}`
+  let bookId: number | undefined
+  try {
+    const digitalBookId = await createDigitalBook(title)
+    bookId = digitalBookId
+    await signInInBrowser(page, admin)
+    await page.getByRole('button', { name: 'Catalog management' }).click()
+
+    const bookRow = page.getByRole('row').filter({ hasText: title })
+    await expect(bookRow).toBeVisible()
+    await bookRow.getByRole('button', { name: 'Manage book' }).click()
+
+    const details = page.getByRole('dialog', { name: title })
+    await details.getByRole('tab', { name: 'Permissions' }).click()
+    await details.getByRole('button', { name: 'Edit access' }).click()
+    await details.getByRole('combobox', { name: 'Mode' }).selectOption('points')
+    const costs = details.getByRole('spinbutton')
+    await expect(costs).toHaveCount(5)
+    for (let index = 0; index < await costs.count(); index += 1) {
+      await costs.nth(index).fill('3')
+    }
+    await details.getByRole('button', { name: 'Save permissions' }).click()
+
+    await expect(details.getByText('Access mode: points')).toBeVisible()
+    const { data: savedBook, error } = await adminClient
+      .from('books')
+      .select('access_mode,access_points,access_costs')
+      .eq('id', digitalBookId)
+      .single()
+    expect(error).toBeNull()
+    expect(savedBook).toMatchObject({ access_mode: 'points', access_points: 3 })
+    expect(savedBook?.access_costs).toMatchObject({ '1': 3, '3': 3, '7': 3, '14': 3, '30': 3 })
+  } finally {
+    await clearBrowserSession(page)
+    if (bookId !== undefined) await removeTestBook(bookId)
+    await removeTestUser(admin)
+  }
+})
+
 test('admin can open a physical copy to inspect its status and circulation history', async ({ page }) => {
   const admin = await createTestUser('admin')
   const title = `E2E Copy Details ${randomUUID()}`
@@ -139,6 +191,15 @@ test('admin can open a physical copy to inspect its status and circulation histo
     await expect(page.getByRole('heading', { name: 'Physical book catalog' })).toBeVisible()
     await page.getByPlaceholder('Search title, author, ISBN...').fill(title)
     const bookRow = page.locator('tr').filter({ hasText: title }).first()
+    await bookRow.getByRole('button', { name: 'Manage title' }).click()
+    const manageDialog = page.getByRole('dialog', { name: 'Manage physical book' })
+    await expect(manageDialog.getByText('Subject')).toBeVisible()
+    const archiveButton = manageDialog.getByRole('button', { name: 'Archive' })
+    await expect(archiveButton).toBeVisible()
+    await expect(archiveButton).toHaveClass(/bg-rose-700/)
+    await expect(archiveButton).toHaveClass(/text-white/)
+    await page.keyboard.press('Escape')
+    await expect(manageDialog).toHaveCount(0)
     await bookRow.getByRole('button', { name: 'View copies' }).click()
     await page.getByRole('button', { name: `View copy details for ${copy.copy_code}` }).click()
 

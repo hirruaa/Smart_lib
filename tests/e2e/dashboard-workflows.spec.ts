@@ -9,7 +9,7 @@ test('student and faculty dashboards keep common library dialogs available and c
     for (const [user, route] of [[student, '/dashboard/student'], [faculty, '/dashboard/faculty']] as const) {
       await signInInBrowser(page, user)
       await page.goto(route, { waitUntil: 'domcontentloaded' })
-      await expect(page.getByRole('searchbox', { name: 'Search the library catalog' })).toBeVisible()
+      await expect(page.locator('#explore').getByRole('searchbox', { name: 'Search the library catalog' })).toBeVisible()
       await expect(page.locator('.student-hero-summary')).toBeVisible()
 
       await page.getByRole('button', { name: 'Open borrow requests' }).click()

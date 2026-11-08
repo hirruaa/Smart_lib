@@ -20,10 +20,11 @@ import { generateCatalogIsbn } from '@/utils/isbn'
 import { isAdminRole } from '@/utils/roles'
 
 const navGroups = [
-  { label: 'Management', items: [{ label: 'Overview', section: 'overview' }, { label: 'Financial ledger / fines', section: 'physical-finance' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital history', section: 'requests' }, { label: 'Faculty lessons', section: 'contributions' }] },
+  { label: 'Management', items: [{ label: 'Overview', section: 'overview' }, { label: 'Transactions', section: 'physical-finance' }, { label: 'Member accounts', section: 'users' }, { label: 'Digital history', section: 'requests' }, { label: 'Faculty lessons', section: 'contributions' }] },
   { label: 'Library management', items: [{ label: 'Catalog management', section: 'books' }, { label: 'Physical catalog', section: 'physical' }, { label: 'Borrowing policy', section: 'policy' }] },
   { label: 'Review & insights', items: [{ label: 'Audit log', section: 'audit' }] },
 ]
+const memberInviteInput = 'mt-1.5 box-border min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-4 focus:ring-sky-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-950'
 
 function ListPagination({ page, pageCount, total, onPageChange }: { page: number; pageCount: number; total: number; onPageChange: (page: number) => void }) {
   if (total <= 10) return null
@@ -265,7 +266,6 @@ export default function AdminPage() {
     title: '',
     author: '',
     category: '',
-    genre: '',
     source_type: 'staff_added' as 'catalog' | 'staff_added' | 'community_contribution',
     course_code: '',
     isbn: '',
@@ -527,7 +527,7 @@ export default function AdminPage() {
     setEditingBookId(null)
     setEditingBookDetailsId(book.id)
     setBookDetailsDraft({
-      title: book.title, author: book.author, category: book.discipline ?? '',
+      title: book.title, author: book.author, category: book.discipline || book.category || book.genre || '',
       genre: book.genre ?? '', sourceType: book.source_type, courseCode: book.course_code ?? '',
       isbn: book.isbn ?? '', description: book.description ?? '', coverImageUrl: book.cover_image_url ?? '',
     })
@@ -546,12 +546,10 @@ export default function AdminPage() {
     event.preventDefault()
     const title = bookDetailsDraft.title.trim()
     const author = bookDetailsDraft.author.trim()
-    const discipline = bookDetailsDraft.category.trim()
-    const genre = bookDetailsDraft.genre.trim()
-    const category = discipline || genre
+    const subject = bookDetailsDraft.category.trim()
     const courseCode = bookDetailsDraft.courseCode.trim()
-    if (!title || !author || !category) {
-      setError('Title and author are required, and the book needs a discipline or genre.')
+    if (!title || !author || !subject) {
+      setError('Title, author, and subject are required.')
       return
     }
     if (courseCode.length > 32) {
@@ -561,7 +559,7 @@ export default function AdminPage() {
     setSaving(true)
     setError(null)
     const { data, error: updateError } = await getSupabase().from('books').update({
-      title, author, category, discipline: discipline || null, genre: genre || null,
+      title, author, category: subject, discipline: subject, genre: book.genre ?? null,
       source_type: bookDetailsDraft.sourceType, course_code: courseCode || null,
       isbn: bookDetailsDraft.isbn.trim() || null,
       description: bookDetailsDraft.description.trim() || null,
@@ -617,6 +615,13 @@ export default function AdminPage() {
         access_mode: normalizeAccessMode(data.access_mode, data.access_points),
         access_duration_days: data.access_duration_days,
       } : item))
+      setSelectedCatalogBook((current) => current?.id === book.id ? {
+        ...current,
+        access_points: data.access_points,
+        access_costs: data.access_costs as DigitalAccessCosts,
+        access_mode: normalizeAccessMode(data.access_mode, data.access_points),
+        access_duration_days: data.access_duration_days,
+      } : current)
       setEditingBookId(null)
       setActionMessage(`Access settings for "${book.title}" were updated.`)
     }
@@ -1060,7 +1065,7 @@ export default function AdminPage() {
   const categoryStats = useMemo(() => {
     const counts: Record<string, number> = {}
     books.forEach((b) => {
-      const cat = b.discipline?.trim() || 'Unspecified discipline'
+      const cat = b.discipline?.trim() || b.category?.trim() || b.genre?.trim() || 'Unspecified subject'
       counts[cat] = (counts[cat] || 0) + 1
     })
     return Object.entries(counts)
@@ -1414,8 +1419,8 @@ export default function AdminPage() {
 
   const handleAddBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!newBook.title.trim() || !newBook.author.trim() || (!newBook.category.trim() && !newBook.genre.trim()) || !newBook.isbn.trim()) {
-      setError('Title, author, ISBN, and at least one discipline or genre are required.')
+    if (!newBook.title.trim() || !newBook.author.trim() || !newBook.category.trim() || !newBook.isbn.trim()) {
+      setError('Title, author, subject, and ISBN are required.')
       return
     }
     setSaving(true)
@@ -1444,7 +1449,7 @@ export default function AdminPage() {
       setActionMessage('Uploading e-book to library storage...')
       const formData = new FormData()
       formData.append('file', newBookFile)
-      formData.append('category', newBook.category || newBook.genre)
+      formData.append('category', newBook.category)
       formData.append('isbn', newBook.isbn.trim())
       formData.append('provider', 'supabase')
       formData.append('allow_fallback', 'false')
@@ -1468,9 +1473,9 @@ export default function AdminPage() {
       {
         title: newBook.title,
         author: newBook.author,
-        category: newBook.category.trim() || newBook.genre.trim(),
+        category: newBook.category.trim(),
         discipline: newBook.category.trim() || null,
-        genre: newBook.genre.trim() || null,
+        genre: null,
         course_code: newBook.course_code.trim() || null,
         source_type: newBook.source_type,
         isbn: newBook.isbn || null,
@@ -1491,7 +1496,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New e-book added to the online catalog.')
-      setNewBook({ title: '', author: '', category: '', genre: '', source_type: 'staff_added', course_code: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
+      setNewBook({ title: '', author: '', category: '', source_type: 'staff_added', course_code: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
       setNewBookFile(null)
       setNewBookOpen(false)
       await loadData()
@@ -1781,7 +1786,7 @@ export default function AdminPage() {
                       type="search"
                       value={bookSearch}
                       onChange={(e) => setBookSearch(e.target.value)}
-                      placeholder="Search books by title, author, category..."
+                      placeholder="Search books by title, author, subject..."
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-3.5 pr-8 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                     {bookSearch ? (
@@ -1799,10 +1804,10 @@ export default function AdminPage() {
                     <select
                       value={bookCategoryFilter}
                       onChange={(event) => setBookCategoryFilter(event.target.value)}
-                      aria-label="Filter books by category"
+                      aria-label="Filter books by subject"
                       className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     >
-                      <option value="all">All categories</option>
+                      <option value="all">All subjects</option>
                       {bookFilterOptions.categories.map((category) => (
                         <option key={category} value={category}>{category}</option>
                       ))}
@@ -1839,7 +1844,7 @@ export default function AdminPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[900px] table-fixed text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">
-                      <tr><th className="w-[21%] px-2 py-3 sm:px-4">Title</th><th className="w-[13%] px-2 py-3 sm:px-4">Author</th><th className="w-[13%] px-2 py-3 sm:px-4">Category</th><th className="w-[9%] px-2 py-3 sm:px-4">Format</th><th className="w-[17%] px-2 py-3 sm:px-4">Access cost</th><th className="w-[9%] px-2 py-3 sm:px-4">File</th><th className="w-[18%] px-2 py-3 sm:px-4">Actions</th></tr>
+                      <tr><th className="w-[21%] px-2 py-3 sm:px-4">Title</th><th className="w-[13%] px-2 py-3 sm:px-4">Author</th><th className="w-[13%] px-2 py-3 sm:px-4">Subject</th><th className="w-[9%] px-2 py-3 sm:px-4">Format</th><th className="w-[17%] px-2 py-3 sm:px-4">Access cost</th><th className="w-[9%] px-2 py-3 sm:px-4">File</th><th className="w-[18%] px-2 py-3 sm:px-4">Actions</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {visibleBooks.map((book) => <Fragment key={book.id}>
@@ -1863,7 +1868,7 @@ export default function AdminPage() {
               {selectedCatalogBook ? <div className="fixed inset-0 z-[60] bg-slate-950/60" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setSelectedCatalogBook(null); setEditingBookId(null); setEditingBookDetailsId(null) } }}>
                 <section className="ml-auto flex h-full w-full max-w-2xl flex-col overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-7" role="dialog" aria-modal="true" aria-labelledby="catalog-book-details-title">
                   <div className="flex items-start justify-between gap-4">
-                    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Catalog book</p><h3 id="catalog-book-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedCatalogBook.author} · {selectedCatalogBook.discipline || selectedCatalogBook.genre || selectedCatalogBook.category}{selectedCatalogBook.genre && selectedCatalogBook.discipline ? ` · ${selectedCatalogBook.genre}` : ''}{selectedCatalogBook.course_code ? ` · Course ${selectedCatalogBook.course_code}` : ''}</p><p className="mt-1 text-xs capitalize text-slate-400">Source: {selectedCatalogBook.source_type.replace(/_/g, ' ')}</p></div>
+                    <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Catalog book</p><h3 id="catalog-book-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{selectedCatalogBook.author} · {selectedCatalogBook.discipline || selectedCatalogBook.category || selectedCatalogBook.genre}{selectedCatalogBook.course_code ? ` · Course ${selectedCatalogBook.course_code}` : ''}</p><p className="mt-1 text-xs capitalize text-slate-400">Source: {selectedCatalogBook.source_type.replace(/_/g, ' ')}</p></div>
                     <button type="button" onClick={() => { setSelectedCatalogBook(null); setEditingBookId(null) }} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button>
                   </div>
                   <div className="mt-6 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Format</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.catalog_type}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">Access</p><p className="mt-1 font-semibold capitalize">{selectedCatalogBook.access_mode}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">ISBN</p><p className="mt-1 font-semibold">{selectedCatalogBook.isbn || 'Not set'}</p></div><div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800"><p className="text-xs text-slate-500">File</p><p className="mt-1 font-semibold">{selectedCatalogBook.pdf_url || selectedCatalogBook.storage_path || selectedCatalogBook.storage_file_id ? 'Available' : 'Missing'}</p></div></div>
@@ -1875,8 +1880,7 @@ export default function AdminPage() {
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Title</dt><dd className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.title}</dd></div>
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Author</dt><dd className="mt-1 break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.author}</dd></div>
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">ISBN</dt><dd className="mt-1 break-all text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.isbn || 'Not listed'}</dd></div>
-                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Discipline</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.discipline || selectedCatalogBook.category || 'Not set'}</dd></div>
-                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Genre</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.genre || 'Not set'}</dd></div>
+                      <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Subject</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.discipline || selectedCatalogBook.category || selectedCatalogBook.genre || 'Not set'}</dd></div>
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Course code</dt><dd className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{selectedCatalogBook.course_code || 'Not set'}</dd></div>
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Source</dt><dd className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-slate-100">{selectedCatalogBook.source_type.replace(/_/g, ' ')}</dd></div>
                       <div><dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Format and access</dt><dd className="mt-1 text-sm font-semibold capitalize text-slate-900 dark:text-slate-100">{selectedCatalogBook.catalog_type} · {selectedCatalogBook.access_mode}</dd></div>
@@ -1887,8 +1891,7 @@ export default function AdminPage() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="text-xs font-semibold">Title<input required maxLength={300} value={bookDetailsDraft.title} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, title: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
                         <label className="text-xs font-semibold">Author<input required maxLength={200} value={bookDetailsDraft.author} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, author: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
-                        <label className="text-xs font-semibold">Discipline<input maxLength={120} value={bookDetailsDraft.category} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, category: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
-                        <label className="text-xs font-semibold">Genre<input maxLength={120} value={bookDetailsDraft.genre} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, genre: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
+                        <label className="text-xs font-semibold">Subject<input required maxLength={120} value={bookDetailsDraft.category} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, category: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
                         <label className="text-xs font-semibold">Course code<input maxLength={32} value={bookDetailsDraft.courseCode} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, courseCode: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /></label>
                         <label className="text-xs font-semibold">Source type<select value={bookDetailsDraft.sourceType} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, sourceType: event.target.value as Book['source_type'] }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900"><option value="catalog">Catalog</option><option value="staff_added">Staff-added</option><option value="community_contribution">Community contribution</option></select></label>
                         <label className="text-xs font-semibold">ISBN<input maxLength={32} value={bookDetailsDraft.isbn} onChange={(event) => setBookDetailsDraft((current) => ({ ...current, isbn: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" /><button type="button" onClick={() => generateBookIsbn((isbn) => setBookDetailsDraft((current) => ({ ...current, isbn })), selectedCatalogBook.id)} className="mt-2 text-sky-700 underline dark:text-sky-300">Generate ISBN-13</button></label>
@@ -1937,22 +1940,13 @@ export default function AdminPage() {
                     />
                   </label>
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Discipline (optional if genre is set)</span>
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Subject</span>
                     <input
+                      required
                       value={newBook.category}
                       onChange={(event) => setNewBook({ ...newBook, category: event.target.value })}
                       maxLength={120}
                       placeholder="e.g. Biology"
-                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Genre (optional if discipline is set)</span>
-                    <input
-                      value={newBook.genre}
-                      onChange={(event) => setNewBook({ ...newBook, genre: event.target.value })}
-                      maxLength={120}
-                      placeholder="e.g. Reference"
                       className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </label>
@@ -2383,28 +2377,58 @@ export default function AdminPage() {
                   }
                 }}
               />
-              {memberToolModal === 'createMember' ? <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setMemberToolModal(null) }}><section className="my-6 w-full max-w-3xl min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="create-member-title"><div className="flex items-start justify-between gap-4"><div><h3 id="create-member-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Send a secure email link so the member can set their password.</p></div><button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm dark:border-slate-700">Close</button></div>
-              <form onSubmit={async (event) => { if (await handleCreateStudent(event)) setMemberToolModal(null) }} className="mt-5">
-                <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <input type="text" required maxLength={120} value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} placeholder="Full name" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() })} placeholder="Username (3–30 characters)" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <input type="email" required value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-                  <select required aria-label="Account type" value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                    <option value="student">Student</option>
-                    <option value="faculty">Faculty</option>
-                    <option value="librarian">Librarian</option>
-                  </select>
-                  {newStudent.role !== 'librarian' ? <label className="block min-w-0 text-sm font-medium">Institutional ID<input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={newStudent.institutionalId} onChange={(event) => {
-                    const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
-                    setNewStudent({ ...newStudent, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
-                  }} placeholder="2026-01042" className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label> : null}
-                  {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium">Department<select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className="box-border mt-1.5 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label> : null}
-                  {newStudent.role === 'student' ? <select required value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Course</option>{academicCourses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select> : null}
-                  {newStudent.role === 'student' ? <select required value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} className="box-border w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Year level</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select> : null}
-                </div>
-                <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">The member will receive a secure email link to set their own password.</p>
-                <button type="submit" disabled={saving} className="mt-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{saving ? 'Sending invite...' : 'Send invite'}</button>
-              </form></section></div> : null}
+              {memberToolModal === 'createMember' ? <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setMemberToolModal(null) }}>
+                <section className="my-6 w-full max-w-2xl min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="create-member-title">
+                  <div className="flex items-start justify-between gap-5">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member accounts</p>
+                      <h3 id="create-member-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3>
+                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details. We’ll email a secure link so they can set their own password.</p>
+                    </div>
+                    <button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="shrink-0 rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
+                  </div>
+                  <form onSubmit={async (event) => { if (await handleCreateStudent(event)) setMemberToolModal(null) }} className="mt-6">
+                    <div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+                      <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Full name
+                        <input type="text" required maxLength={120} autoComplete="name" value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} className={memberInviteInput} />
+                      </label>
+                      <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Username
+                        <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() })} aria-describedby="member-username-help" className={memberInviteInput} />
+                        <span id="member-username-help" className="mt-1 block text-xs font-normal text-slate-500">3–30 characters; letters, numbers, dots, underscores, or hyphens.</span>
+                      </label>
+                      <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Email address
+                        <input type="email" required autoComplete="email" value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className={memberInviteInput} />
+                      </label>
+                      <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Account type
+                        <select required value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className={memberInviteInput}>
+                          <option value="student">Student</option>
+                          <option value="faculty">Faculty</option>
+                          <option value="librarian">Librarian</option>
+                        </select>
+                      </label>
+                      {newStudent.role !== 'librarian' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Institutional ID
+                        <input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={newStudent.institutionalId} onChange={(event) => {
+                          const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
+                          setNewStudent({ ...newStudent, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
+                        }} placeholder="2026-01042" className={memberInviteInput} />
+                      </label> : null}
+                      {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Department
+                        <select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className={memberInviteInput}><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
+                      </label> : null}
+                      {newStudent.role === 'student' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Course
+                        <select required value={newStudent.course} onChange={(event) => setNewStudent({ ...newStudent, course: event.target.value })} className={memberInviteInput}><option value="">Select course</option>{academicCourses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
+                      </label> : null}
+                      {newStudent.role === 'student' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Year level
+                        <select required value={newStudent.studentYear} onChange={(event) => setNewStudent({ ...newStudent, studentYear: event.target.value })} className={memberInviteInput}><option value="">Select year level</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select>
+                      </label> : null}
+                    </div>
+                    <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
+                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member receives a secure email link to create their password.</p>
+                      <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
+                    </div>
+                  </form>
+                </section>
+              </div> : null}
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
                   <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">

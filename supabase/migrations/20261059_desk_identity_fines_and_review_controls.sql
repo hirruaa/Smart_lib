@@ -93,7 +93,7 @@ end;
 $$;
 
 drop function if exists public.admin_waive_physical_fine(bigint, text);
-create function public.admin_waive_physical_fine(
+create or replace function public.admin_waive_physical_fine(
   p_fine_id bigint,
   p_reason_category text,
   p_justification text

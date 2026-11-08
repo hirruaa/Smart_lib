@@ -686,8 +686,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       setError('Only an administrator can add a new title to the physical catalog.')
       return
     }
-    if (!newPhysicalBook.category.trim() && !newPhysicalBook.genre.trim()) {
-      setError('Enter a discipline or genre for the physical title.')
+    if (!newPhysicalBook.category.trim()) {
+      setError('Enter a subject for the physical title.')
       return
     }
     const formElement = event.currentTarget
@@ -717,9 +717,9 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const { error: saveError } = await supabase.rpc('admin_create_physical_book', {
       p_title: newPhysicalBook.title.trim(),
       p_author: newPhysicalBook.author.trim(),
-      p_category: newPhysicalBook.category.trim() || newPhysicalBook.genre.trim(),
+      p_category: newPhysicalBook.category.trim(),
       p_discipline: newPhysicalBook.category.trim() || null,
-      p_genre: newPhysicalBook.genre.trim() || null,
+      p_genre: null,
       p_isbn: newPhysicalBook.isbn.trim() || null,
       p_description: newPhysicalBook.description.trim() || null,
       p_cover_image_url: coverUrl,
@@ -1133,7 +1133,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setBusy(true); setError(''); setMessage('')
     const { error: saveError } = await getSupabase().rpc('admin_update_physical_book', {
       p_book_id: editingBook.id, p_title: editBookForm.title, p_author: editBookForm.author,
-      p_category: editBookForm.category || editBookForm.genre, p_discipline: editBookForm.category || null,
+      p_category: editBookForm.category, p_discipline: editBookForm.category || null,
       p_genre: editBookForm.genre || null, p_isbn: editBookForm.isbn || null, p_description: editBookForm.description || null,
     })
     if (saveError) setError(saveError.message)
@@ -1796,8 +1796,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-sm font-medium">Title<input required maxLength={300} value={newPhysicalBook.title} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, title: event.target.value })} className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Author<input required maxLength={200} value={newPhysicalBook.author} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, author: event.target.value })} className={`${input} mt-1`} /></label>
-          <label className="text-sm font-medium">Discipline (optional if genre is set)<input maxLength={120} value={newPhysicalBook.category} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, category: event.target.value })} placeholder="e.g. Biology" className={`${input} mt-1`} /></label>
-          <label className="text-sm font-medium">Genre (optional if discipline is set)<input maxLength={120} value={newPhysicalBook.genre} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, genre: event.target.value })} placeholder="e.g. Reference" className={`${input} mt-1`} /></label>
+          <label className="text-sm font-medium">Subject<input required maxLength={120} value={newPhysicalBook.category} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, category: event.target.value })} placeholder="e.g. Biology" className={`${input} mt-1`} /></label>
           <div><label className="text-sm font-medium">ISBN (optional)<input maxLength={32} value={newPhysicalBook.isbn} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateNewBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">System-generated IDs are for internal catalog use; use the publisher”™s ISBN for official records.</p></div>
           <label className="text-sm font-medium">Copy-code prefix<input required maxLength={32} pattern="[A-Za-z0-9_-]+" value={newPhysicalBook.prefix} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, prefix: event.target.value })} placeholder="e.g. BIO101" className={`${input} mt-1`} /></label>
           <label className="text-sm font-medium">Number of copies<input required type="number" min="1" max="100" value={newPhysicalBook.quantity} onChange={(event) => setNewPhysicalBook({ ...newPhysicalBook, quantity: event.target.value })} className={`${input} mt-1`} /></label>
@@ -1916,7 +1915,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             Manage policy
           </button>
         </section>
-        {policyModalOpen ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setPolicyModalOpen(false) }}>
+      </> : null}
+      {policyModalOpen && isAdmin ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setPolicyModalOpen(false) }}>
           <section className={`${panel} max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="borrowing-policy-title">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -1980,7 +1980,6 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             </div>
           </section>
         </div> : null}
-      </> : null}
 
       {!policyOnly && !overviewOnly && !finesOnly ? <section className={panel}>
         <div className="physical-catalog-heading flex flex-wrap items-start justify-between gap-3">
@@ -2080,12 +2079,11 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           <section aria-label="Physical book metadata" className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Book details</h3>
             <dl className="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2">
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">ISBN</dt><dd className="mt-1 break-all text-sm font-medium">{manageBook.isbn || 'Not listed'}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Format</dt><dd className="mt-1 text-sm font-medium capitalize">{manageBook.catalog_type}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Discipline</dt><dd className="mt-1 text-sm font-medium">{manageBook.discipline || manageBook.category || 'Not set'}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Genre</dt><dd className="mt-1 text-sm font-medium">{manageBook.genre || 'Not set'}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Catalog status</dt><dd className="mt-1 text-sm font-medium">{manageBook.is_archived ? 'Archived' : 'Active'}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Description</dt><dd className="mt-1 text-sm leading-5">{manageBook.description || 'No description has been added.'}</dd></div>
+              <div><dt className="text-xs font-semibold text-slate-600 dark:text-slate-300">ISBN</dt><dd className="mt-1 break-all text-sm font-medium text-slate-900 dark:text-slate-100">{manageBook.isbn || 'Not listed'}</dd></div>
+              <div><dt className="text-xs font-semibold text-slate-600 dark:text-slate-300">Format</dt><dd className="mt-1 text-sm font-medium capitalize text-slate-900 dark:text-slate-100">{manageBook.catalog_type}</dd></div>
+              <div><dt className="text-xs font-semibold text-slate-600 dark:text-slate-300">Subject</dt><dd className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{manageBook.discipline || manageBook.category || manageBook.genre || 'Not set'}</dd></div>
+              <div><dt className="text-xs font-semibold text-slate-600 dark:text-slate-300">Catalog status</dt><dd className="mt-1 text-sm font-medium text-slate-900 dark:text-slate-100">{manageBook.is_archived ? 'Archived' : 'Active'}</dd></div>
+              <div><dt className="text-xs font-semibold text-slate-600 dark:text-slate-300">Description</dt><dd className="mt-1 text-sm leading-5 text-slate-900 dark:text-slate-100">{manageBook.description || 'No description has been added.'}</dd></div>
             </dl>
           </section>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -2102,8 +2100,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setCopyDetailsBookId(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Copies &amp; QR</button>
             {isAdmin ? <button type="button" onClick={() => { const book = manageBook; const prefix = book.title.split(/[^A-Za-z0-9]+/).filter(Boolean).map((part) => part[0]).join('').toUpperCase().slice(0, 12) || 'BOOK'; setManageBook(null); setCopyForm({ bookId: String(book.id), quantity: '1', prefix, location: '' }); setCopyFormOpen(true) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Add copies</button> : null}
             <button type="button" onClick={() => { const book = manageBook; setManageBook(null); openOptionEditor(book.id) }} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">Loan fees</button>
-            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setEditingBook(book); setEditBookForm({ title: book.title, author: book.author, category: book.discipline ?? '', genre: book.genre ?? '', isbn: book.isbn ?? '', description: book.description ?? '' }) }} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Edit details</button>
-            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'archiveBook', id: book.id, title: book.title, archived: !book.is_archived }) }} className="rounded-xl border border-rose-300 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"><span>{manageBook.is_archived ? 'Restore to catalog' : 'Archive'}</span></button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setEditingBook(book); setEditBookForm({ title: book.title, author: book.author, category: book.discipline || book.category || book.genre || '', genre: book.genre ?? '', isbn: book.isbn ?? '', description: book.description ?? '' }) }} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Edit details</button>
+            <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'archiveBook', id: book.id, title: book.title, archived: !book.is_archived }) }} className={`rounded-xl px-4 py-3 text-sm font-bold text-white shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${manageBook.is_archived ? 'bg-emerald-700 hover:bg-emerald-800 focus-visible:outline-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-500' : 'bg-rose-700 hover:bg-rose-800 focus-visible:outline-rose-600 dark:bg-rose-600 dark:hover:bg-rose-500'}`}><span>{manageBook.is_archived ? 'Restore to catalog' : 'Archive'}</span></button>
             {isAdmin && manageBook.is_archived ? <button type="button" onClick={() => { const book = manageBook; setManageBook(null); setPendingAction({ type: 'deleteBook', id: book.id, title: book.title, archived: true }) }} className="rounded-xl border border-rose-400 px-4 py-3 text-sm font-semibold text-rose-800 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300">Delete permanently</button> : null}
           </div>
         </> : null}
@@ -2194,7 +2192,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       {openPanel === 'history' ? <div className="physical-history-modal fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-3 sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpenPanel(null) }}>
         <section className={`${panel} max-h-[92vh] w-full max-w-5xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="circulation-history-catalog-title">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="circulation-history-catalog-title" className="text-xl font-semibold">Physical loan history</h2><p className="mt-1 text-sm text-slate-500">Completed checkouts, returns, due dates, and copy condition.</p></div><button type="button" onClick={() => setOpenPanel(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
-          <input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search title, author, ISBN, or category..." aria-label="Search physical-book history" className={`${input} mt-4`} />
+          <input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search title, author, ISBN, or subject..." aria-label="Search physical-book history" className={`${input} mt-4`} />
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {historyBookRows.map(({ book, records, active, returned, available }) => <button key={book.id} type="button" onClick={() => setHistoryDetailBookId(book.id)} className="rounded-2xl border border-slate-200 p-4 text-left text-slate-900 transition hover:border-emerald-600 hover:bg-emerald-50 dark:border-slate-700 dark:hover:border-emerald-400 dark:hover:bg-emerald-950/30"><div className="flex items-start justify-between gap-3"><div><strong className="block text-slate-900">{book.title}</strong><span className="mt-1 block text-xs text-slate-600">{book.author} · {book.category}</span></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">{records.length} records</span></div><div className="mt-4 grid grid-cols-3 gap-2 text-xs text-slate-600"><span><strong className="block text-base text-slate-900">{active}</strong>Active</span><span><strong className="block text-base text-slate-900">{returned}</strong>Returned</span><span><strong className="block text-base text-slate-900">{available}</strong>Available</span></div><span className="mt-4 block text-xs font-semibold text-emerald-700 dark:text-emerald-300">Open history →</span></button>)}
           </div>
@@ -2257,7 +2255,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       {editingBook ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditingBook(null) }}>
         <form onSubmit={(event) => void saveBookDetails(event)} className={`${panel} max-h-[90vh] w-full max-w-2xl overflow-y-auto`} role="dialog" aria-modal="true" aria-labelledby="edit-physical-book-title">
           <div className="flex items-start justify-between gap-4"><div><h2 id="edit-physical-book-title" className="text-xl font-semibold">Edit physical book</h2><p className="mt-1 text-sm text-slate-500">Update the catalog details connected to this title.</p></div><button type="button" onClick={() => setEditingBook(null)} className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Close</button></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Discipline<input maxLength={120} value={editBookForm.category} onChange={(event) => setEditBookForm({ ...editBookForm, category: event.target.value })} className={`${input} mt-1`} /></label><label className="text-sm font-medium">Genre<input maxLength={120} value={editBookForm.genre} onChange={(event) => setEditBookForm({ ...editBookForm, genre: event.target.value })} className={`${input} mt-1`} /></label><div><label className="text-sm font-medium">ISBN<input maxLength={32} value={editBookForm.isbn} onChange={(event) => setEditBookForm({ ...editBookForm, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateEditBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">Internal catalog ID, not a publisher-assigned ISBN.</p></div></div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Subject<input required maxLength={120} value={editBookForm.category} onChange={(event) => setEditBookForm({ ...editBookForm, category: event.target.value })} className={`${input} mt-1`} /></label><div><label className="text-sm font-medium">ISBN<input maxLength={32} value={editBookForm.isbn} onChange={(event) => setEditBookForm({ ...editBookForm, isbn: event.target.value })} className={`${input} mt-1`} /></label><button type="button" onClick={generateEditBookIsbn} className="mt-2 text-xs font-semibold text-emerald-800 underline dark:text-emerald-300">Generate ISBN-13</button><p className="mt-1 text-[11px] text-slate-500">Internal catalog ID, not a publisher-assigned ISBN.</p></div></div>
           <label className="mt-3 block text-sm font-medium">Description<textarea maxLength={3000} rows={4} value={editBookForm.description} onChange={(event) => setEditBookForm({ ...editBookForm, description: event.target.value })} className={`${input} mt-1`} /></label>
           <button disabled={busy} className="mt-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">{busy ? 'Saving...' : 'Save details'}</button>
         </form>

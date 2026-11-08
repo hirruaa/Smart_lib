@@ -1355,13 +1355,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <button type="button" onClick={() => setNotificationsOpen(true)} className="student-notification-button" aria-label={alertCount > 0 ? `${alertCount} active alerts` : 'Notifications'} title="Notifications"><BellIcon />{alertCount > 0 ? <span className="student-notification-badge" aria-hidden="true">{alertCount}</span> : null}</button>
             </div>
           </div>
-          <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' }) }}>
-            <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
-            <SearchIcon />
-            <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Find a book, author, ISBN, or subject…" />
-            {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
-            <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
-          </form>
         </header>
 
         {urgentLoans.length > 0 ? (
@@ -1403,6 +1396,13 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           <div className="space-y-6">
             <div id="explore" className="catalog-panel rounded-[2rem] p-6 lg:p-8">
               <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
+              <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
+                <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
+                <SearchIcon />
+                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Find a book, author, ISBN, or subject…" />
+                {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
+                <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
+              </form>
               <div className="catalog-tools">
                 <form id="catalog-controls" className="catalog-toolbar" onSubmit={(event) => event.preventDefault()}>
                   <label className="catalog-sort-box">
@@ -1464,7 +1464,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 </div>
               </div>
 
-              <div className="mt-6 grid items-stretch gap-4 md:grid-cols-2">
+              <div id="catalog-results" className="mt-6 grid scroll-mt-6 items-stretch gap-4 md:grid-cols-2">
                 {filteredBooks.length > 0 ? (
                   filteredBooks.map((book) => (
                     <article

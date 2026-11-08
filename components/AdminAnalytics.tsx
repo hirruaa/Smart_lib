@@ -183,16 +183,16 @@ export default function AdminAnalytics({
         <div className="rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/80">
           <div>
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Catalog Discipline Distribution
+              Catalog Subject Distribution
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Active inventory allocation by academic discipline
+              Active inventory allocation by academic subject
             </p>
           </div>
 
           <div className="mt-6 space-y-3.5">
             {categoryStats.length === 0 ? (
-              <p className="text-xs text-slate-400">No disciplines found in catalog.</p>
+              <p className="text-xs text-slate-400">No subjects found in catalog.</p>
             ) : (
               categoryStats.slice(0, 6).map((cat, idx) => {
                 const percentage = Math.round((cat.count / Math.max(1, totalBooks)) * 100)

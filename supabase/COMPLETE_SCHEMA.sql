@@ -6143,21 +6143,29 @@ grant execute on function public.admin_set_physical_loan_options(bigint, jsonb) 
 -- The current policy trigger was introduced in 20261036 with a fixed 14-day
 -- rule. Replace only that duration check and retain its fine/hold validation.
 do $$
-declare function_definition text;
+declare
+  function_definition text;
+  updated_definition text;
 begin
   select pg_get_functiondef(routine.oid) into function_definition
   from pg_proc routine join pg_namespace nsp on nsp.oid = routine.pronamespace
   where nsp.nspname = 'public' and routine.proname = 'enforce_library_borrowing_policy';
   if function_definition is null then raise exception 'Physical borrowing policy function was not found'; end if;
-  if position('new.duration_days <> 14' in function_definition) = 0 then
+
+  updated_definition := regexp_replace(function_definition,
+    'new[.]duration_days[[:space:]]*(<>|!=)[[:space:]]*14',
+    'new.duration_days not in (1, 3, 5, 7, 14, 30)',
+    'gi');
+  if updated_definition = function_definition
+    and function_definition !~* 'new[.]duration_days[[:space:]]+not[[:space:]]+in[[:space:]]*[(][[:space:]]*1[[:space:]]*,[[:space:]]*3[[:space:]]*,[[:space:]]*5[[:space:]]*,[[:space:]]*7[[:space:]]*,[[:space:]]*14[[:space:]]*,[[:space:]]*30[[:space:]]*[)]' then
     raise exception 'Unexpected physical borrowing policy; inspect before applying duration presets';
   end if;
-  function_definition := replace(function_definition,
-    'new.duration_days <> 14', 'new.duration_days not in (1, 3, 5, 7, 14, 30)');
-  function_definition := replace(function_definition,
+  updated_definition := replace(updated_definition,
     'General-circulation physical books have a 14-day loan period.',
     'Choose a supported physical-book loan period: 1, 3, 5, 7, 14, or 30 days.');
-  execute function_definition;
+  if updated_definition <> function_definition then
+    execute updated_definition;
+  end if;
 end;
 $$;
 
@@ -6870,7 +6878,7 @@ revoke all on function public.enforce_library_borrowing_policy() from public, an
 
 revoke all on function public.admin_waive_physical_fine(bigint, text) from public, anon, authenticated;
 alter function public.admin_waive_physical_fine(bigint, text) rename to admin_waive_physical_fine_internal;
-create function public.admin_waive_physical_fine(
+create or replace function public.admin_waive_physical_fine(
   p_fine_id bigint, p_reason_category text, p_justification text
 ) returns public.fines
 language plpgsql security definer set search_path = public
