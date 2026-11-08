@@ -45,7 +45,6 @@ type DeskHistory = {
 
 type DeskRenewal = { id: number; created_at: string; amount_received: number }
 type DeskPrintPayment = { id: number; created_at: string; amount: number }
-type QueueFilter = 'all' | 'payments' | 'overdue'
 type DailyHistory = {
   id: number
   student_id: string
@@ -94,7 +93,6 @@ export function LibrarianWorkQueue({
   onOpenReturn: (requestId: number) => void
   onReviewIncident: (requestId: number) => void
 }) {
-  const [filter, setFilter] = useState<QueueFilter>('all')
   const queue = useMemo(() => {
     const today = localDateKey(new Date())
     const items = loans.flatMap<QueueItem>((loan) => {
@@ -152,30 +150,17 @@ export function LibrarianWorkQueue({
     )
   }, [loans])
 
-  const visibleItems = queue.filter((item) =>
-    filter === 'all'
-    || (filter === 'payments' && item.kind === 'payment')
-    || (filter === 'overdue' && (item.kind === 'overdue' || item.kind === 'due')),
-  )
-
   return <section className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm dark:border-sky-900 dark:bg-slate-900" aria-labelledby="librarian-work-queue-title">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">Librarian work queue</p>
         <h2 id="librarian-work-queue-title" className="mt-1 text-xl font-semibold">Today at the desk</h2>
-        <p className="mt-1 text-sm text-slate-500">Prioritized requests, returns, and open cases. Student ID is shown for desk lookup.</p>
-      </div>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter desk queue">
-        {([
-          ['all', 'All urgent'],
-          ['payments', 'Legacy requests'],
-          ['overdue', 'Due today or overdue'],
-        ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${filter === value ? 'border-sky-700 bg-sky-700 text-white dark:border-sky-400 dark:bg-sky-400 dark:text-slate-950' : 'border-slate-300 text-slate-700 dark:border-slate-700 dark:text-slate-200'}`}>{label}</button>)}
+        <p className="mt-1 text-sm text-slate-500">Urgent requests, returns, and open cases, sorted by priority. Each action opens the selected member and loan directly.</p>
       </div>
     </div>
-    <p className="mt-4 text-xs text-slate-500" aria-live="polite">{visibleItems.length} {visibleItems.length === 1 ? 'item' : 'items'} · sorted by urgency</p>
+    <p className="mt-4 text-xs text-slate-500" aria-live="polite">{queue.length} {queue.length === 1 ? 'item' : 'items'} · sorted by urgency</p>
     <div className="mt-3 space-y-3">
-      {visibleItems.map((item) => {
+      {queue.map((item) => {
         const member = members.find((candidate) => candidate.id === item.loan.student_id)
         const badgeClass = item.kind === 'overdue' || item.kind === 'incident'
           ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200'
@@ -198,13 +183,13 @@ export function LibrarianWorkQueue({
             </div>
             <p className="mt-2 font-semibold">{bookName(item.loan.book_id)}</p>
             <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{member?.full_name || member?.email || 'Unknown member'}</p>
-            <p className="mt-0.5 text-xs text-slate-500">Student ID: {member?.institutional_id || 'Not recorded'}</p>
+            <p className="mt-0.5 text-xs text-slate-500">Member ID: {member?.institutional_id || 'Not recorded'}</p>
             {item.loan.due_date && (item.kind === 'overdue' || item.kind === 'due') ? <p className="mt-1 text-xs text-slate-500">Due {new Date(`${item.loan.due_date.slice(0, 10)}T00:00:00`).toLocaleDateString()}</p> : null}
           </div>
           <button type="button" onClick={onAction} className="shrink-0 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-600">{item.action}</button>
         </article>
       })}
-      {visibleItems.length === 0 ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">No items in this queue filter.</p> : null}
+      {queue.length === 0 ? <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Nothing urgent at the desk right now.</p> : null}
     </div>
   </section>
 }

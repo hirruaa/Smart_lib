@@ -49,6 +49,46 @@ test('free digital access appears in the member transaction view and remains per
   }
 })
 
+test('digital book details show every access duration and points cost without a second dialog', async ({ page }) => {
+  const user = await createTestUser()
+  const title = `E2E Priced Digital ${randomUUID()}`
+  let bookId: number | undefined
+
+  try {
+    bookId = await createDigitalBook(title)
+    const { error: updateError } = await adminClient
+      .from('books')
+      .update({
+        access_mode: 'points',
+        access_costs: { '1': 2, '3': 5, '7': 12, '14': 20, '30': 35 },
+      })
+      .eq('id', bookId)
+    expect(updateError).toBeNull()
+
+    await signInInBrowser(page, user)
+    await page.goto('/dashboard/student', { waitUntil: 'domcontentloaded' })
+    const catalogSearch = page.getByRole('searchbox', { name: 'Search the library catalog' })
+    await expect(catalogSearch).toBeVisible()
+    await catalogSearch.fill(title)
+    await page.getByRole('button', { name: `View details and actions for ${title}` }).click()
+
+    const details = page.getByRole('dialog', { name: title })
+    await expect(details.getByRole('heading', { name: 'Choose access duration' })).toBeVisible()
+    const options = details.getByRole('group', { name: 'Digital access duration' })
+    await expect(options.getByRole('button')).toHaveCount(5)
+    await expect(options.getByRole('button', { name: '1 day 2 points' })).toBeVisible()
+    await expect(options.getByRole('button', { name: '7 days 12 points' })).toBeVisible()
+    await expect(options.getByRole('button', { name: '30 days 35 points' })).toBeVisible()
+    await options.getByRole('button', { name: '7 days 12 points' }).click()
+    await expect(details.getByRole('button', { name: 'Unlock for 12 points' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Unlock access' })).toHaveCount(0)
+  } finally {
+    await clearBrowserSession(page)
+    if (bookId !== undefined) await removeTestBook(bookId)
+    await removeTestUser(user)
+  }
+})
+
 test('catalog relevance ranks title and subject matches ahead of description-only matches', async ({ page }) => {
   const user = await createTestUser()
   const suffix = randomUUID()

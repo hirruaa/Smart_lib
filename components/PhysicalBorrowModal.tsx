@@ -229,9 +229,12 @@ export default function PhysicalBorrowModal({ open, book, userId, activeLoanCoun
                   type="button"
                   onClick={() => setSelectedOption(String(option.id))}
                   aria-pressed={selectedOption === String(option.id)}
-                  className="access-duration-option rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-slate-900 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  className="physical-loan-period-option rounded-2xl border px-4 py-3 text-left transition"
                 >
-                  <span className="block text-sm font-semibold">{option.duration_days} {option.duration_days === 1 ? 'day' : 'days'}</span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{option.duration_days} {option.duration_days === 1 ? 'day' : 'days'}</span>
+                    {selectedOption === String(option.id) ? <span className="physical-loan-period-selected">Selected</span> : null}
+                  </span>
                   <span className="access-duration-caption mt-1 block text-xs">₱{Number(option.fee_amount).toFixed(2)} · Set by the library</span>
                 </button>
               ))}

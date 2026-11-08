@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     }
     const { data: ownedSession, error: sessionError } = await supabase
       .from('assistant_sessions')
-      .select('id')
+      .select('id, title')
       .eq('id', sessionId)
       .eq('user_id', user.id)
       .maybeSingle()
@@ -69,7 +69,17 @@ export async function POST(request: Request) {
       loans: body.loans ?? [],
     })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    await supabase.from('assistant_sessions').update({ updated_at: new Date().toISOString() }).eq('id', body.sessionId).eq('user_id', user.id)
+    const updatedSession: { updated_at: string; title?: string } = { updated_at: new Date().toISOString() }
+    if (role === 'user' && ownedSession.title === 'New research chat') {
+      const title = content.replace(/\s+/g, ' ')
+      updatedSession.title = title.length > 48 ? `${title.slice(0, 45).trimEnd()}...` : title
+    }
+    const { error: updateError } = await supabase
+      .from('assistant_sessions')
+      .update(updatedSession)
+      .eq('id', sessionId)
+      .eq('user_id', user.id)
+    if (updateError) return NextResponse.json({ error: 'The message was saved, but the conversation title could not be updated.' }, { status: 500 })
     return NextResponse.json({ success: true })
   }
 

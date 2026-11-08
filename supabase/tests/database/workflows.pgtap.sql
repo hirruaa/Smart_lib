@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
 -- Apply COMPLETE_SCHEMA.sql to a disposable local database first.
 begin;
-select plan(97);
+select plan(98);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -207,10 +207,15 @@ select throws_ok(
   'Insufficient points prevent a digital loan'
 );
 select throws_ok(
-  $$ select public.admin_confirm_physical_checkout(910004, 0, null, true) $$,
+  $$ select public.admin_confirm_physical_checkout(910004, 'QA-WORKFLOW-001', 0, null, true) $$,
   'P0001',
   'Librarian access required',
   'A student cannot check out a physical book as a librarian'
+);
+select is(
+  to_regprocedure('public.admin_confirm_physical_checkout(bigint,numeric,text,boolean)') is null,
+  true,
+  'The automatic-copy checkout RPC is no longer available'
 );
 select throws_ok(
   $$ select public.admin_review_book_contribution(910020, 'approved', 4, 0) $$,
@@ -256,7 +261,7 @@ select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000003
 select throws_ok(
   $$ select public.admin_confirm_physical_checkout(
     (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
-    0, null, true
+    'QA-WORKFLOW-001', 0, null, true
   ) $$,
   'P0001',
   'Librarian access required',
@@ -275,7 +280,7 @@ select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007
 select throws_ok(
   $$ select public.admin_confirm_physical_checkout(
     (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
-    0, null, false
+    'QA-WORKFLOW-001', 0, null, false
   ) $$,
   'P0001',
   'Confirm that the member presented a physical institutional ID card',
@@ -294,7 +299,7 @@ select is(
 select is(
   (public.admin_confirm_physical_checkout(
     (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000001' and book_id = 910004),
-    0, null, true
+    'QA-WORKFLOW-001', 0, null, true
   )).status,
   'checked_out',
   'A librarian checks out the requested physical copy after ID verification'
@@ -360,10 +365,10 @@ select is(
 select throws_ok(
   $$ select public.admin_confirm_physical_checkout(
     (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
-    0, null, true
+    'QA-WORKFLOW-001', 0, null, true
   ) $$,
   'P0001',
-  'No physical copy is currently available',
+  'The selected copy is no longer available; choose another available copy',
   'A second checkout fails after the last copy is assigned'
 );
 select is(
@@ -461,7 +466,7 @@ select set_config('request.jwt.claim.sub', 'd3600000-0000-4000-8000-000000000007
 select is(
   (public.admin_confirm_physical_checkout(
     (select id from public.physical_book_requests where student_id = 'd3600000-0000-4000-8000-000000000002' and book_id = 910004),
-    0, null, true
+    'QA-WORKFLOW-001', 0, null, true
   )).status,
   'checked_out',
   'A returned copy can be checked out to the second borrower'

@@ -13,6 +13,7 @@ import ActionModal from '@/components/ActionModal'
 import { StudentDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
+import { getContributionFileFormat, getContributionFileTypeLabel } from '@/utils/contributionFiles'
 import { dashboardPathForRole } from '@/utils/roles'
 
 const BookAssistant = dynamicImport(() => import('@/components/BookAssistant'), { ssr: false })
@@ -178,7 +179,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [feedbackModal, setFeedbackModal] = useState<FeedbackModal | null>(null)
   const [requestingBookId, setRequestingBookId] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null)
   const [physicalBook, setPhysicalBook] = useState<PhysicalBookSelection | null>(null)
   const [physicalCopyId, setPhysicalCopyId] = useState<number | null>(null)
   const [durationDays, setDurationDays] = useState('30')
@@ -711,6 +711,23 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [selectedFormat, setSelectedFormat] = useState<'all' | 'digital' | 'physical'>('all')
   const [availablePhysicalOnly, setAvailablePhysicalOnly] = useState(false)
 
+  const openCatalogDetails = (book: Book) => {
+    setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
+    setCatalogDetailsBook(book)
+  }
+
+  const openPhysicalBorrowOptions = (book: Book) => {
+    setCatalogDetailsBook(null)
+    setPhysicalBook({
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      category: book.category,
+      catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid',
+      related_book_ids: book.physical_book_ids ?? [book.id],
+    })
+  }
+
   const catalogBooks = useMemo(() => {
     const grouped = new Map<string, Book[]>()
     for (const book of books.filter((item) => !item.is_archived)) {
@@ -1034,13 +1051,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     }
   }
 
-  const submitAccessRequest = async () => {
-    if (!selectedBook) return
-    const book = selectedBook
+  const submitAccessRequest = async (book: Book) => {
     if (!userId) return
     if (book.isOwner) {
       router.push(`/reader/${book.id}`)
-      setSelectedBook(null)
+      setCatalogDetailsBook(null)
       return
     }
     setRequestingBookId(book.id)
@@ -1088,7 +1103,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       })
     } finally {
       setRequestingBookId(null)
-      setSelectedBook(null)
+      setCatalogDetailsBook(null)
     }
   }
 
@@ -1120,11 +1135,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   async function handleContributionSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!userId || !contributionFile) {
-      setContributionStatus('Please choose a PDF file before submitting.')
+      setContributionStatus('Please choose a teaching material file before submitting.')
       return
     }
-    if (contributionFile.type !== 'application/pdf' || contributionFile.size > 50 * 1024 * 1024) {
-      setContributionStatus('Only PDF files up to 50 MB are accepted.')
+    if (getContributionFileFormat(contributionFile.name, contributionFile.type) === 'unknown' || contributionFile.size <= 0 || contributionFile.size > 50 * 1024 * 1024) {
+      setContributionStatus('Choose a PDF, Word, or PowerPoint file up to 50 MB.')
       return
     }
     setContributionSubmitting(true)
@@ -1137,7 +1152,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       uploadData.append('allow_fallback', 'false')
       const uploadResponse = await fetch('/api/storage/upload', { method: 'POST', body: uploadData })
       const uploaded = await uploadResponse.json()
-      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Unable to upload PDF.')
+      if (!uploadResponse.ok) throw new Error(uploaded.error || 'Unable to upload the contribution.')
 
       const { error } = await getSupabase().rpc('submit_book_contribution_v2', {
         p_title: contributionForm.title.trim(),
@@ -1182,9 +1197,18 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     if (!file) return
 
     const formAtSelection = contributionForm
-    const fallbackTitle = file.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
-    if (file.type !== 'application/pdf' || file.size > 50 * 1024 * 1024) {
-      setContributionMetadataStatus('Choose a PDF file up to 50 MB to autofill its details.')
+    const format = getContributionFileFormat(file.name, file.type)
+    const fallbackTitle = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (format === 'unknown' || file.size <= 0 || file.size > 50 * 1024 * 1024) {
+      setContributionMetadataStatus('Choose a PDF, Word, or PowerPoint file up to 50 MB.')
+      return
+    }
+    if (format !== 'pdf') {
+      setContributionForm((current) => ({
+        ...current,
+        title: current.title || fallbackTitle,
+      }))
+      setContributionMetadataStatus(`${getContributionFileTypeLabel(file.name, file.type)} selected. Enter the author and description manually; metadata autofill is available for PDFs.`)
       return
     }
 
@@ -1256,7 +1280,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         <aside id="member-navigation" className={`dashboard-sidebar student-sidebar ${sidebarOpen ? 'dashboard-sidebar-open sidebar-open' : ''}`}>
           <div className="student-sidebar-header">
             <BrandLogo className="student-brand" iconSize="sm" />
-            <button type="button" className="student-sidebar-toggle" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-controls="member-navigation" aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} /></svg>}</button>
+            <button type="button" className="student-sidebar-toggle dashboard-sidebar-collapse-control" onClick={() => { if (sidebarOpen) setSidebarOpen(false); else setSidebarCollapsed((current) => !current) }} aria-controls="member-navigation" aria-expanded={sidebarOpen || !sidebarCollapsed} aria-label={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} title={sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}><span className="sr-only">{sidebarOpen ? 'Close navigation' : sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>{sidebarOpen ? <CloseIcon /> : <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={sidebarCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} /></svg>}</button>
           </div>
           <p className="student-sidebar-label">Workspace</p>
           <nav className="student-nav" aria-label={`${memberType === 'faculty' ? 'Faculty' : 'Student'} workspace`}>
@@ -1267,12 +1291,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             </div>
             <div className="student-nav-group">
               <p className="student-nav-group-label">Your activity</p>
-              <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-label="Loans and charges" title={sidebarCollapsed ? 'Loans and charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
+              <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-current={activeSidebarItem === 'library' ? 'page' : undefined} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
+              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-current={activeSidebarItem === 'payments' ? 'page' : undefined} aria-label="Loans and charges" title={sidebarCollapsed ? 'Loans and charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
             </div>
             <div className="student-nav-group">
               <p className="student-nav-group-label">Tools</p>
-              {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
+              {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-current={activeSidebarItem === 'materials' ? 'page' : undefined} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
               <button type="button" aria-label="Scan book QR" title={sidebarCollapsed ? 'Scan book QR' : undefined} onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span className="student-nav-qr-icon" aria-hidden="true">▣</span><span>Scan book QR</span></button>
             </div>
           </nav>
@@ -1472,13 +1496,14 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                       className="resource-card rounded-[1.5rem] p-5"
                       role="button"
                       tabIndex={0}
-                      aria-label={`View details and actions for ${book.title}`}
+                      aria-label={book.catalog_type === 'physical' ? `Choose loan options for ${book.title}` : `View details and actions for ${book.title}`}
                       aria-haspopup="dialog"
-                      onClick={() => setCatalogDetailsBook(book)}
+                      onClick={() => book.catalog_type === 'physical' ? openPhysicalBorrowOptions(book) : openCatalogDetails(book)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
-                          setCatalogDetailsBook(book)
+                          if (book.catalog_type === 'physical') openPhysicalBorrowOptions(book)
+                          else openCatalogDetails(book)
                         }
                       }}
                     >
@@ -1718,70 +1743,53 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 {catalogDetailsBook.pdf_url && catalogDetailsBook.catalog_type !== 'physical' ? <p className="catalog-detail-ready">Digital file available</p> : null}
               </div>
             </div>
+            {catalogDetailsBook.catalog_type !== 'physical' ? (
+              <section className="catalog-access-options" aria-labelledby="catalog-access-options-title">
+                <div className="catalog-access-options-heading">
+                  <div>
+                    <h3 id="catalog-access-options-title">Choose access duration</h3>
+                    <p>{catalogDetailsBook.access_mode === 'points' ? 'Point cost for each access period' : 'No points required for digital access'}</p>
+                  </div>
+                  {catalogDetailsBook.access_mode === 'points' ? <span className="catalog-access-balance">Balance: {profile?.points_balance ?? 0} points</span> : null}
+                </div>
+                <div className="catalog-access-duration-grid" role="group" aria-label="Digital access duration">
+                  {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => {
+                    const pointsCost = getDigitalAccessCost(catalogDetailsBook.access_costs, days, catalogDetailsBook.access_points)
+                    return <button
+                      key={days}
+                      type="button"
+                      className="access-duration-option"
+                      aria-pressed={durationDays === String(days)}
+                      onClick={() => setDurationDays(String(days))}
+                    >
+                      <span>{days} {days === 1 ? 'day' : 'days'}</span>
+                      <strong>{catalogDetailsBook.access_mode === 'points' ? `${pointsCost} points` : 'Free'}</strong>
+                    </button>
+                  })}
+                </div>
+                {catalogDetailsBook.access_mode === 'points' && getDigitalAccessCost(catalogDetailsBook.access_costs, Number(durationDays), catalogDetailsBook.access_points) > (profile?.points_balance ?? 0) ? (
+                  <p className="catalog-access-insufficient">You need {getDigitalAccessCost(catalogDetailsBook.access_costs, Number(durationDays), catalogDetailsBook.access_points) - (profile?.points_balance ?? 0)} more points for this period.</p>
+                ) : null}
+              </section>
+            ) : null}
             <div className="catalog-detail-actions">
-              {catalogDetailsBook.catalog_type !== 'physical' ? <button type="button" className="pine-action" disabled={requestingBookId !== null} onClick={() => {
-                const book = catalogDetailsBook
-                setCatalogDetailsBook(null)
-                setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
-                setSelectedBook(book)
-                setRequestStatus(null)
-              }}>Request digital access</button> : null}
+              {catalogDetailsBook.catalog_type !== 'physical' ? <button
+                type="button"
+                className="pine-action"
+                disabled={requestingBookId !== null || (!catalogDetailsBook.isOwner && catalogDetailsBook.access_mode === 'points' && getDigitalAccessCost(catalogDetailsBook.access_costs, Number(durationDays), catalogDetailsBook.access_points) > (profile?.points_balance ?? 0))}
+                onClick={() => { setRequestStatus(null); void submitAccessRequest(catalogDetailsBook) }}
+              >
+                {requestingBookId === catalogDetailsBook.id ? 'Unlocking...' : catalogDetailsBook.isOwner ? 'Open digital book' : catalogDetailsBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(catalogDetailsBook.access_costs, Number(durationDays), catalogDetailsBook.access_points)} points` : 'Unlock free access'}
+              </button> : null}
               {catalogDetailsBook.catalog_type !== 'digital' ? <button type="button" className="secondary-action" onClick={() => {
                 const book = catalogDetailsBook
-                setCatalogDetailsBook(null)
-                setPhysicalBook({ id: book.id, title: book.title, author: book.author, category: book.category, catalog_type: book.catalog_type === 'physical' ? 'physical' : 'hybrid', related_book_ids: book.physical_book_ids ?? [book.id] })
+                openPhysicalBorrowOptions(book)
               }}>{catalogDetailsBook.catalog_type === 'physical' ? 'Browse copies & request' : 'Browse physical copies'}</button> : null}
               {catalogDetailsBook.catalog_type !== 'digital' && (catalogDetailsBook.physical_available_copies ?? 0) === 0 ? (() => {
                 const book = catalogDetailsBook
                 const subscribed = availabilityAlerts.some((alert) => alert.book_id === book.id)
                 return <button type="button" aria-pressed={subscribed} disabled={availabilityAlertSavingBookId === book.id} onClick={() => void togglePhysicalAvailabilityAlert(book)} className="secondary-action catalog-detail-alert"><BellIcon />{availabilityAlertSavingBookId === book.id ? 'Saving...' : subscribed ? 'Turn off availability alert' : 'Notify me when available'}</button>
               })() : null}
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {selectedBook ? (
-        <div className="access-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedBook(null) }}>
-          <section className="access-modal" role="dialog" aria-modal="true" aria-labelledby="access-modal-title">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Unlock access</p>
-                <h2 id="access-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">{selectedBook.title}</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Choose how long you need this digital resource. Access unlocks immediately.</p>
-              </div>
-              <button type="button" onClick={() => setSelectedBook(null)} className="notification-modal-close" aria-label="Close access request">×</button>
-            </div>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => (
-                <button
-                  key={days}
-                  type="button"
-                  onClick={() => setDurationDays(String(days))}
-                  aria-pressed={durationDays === String(days)}
-                  className="access-duration-option rounded-2xl border px-4 py-3 text-left transition"
-                >
-                  <span className="block text-sm font-semibold">{days} {days === 1 ? 'day' : 'days'}</span>
-                  <span className="access-duration-caption mt-1 block text-xs">Configured access period</span>
-                </button>
-              ))}
-            </div>
-            <div className="mt-5 rounded-2xl border border-paper-300 bg-paper-50 p-4 dark:border-forest-700 dark:bg-forest-800/70">
-              <div className="flex items-center justify-between gap-4 text-sm">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">Access terms</span>
-                <span className="font-semibold text-pine-700 dark:text-pine-200">
-                  {selectedBook.access_mode === 'free' ? 'Free access' : `${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points`}
-                </span>
-              </div>
-              {selectedBook.access_mode === 'points' ? <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">Your balance: <strong>{profile?.points_balance ?? 0} points</strong>. Access unlocks automatically when your balance covers the selected period.</p> : <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-300">This access is free. No points will be deducted.</p>}
-              {selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0) ? <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">You need {getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) - (profile?.points_balance ?? 0)} more points to unlock this resource.</p> : null}
-            </div>
-
-            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setSelectedBook(null)} className="secondary-action rounded-2xl border px-4 py-3 text-sm font-semibold">Cancel</button>
-              <button type="button" onClick={() => void submitAccessRequest()} disabled={requestingBookId !== null || (selectedBook.access_mode === 'points' && getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points) > (profile?.points_balance ?? 0))} className="pine-action rounded-2xl px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
-                {requestingBookId === selectedBook.id ? 'Submitting...' : selectedBook.access_mode === 'points' ? `Unlock for ${getDigitalAccessCost(selectedBook.access_costs, Number(durationDays), selectedBook.access_points)} points` : 'Unlock free access'}
-              </button>
             </div>
           </section>
         </div>
@@ -1801,7 +1809,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <input required value={contributionForm.title} onChange={(event) => setContributionForm({ ...contributionForm, title: event.target.value })} placeholder="Book title" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <input required value={contributionForm.author} onChange={(event) => setContributionForm({ ...contributionForm, author: event.target.value })} placeholder="Author" className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
               <textarea value={contributionForm.description} onChange={(event) => setContributionForm({ ...contributionForm, description: event.target.value })} placeholder="Document subject or why this is useful for the library" rows={3} className="workspace-input w-full rounded-2xl border px-4 py-3 text-sm outline-none" />
-              <label className="block"><span className="text-sm font-medium">PDF file</span><input required type="file" accept="application/pdf,.pdf" onChange={(event) => void handleContributionFileSelected(event.target.files?.[0] ?? null)} className="workspace-input mt-2 block w-full rounded-2xl border border-dashed px-4 py-3 text-sm" /><span className="mt-1 block text-xs text-slate-500">PDF only, maximum 50 MB. Title, author, and subject are filled from PDF metadata when available.</span></label>
+              <label className="block"><span className="text-sm font-medium">Teaching material file</span><input required type="file" accept="application/pdf,.pdf,.doc,.docx,.ppt,.pptx" onChange={(event) => void handleContributionFileSelected(event.target.files?.[0] ?? null)} className="workspace-input mt-2 block w-full rounded-2xl border border-dashed px-4 py-3 text-sm" />{contributionFile ? <span className="mt-1 block text-xs font-medium text-pine-700 dark:text-pine-200">Selected: {getContributionFileTypeLabel(contributionFile.name, contributionFile.type)}</span> : null}<span className="mt-1 block text-xs text-slate-500">PDF, Word (.doc/.docx), or PowerPoint (.ppt/.pptx), maximum 50 MB. PDF metadata can autofill title and author.</span></label>
               {contributionMetadataStatus ? <p aria-live="polite" className="text-xs text-slate-600 dark:text-slate-300">{contributionMetadataStatus}</p> : null}
               <p className="text-xs leading-5 text-slate-500 dark:text-slate-300">Approved contributions earn points set by the administrator. Do not submit copyrighted material unless the library has permission to store and share it.</p>
               {contributionStatus ? <p className="rounded-xl border border-paper-300 bg-paper-50 p-3 text-sm text-slate-700 dark:border-forest-700 dark:bg-forest-800 dark:text-paper-100">{contributionStatus}</p> : null}

@@ -22,6 +22,7 @@ test('admin dashboard keeps circulation processing in the librarian workspace', 
     expect(issueError?.message).toContain('Librarian access required')
     const { error: checkoutError } = await userClient.rpc('admin_confirm_physical_checkout', {
       p_request_id: -1,
+      p_copy_code: 'E2E-NOT-A-REAL-COPY',
       p_amount_paid: 0,
       p_payment_notes: null,
       p_id_card_presented: true,

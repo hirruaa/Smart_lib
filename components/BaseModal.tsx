@@ -12,11 +12,12 @@ type BaseModalProps = {
   size?: 'sm' | 'md' | 'lg'
   layer?: 'background' | 'default' | 'foreground'
   variant?: 'modal' | 'drawer'
+  className?: string
 }
 
 const sizeClasses = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl' }
 
-export default function BaseModal({ open, title, eyebrow, description, onClose, children, size = 'md', layer = 'default', variant = 'modal' }: BaseModalProps) {
+export default function BaseModal({ open, title, eyebrow, description, onClose, children, size = 'md', layer = 'default', variant = 'modal', className = '' }: BaseModalProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   const onCloseRef = useRef(onClose)
@@ -52,7 +53,7 @@ export default function BaseModal({ open, title, eyebrow, description, onClose, 
   const descriptionId = description ? `${titleId}-description` : undefined
   return (
     <div className={`base-modal-backdrop${layer === 'default' ? '' : ` base-modal-backdrop--${layer}`}${variant === 'drawer' ? ' base-modal-backdrop--drawer' : ''}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className={`base-modal ${sizeClasses[size]}${variant === 'drawer' ? ' base-modal--drawer' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <section className={`base-modal ${sizeClasses[size]}${variant === 'drawer' ? ' base-modal--drawer' : ''}${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <header className="base-modal-header"><div>{eyebrow ? <p className="base-modal-eyebrow">{eyebrow}</p> : null}<h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId} className="base-modal-description">{description}</p> : null}</div><button ref={closeRef} type="button" className="base-modal-close" onClick={onClose} aria-label={`Close ${title}`}>&times;</button></header>
         <div className="base-modal-content">{children}</div>
       </section>

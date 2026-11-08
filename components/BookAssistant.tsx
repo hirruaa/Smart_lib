@@ -41,6 +41,11 @@ const initialMessage: ChatMessage = {
   text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. Ask me any question or concern — how overdue fines work, what to do if a book is lost, borrowing rules, library clearance, or book recommendations.',
 }
 
+function getSessionTitle(message: string) {
+  const title = message.trim().replace(/\s+/g, ' ')
+  return title.length > 48 ? `${title.slice(0, 45).trimEnd()}...` : title
+}
+
 export default function BookAssistant() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -61,30 +66,31 @@ export default function BookAssistant() {
     async function loadSession() {
       try {
         const response = await fetch('/api/assistant/sessions')
-        if (!response.ok) throw new Error('Session storage unavailable')
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data?.error || 'Unable to load saved conversations.')
         if (cancelled) return
         setSessions(data.sessions ?? [])
         const active = data.sessions?.[0]
         if (active) {
           setSessionId(active.id)
-          const messagesResponse = await fetch(`/api/assistant/sessions?session_id=${active.id}`)
-          const messagesData = await messagesResponse.json()
-          if (!cancelled && messagesData.messages?.length) setMessages(messagesData.messages.map((message: any) => ({ id: String(message.id), role: message.role, text: message.content, results: message.results, loans: message.loans })))
-        } else {
-          const created = await fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-          const createdData = await created.json()
-          if (!cancelled && createdData.session) {
-            setSessionId(createdData.session.id)
-            setSessions([createdData.session])
+          const messagesResponse = await fetch(`/api/assistant/sessions?session_id=${encodeURIComponent(active.id)}`)
+          const messagesData = await messagesResponse.json().catch(() => ({}))
+          if (!messagesResponse.ok) throw new Error(messagesData?.error || 'Unable to load this conversation.')
+          if (!cancelled && messagesData.messages?.length) {
+            setMessages(messagesData.messages.map((message: any) => ({ id: String(message.id), role: message.role, text: message.content, results: message.results, loans: message.loans })))
           }
         }
       } catch {
+        if (cancelled) return
+        setError('Saved conversations are unavailable. You can still chat, but this conversation may not be saved.')
         try {
           const saved = window.localStorage.getItem('smart-lib-assistant-session')
-          if (saved && !cancelled) setMessages(JSON.parse(saved))
+          if (saved) {
+            const restored = JSON.parse(saved)
+            if (Array.isArray(restored)) setMessages(restored)
+          }
         } catch {
-          // Keep the welcome message when browser storage is unavailable.
+          setMessages([initialMessage])
         }
       }
     }
@@ -93,7 +99,11 @@ export default function BookAssistant() {
   }, [open])
 
   useEffect(() => {
-    window.localStorage.setItem('smart-lib-assistant-session', JSON.stringify(messages))
+    try {
+      window.localStorage.setItem('smart-lib-assistant-session', JSON.stringify(messages))
+    } catch {
+      setError((current) => current ?? 'Browser storage is unavailable. This conversation will not be saved on this device.')
+    }
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [messages])
 
@@ -110,13 +120,28 @@ export default function BookAssistant() {
 
     try {
       let activeSessionId = sessionId
+      let sessionSaveWarning: string | null = null
       if (!activeSessionId) {
-        const created = await fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-        const createdData = await created.json()
-        if (!created.ok || !createdData.session) throw new Error(createdData?.error || 'Unable to start a new conversation.')
-        activeSessionId = createdData.session.id
-        setSessionId(activeSessionId)
-        setSessions([createdData.session])
+        try {
+          const created = await fetch('/api/assistant/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: getSessionTitle(trimmedQuery) }),
+          })
+          const createdData = await created.json().catch(() => ({}))
+          if (!created.ok || !createdData.session) throw new Error(createdData?.error || 'Unable to start a new conversation.')
+          activeSessionId = createdData.session.id
+          setSessionId(activeSessionId)
+          setSessions((current) => [createdData.session, ...current.filter((session) => session.id !== createdData.session.id)])
+        } catch (err: unknown) {
+          sessionSaveWarning = err instanceof Error ? err.message : 'Unable to save this conversation.'
+        }
+      } else {
+        setSessions((current) => current.map((session) => (
+          session.id === activeSessionId && session.title === 'New research chat'
+            ? { ...session, title: getSessionTitle(trimmedQuery) }
+            : session
+        )))
       }
       const response = await fetch('/api/recommend', {
         method: 'POST',
@@ -137,14 +162,25 @@ export default function BookAssistant() {
       }
       setMessages((current) => [...current, assistantMessage])
       if (activeSessionId) {
-        // Saving chat history should not keep the assistant in its loading state.
-        // The answer is already available, so persist it in the background.
-        void Promise.all([
-          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'user', content: userMessage.text }) }),
-          fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: activeSessionId, role: 'assistant', content: assistantMessage.text, results: assistantMessage.results, loans: assistantMessage.loans }) }),
-        ]).catch(() => {
-          // The local conversation remains usable if history persistence fails.
+        void (async () => {
+          for (const message of [
+            { role: 'user', content: userMessage.text },
+            { role: 'assistant', content: assistantMessage.text, results: assistantMessage.results, loans: assistantMessage.loans },
+          ]) {
+            const saveResponse = await fetch('/api/assistant/sessions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: activeSessionId, ...message }),
+            })
+            const saveData = await saveResponse.json().catch(() => ({}))
+            if (!saveResponse.ok) throw new Error(saveData?.error || 'Unable to save this conversation.')
+          }
+        })().catch((err: unknown) => {
+          const detail = err instanceof Error ? err.message : 'Unable to save this conversation.'
+          setError(`Your reply is ready, but something went wrong while saving chat history. ${detail}`)
         })
+      } else if (sessionSaveWarning) {
+        setError(`Your chat is available, but it will not appear in saved conversations. ${sessionSaveWarning}`)
       }
     } catch (err: any) {
       setError(err.message || String(err))
@@ -156,24 +192,23 @@ export default function BookAssistant() {
   }
 
   const clearSession = () => {
-    async function createNewSession() {
-      setMessages([initialMessage])
-      setError(null)
-      const response = await fetch('/api/assistant/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
-      const data = await response.json()
-      if (data.session) {
-        setSessionId(data.session.id)
-        setSessions((current) => [data.session, ...current])
-      }
-    }
-    void createNewSession()
+    setSessionId(null)
+    setMessages([initialMessage])
+    setQuery('')
+    setError(null)
   }
 
   const selectSession = async (selectedSession: ChatSession) => {
-    setSessionId(selectedSession.id)
-    const response = await fetch(`/api/assistant/sessions?session_id=${selectedSession.id}`)
-    const data = await response.json()
-    setMessages(data.messages?.length ? data.messages.map((message: any) => ({ id: String(message.id), role: message.role, text: message.content, results: message.results, loans: message.loans })) : [initialMessage])
+    try {
+      const response = await fetch(`/api/assistant/sessions?session_id=${encodeURIComponent(selectedSession.id)}`)
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data?.error || 'Unable to load this conversation.')
+      setSessionId(selectedSession.id)
+      setMessages(data.messages?.length ? data.messages.map((message: any) => ({ id: String(message.id), role: message.role, text: message.content, results: message.results, loans: message.loans })) : [initialMessage])
+      setError(null)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to load this conversation.')
+    }
   }
 
   const deleteSession = async (selectedSession: ChatSession) => {
@@ -234,12 +269,18 @@ export default function BookAssistant() {
         <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 
-      {sessions.length > 0 ? <div className="assistant-session-list" aria-label="Chat sessions">{sessions.slice(0, 5).map((session) => <div key={session.id} className={`assistant-session-item ${session.id === sessionId ? 'active' : ''}`}><button type="button" className="assistant-session-select" onClick={() => void selectSession(session)}>{session.title}</button>{confirmDeleteSessionId === session.id ? <span className="assistant-session-confirm"><span>{deletingSessionId === session.id ? 'Deleting…' : 'Delete?'}</span><button type="button" onClick={() => void deleteSession(session)} disabled={deletingSessionId !== null} aria-label={`Confirm deleting ${session.title}`}>Yes</button><button type="button" onClick={() => setConfirmDeleteSessionId(null)} disabled={deletingSessionId !== null} aria-label="Cancel deleting conversation">No</button></span> : <button type="button" className="assistant-session-delete" onClick={() => setConfirmDeleteSessionId(session.id)} disabled={deletingSessionId !== null} aria-label={`Delete ${session.title}`} title="Delete conversation">×</button>}</div>)}</div> : null}
+      {sessions.length > 0 ? <>
+        <div className="assistant-session-heading"><span>Recent chats</span><span>{sessions.length} saved</span></div>
+        <div className="assistant-session-list" aria-label="Recent chats">{sessions.slice(0, 5).map((session, index) => {
+          const title = session.title === 'New research chat' ? `Untitled chat ${index + 1}` : session.title
+          return <div key={session.id} className={`assistant-session-item ${session.id === sessionId ? 'active' : ''}`}><button type="button" className="assistant-session-select" onClick={() => void selectSession(session)}>{title}</button>{confirmDeleteSessionId === session.id ? <span className="assistant-session-confirm"><span>{deletingSessionId === session.id ? 'Deleting…' : 'Delete?'}</span><button type="button" onClick={() => void deleteSession(session)} disabled={deletingSessionId !== null} aria-label={`Confirm deleting ${title}`}>Yes</button><button type="button" onClick={() => setConfirmDeleteSessionId(null)} disabled={deletingSessionId !== null} aria-label="Cancel deleting conversation">No</button></span> : <button type="button" className="assistant-session-delete" onClick={() => setConfirmDeleteSessionId(session.id)} disabled={deletingSessionId !== null} aria-label={`Delete ${title}`} title="Delete conversation">×</button>}</div>
+        })}</div>
+      </> : null}
 
       <div className="assistant-thread" aria-live="polite">
         {messages.map((message) => (
           <div key={message.id} className={`assistant-message assistant-message-${message.role}`}>
-            <div className="assistant-avatar">{message.role === 'assistant' ? 'S' : 'You'}</div>
+            <div className="assistant-avatar" aria-hidden="true">{message.role === 'assistant' ? 'S' : 'You'}</div>
             <div className="assistant-message-body">
               <p>{message.text}</p>
               {message.loans?.length ? <div className="assistant-inline-results">{message.loans.map((loan, index) => <div key={`${message.id}-loan-${loan.id ?? index}`} className="assistant-result"><div><strong>{loan.books?.title || 'Book'}</strong><span className="block text-xs text-slate-500">{loan.type ? `${loan.type} · ` : ''}{loan.status}{loan.due_date ? ` · due ${new Date(loan.due_date).toLocaleDateString()}` : ''}</span></div></div>)}</div> : null}
@@ -247,12 +288,12 @@ export default function BookAssistant() {
             </div>
           </div>
         ))}
-        {loading ? <div className="assistant-message assistant-message-assistant"><div className="assistant-avatar">S</div><div className="assistant-typing"><span /><span /><span /></div></div> : null}
+        {loading ? <div className="assistant-message assistant-message-assistant" role="status" aria-label="Assistant is responding"><div className="assistant-avatar" aria-hidden="true">S</div><div className="assistant-typing"><span /><span /><span /></div></div> : null}
         <div ref={endRef} />
       </div>
 
       {messages.length === 1 ? <div className="assistant-suggestions">{starterPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setQuery(prompt)}>{prompt}</button>)}</div> : null}
-      {error ? <div className="assistant-error">{error}</div> : null}
+      {error ? <div className="assistant-error" role="alert"><span>{error}</span>{query.trim() ? <button type="button" onClick={() => void handleSearch()} disabled={loading}>Retry</button> : null}</div> : null}
 
       <form onSubmit={handleSearch} className="assistant-composer">
         <textarea value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSearch() } }} placeholder="Message your library assistant..." rows={1} aria-label="Message your library assistant" />

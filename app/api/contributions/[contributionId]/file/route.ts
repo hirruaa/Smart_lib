@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/server'
 import { downloadGoogleDrivePdf } from '@/utils/googleDrive'
 import { apiError } from '@/utils/api'
 import { isStaffRole } from '@/utils/roles'
+import { getContributionFileFormat } from '@/utils/contributionFiles'
 
 export const runtime = 'nodejs'
 
@@ -33,6 +34,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   if (!isStaffRole(profile?.role) && contribution.user_id !== user.id && !isPublishedLesson) {
     return NextResponse.json({ error: 'You are not allowed to open this contribution.' }, { status: 403 })
   }
+  const contentDisposition = `${getContributionFileFormat(contribution.file_name, contribution.mime_type) === 'pdf' ? 'inline' : 'attachment'}; filename="${(contribution.file_name || 'contribution.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')}"`
 
   if (contribution.storage_provider === 'google_drive' && contribution.storage_file_id) {
     try {
@@ -40,7 +42,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
       return new Response(bytes as unknown as BodyInit, {
         headers: {
           'Content-Type': contribution.mime_type || 'application/pdf',
-          'Content-Disposition': `inline; filename="${(contribution.file_name || 'contribution.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
+          'Content-Disposition': contentDisposition,
           'Cache-Control': 'private, no-store',
           'X-Content-Type-Options': 'nosniff',
         },
@@ -53,7 +55,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   const path = (contribution.storage_path || contribution.pdf_url || '').replace(/^ebooks\//, '')
   const ownerPrefix = `contributions/${contribution.user_id}/`
   if (/^https?:\/\//i.test(path)) {
-    return NextResponse.json({ error: 'External contribution files are not supported. Upload the PDF to library storage.' }, { status: 409 })
+    return NextResponse.json({ error: 'External contribution files are not supported. Upload the file to library storage.' }, { status: 409 })
   }
   if (!path || !path.startsWith(ownerPrefix) || path.split('/').some((segment: string) => segment === '.' || segment === '..')) {
     return NextResponse.json({ error: 'Contribution file is unavailable.' }, { status: 404 })
@@ -65,7 +67,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
   return new Response(await file.arrayBuffer(), {
     headers: {
       'Content-Type': contribution.mime_type || 'application/pdf',
-      'Content-Disposition': `inline; filename="${(contribution.file_name || 'contribution.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
+      'Content-Disposition': contentDisposition,
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     },

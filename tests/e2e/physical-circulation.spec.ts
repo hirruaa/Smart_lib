@@ -2,6 +2,43 @@ import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { adminClient, clearBrowserSession, createPhysicalBook, createTestUser, createUserClient, removeTestBook, removeTestUser, setTestInstitutionalId, signInInBrowser } from './support'
 
+test('student can clearly identify the selected physical loan period', async ({ page }) => {
+  const member = await createTestUser()
+  const title = `E2E Loan Period ${randomUUID()}`
+  let bookId: number | undefined
+  try {
+    const book = await createPhysicalBook(title)
+    bookId = book.bookId
+    const { error: optionError } = await adminClient
+      .from('physical_loan_options')
+      .upsert({ book_id: book.bookId, duration_days: 7, fee_amount: 10, is_active: true }, { onConflict: 'book_id,duration_days' })
+    expect(optionError).toBeNull()
+
+    await signInInBrowser(page, member)
+    await page.goto('/dashboard/student', { waitUntil: 'domcontentloaded' })
+    await page.getByRole('searchbox', { name: 'Search the library catalog' }).fill(title)
+    await page.getByRole('button', { name: `Choose loan options for ${title}` }).click()
+
+    const borrowDialog = page.getByRole('dialog', { name: `${title} · Physical copy` })
+    await expect(page.locator('.catalog-detail-modal')).toHaveCount(0)
+    const sevenDayOption = borrowDialog.getByRole('button', { name: /7 days/ })
+    const fourteenDayOption = borrowDialog.getByRole('button', { name: /14 days/ })
+    await expect(sevenDayOption).toHaveAttribute('aria-pressed', 'true')
+    await expect(sevenDayOption.getByText('Selected')).toBeVisible()
+    await expect(sevenDayOption).toHaveCSS('border-width', '2px')
+
+    await fourteenDayOption.click()
+    await expect(fourteenDayOption).toHaveAttribute('aria-pressed', 'true')
+    await expect(fourteenDayOption.getByText('Selected')).toBeVisible()
+    await expect(sevenDayOption).toHaveAttribute('aria-pressed', 'false')
+    await expect(sevenDayOption.getByText('Selected')).toHaveCount(0)
+  } finally {
+    await clearBrowserSession(page)
+    if (bookId !== undefined) await removeTestBook(bookId)
+    await removeTestUser(member)
+  }
+})
+
 test('staff sees a member physical request in circulation and the separate finance ledger', async ({ page }) => {
   const member = await createTestUser()
   const staff = await createTestUser('librarian')
@@ -29,6 +66,12 @@ test('staff sees a member physical request in circulation and the separate finan
     })
     expect(requestError).toBeNull()
     expect(request?.status).toBe('pending')
+    const { data: availableCopy, error: copyError } = await adminClient
+      .from('physical_book_copies')
+      .select('copy_code')
+      .eq('id', book.copyId)
+      .single()
+    expect(copyError).toBeNull()
 
     await signInInBrowser(page, staff)
     await page.goto('/dashboard/admin/physical', { waitUntil: 'domcontentloaded' })
@@ -36,7 +79,7 @@ test('staff sees a member physical request in circulation and the separate finan
     await expect(page.getByRole('heading', { name: 'Librarian desk' })).toBeVisible({ timeout: 15_000 })
     const deskNavigation = page.getByRole('navigation', { name: 'Librarian desk navigation' })
     await expect(deskNavigation).toBeVisible()
-    await expect(deskNavigation.getByRole('button', { name: /^Requests/ })).toHaveCount(1)
+    await expect(deskNavigation.getByRole('button', { name: /^Requests/ })).toHaveCount(0)
     await expect(deskNavigation.getByRole('button', { name: 'Checked out' })).toHaveCount(1)
     await expect(deskNavigation.getByRole('button', { name: /^Lost items/ })).toHaveCount(1)
     await expect(deskNavigation.getByRole('button', { name: 'Daily records' })).toHaveCount(1)
@@ -48,18 +91,31 @@ test('staff sees a member physical request in circulation and the separate finan
     await expect(deskNavigation.getByRole('button', { name: /catalog|policy|manage/i })).toHaveCount(0)
     await expect(page.getByRole('toolbar', { name: 'Physical circulation actions' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Review requests' })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: /^Requests/ })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Find member / start checkout' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Requests/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Find a member' })).toBeVisible()
     const queueItem = page.locator('article').filter({ hasText: title }).filter({ hasText: 'Cash checkout request' })
     await expect(queueItem).toBeVisible()
-    await expect(queueItem.getByText(`Student ID: ${institutionalId}`)).toBeVisible()
+    await expect(queueItem.getByText(`Member ID: ${institutionalId}`)).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Today at the desk' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Shift reconciliation' })).toHaveCount(0)
     await queueItem.getByRole('button', { name: 'Process checkout' }).click()
-    const queueRequestDialog = page.getByRole('dialog', { name: 'Physical book requests' })
-    await expect(queueRequestDialog).toBeVisible()
-    await expect(queueRequestDialog.getByText(title, { exact: true })).toBeVisible()
-    await queueRequestDialog.getByRole('button', { name: 'Close requests' }).click()
+    const checkoutReview = page.getByRole('dialog', { name: 'Review physical-book request' })
+    await expect(checkoutReview).toBeVisible()
+    await expect(checkoutReview.getByText(title, { exact: true })).toBeVisible()
+    await expect(checkoutReview.getByText(`Member ID: ${institutionalId}`)).toBeVisible()
+    const idConfirmation = checkoutReview.getByRole('checkbox', { name: /I confirm the member presented/ })
+    const cashConfirmation = checkoutReview.getByRole('checkbox', { name: /I confirm I received PHP/ })
+    const copyTag = checkoutReview.getByRole('textbox', { name: 'Copy accession tag' })
+    const issueCheckout = checkoutReview.getByRole('button', { name: 'Record cash & issue receipt' })
+    await expect(issueCheckout).toBeDisabled()
+    await idConfirmation.check()
+    await expect(issueCheckout).toBeDisabled()
+    await copyTag.fill('NOT-A-COPY')
+    await expect(issueCheckout).toBeDisabled()
+    await copyTag.fill(availableCopy!.copy_code)
+    if (await cashConfirmation.count()) await cashConfirmation.check()
+    await expect(issueCheckout).toBeEnabled()
+    await checkoutReview.getByRole('button', { name: 'Cancel' }).click()
     await deskNavigation.getByRole('button', { name: /^Checked out/ }).click()
     const checkedOutDialog = page.getByRole('dialog', { name: 'Checked-out copies' })
     await expect(checkedOutDialog).toBeVisible()
@@ -68,12 +124,32 @@ test('staff sees a member physical request in circulation and the separate finan
     const lostCasesDialog = page.getByRole('dialog', { name: 'Lost and damage cases' })
     await expect(lostCasesDialog).toBeVisible()
     await lostCasesDialog.getByRole('button', { name: 'Close cases' }).click()
-    await page.getByRole('button', { name: 'Find member / start checkout' }).click()
-    const memberSearch = page.getByRole('combobox', { name: 'Student / member ID or name' })
+    await page.getByRole('button', { name: 'Find a member' }).click()
+    const memberSearch = page.getByRole('combobox', { name: 'Search members' })
     await expect(memberSearch).toBeFocused()
     await memberSearch.press('Control+k')
     await expect(memberSearch).toBeFocused()
+    await expect(page.getByRole('dialog', { name: 'Find a member' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Member profile lookup' })).toHaveCount(0)
+    await expect(page.getByText('Shortcut: / or Ctrl+K')).toHaveCount(0)
+    await expect(page.getByText('Issue a physical copy')).toHaveCount(0)
+    await expect(page.getByRole('checkbox', { name: /I confirm the member presented/ })).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Physical book catalog' })).toBeVisible()
+    await memberSearch.fill(institutionalId)
+    await page.getByRole('option').filter({ hasText: institutionalId }).click()
+    const memberProfile = page.getByRole('dialog', { name: 'Member profile' })
+    await expect(memberProfile.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    await expect(memberProfile.getByText(`ID · ${institutionalId}`)).toBeVisible()
+    await memberProfile.getByRole('tab', { name: 'Borrowing' }).click()
+    await expect(memberProfile.getByRole('heading', { name: 'Currently borrowed' })).toBeVisible()
+    await expect(memberProfile.getByRole('heading', { name: 'Checkout history' })).toBeVisible()
+    await memberProfile.getByRole('tab', { name: 'Charges' }).click()
+    await expect(memberProfile.getByRole('heading', { name: 'Physical fines and assessments' })).toBeVisible()
+    await memberProfile.getByRole('tab', { name: 'Activity' }).click()
+    await expect(memberProfile.getByRole('heading', { name: 'Circulation activity' })).toBeVisible()
+    await memberProfile.getByRole('button', { name: 'Back to search' }).click()
+    await expect(page.getByRole('dialog', { name: 'Find a member' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Search members' })).toHaveValue(institutionalId)
     await page.getByRole('button', { name: 'Close Find a member' }).click()
     await page.setViewportSize({ width: 390, height: 844 })
     await expect(deskNavigation).toBeVisible()
@@ -86,20 +162,34 @@ test('staff sees a member physical request in circulation and the separate finan
     await mobileCatalogCard.getByRole('button', { name: 'View copies' }).click()
     await expect(mobileCatalogCard.locator('.physical-catalog-mobile-copies')).toContainText('available')
     await page.setViewportSize({ width: 1280, height: 900 })
-    await page.getByRole('button', { name: /^Requests/ }).click()
-    const requestsDialog = page.getByRole('dialog', { name: 'Physical book requests' })
-    await expect(requestsDialog).toBeVisible()
-    await expect(requestsDialog.getByText(title, { exact: true })).toBeVisible()
+    await queueItem.getByRole('button', { name: 'Process checkout' }).click()
+    const checkoutDialog = page.getByRole('dialog', { name: 'Review physical-book request' })
+    await expect(checkoutDialog).toBeVisible()
+    await expect(checkoutDialog.getByText(title, { exact: true })).toBeVisible()
+    await checkoutDialog.getByRole('textbox', { name: 'Copy accession tag' }).fill(availableCopy!.copy_code)
+    await checkoutDialog.getByRole('checkbox', { name: /I confirm the member presented/ }).check()
+    const checkoutCashConfirmation = checkoutDialog.getByRole('checkbox', { name: /I confirm I received PHP/ })
+    if (await checkoutCashConfirmation.count()) await checkoutCashConfirmation.check()
+    await checkoutDialog.getByRole('button', { name: 'Record cash & issue receipt' }).click()
+    await expect(checkoutDialog).toBeHidden()
+    await expect(page.getByText('Payment confirmed and physical checkout recorded. Digital receipt issued to the borrower.')).toBeVisible()
 
     const { data: persistedRequest, error: readError } = await adminClient
       .from('physical_book_requests')
-      .select('status')
+      .select('status,copy_id')
       .eq('id', request.id)
       .single()
     expect(readError).toBeNull()
-    expect(persistedRequest?.status).toBe('pending')
+    expect(persistedRequest?.status).toBe('checked_out')
+    expect(persistedRequest?.copy_id).toBe(book.copyId)
+    const { data: persistedCopy, error: persistedCopyError } = await adminClient
+      .from('physical_book_copies')
+      .select('status')
+      .eq('id', book.copyId)
+      .single()
+    expect(persistedCopyError).toBeNull()
+    expect(persistedCopy?.status).toBe('borrowed')
 
-    await requestsDialog.getByRole('button', { name: 'Close requests' }).click()
     await deskNavigation.getByRole('button', { name: 'Daily records' }).click()
     await expect(page).toHaveURL(/\/dashboard\/admin\/physical\/finance$/)
     await expect(page.getByRole('heading', { name: 'Sales & borrowing history' })).toBeVisible()
@@ -175,85 +265,48 @@ test('physical-book requests accept cash only and reject online payment data', a
   }
 })
 
-test('librarian can issue manually selected accession tags from a member profile and batch return copies', async ({ page }) => {
+test('librarian member lookup is a read-only profile, separate from checkout', async ({ page }) => {
   const member = await createTestUser()
   const staff = await createTestUser('librarian')
-  const firstTitle = `E2E Desk Issue ${randomUUID()}`
-  const secondTitle = `E2E Desk Issue ${randomUUID()}`
   const institutionalId = await setTestInstitutionalId(member)
-  let firstBookId: number | undefined
-  let secondBookId: number | undefined
 
   try {
-    const firstBook = await createPhysicalBook(firstTitle)
-    const secondBook = await createPhysicalBook(secondTitle)
-    firstBookId = firstBook.bookId
-    secondBookId = secondBook.bookId
-    const { data: copyRows, error: copyError } = await adminClient
-      .from('physical_book_copies')
-      .select('copy_code')
-      .in('id', [firstBook.copyId, secondBook.copyId])
-      .order('copy_code')
-    expect(copyError).toBeNull()
-    expect(copyRows).toHaveLength(2)
-    const copyCodes = copyRows?.map((copy) => copy.copy_code) ?? []
-
     await signInInBrowser(page, staff)
     await page.goto('/dashboard/admin/physical', { waitUntil: 'domcontentloaded' })
-    await page.getByRole('button', { name: 'Find member / start checkout' }).click()
-    const memberSearch = page.getByRole('combobox', { name: 'Student / member ID or name' })
+    await page.getByRole('button', { name: 'Find a member' }).click()
+    const memberSearch = page.getByRole('combobox', { name: 'Search members' })
     await memberSearch.fill(institutionalId)
     await memberSearch.press('Enter')
     await expect(page.getByText(institutionalId, { exact: true })).toBeVisible()
-    await page.getByRole('checkbox', { name: /I confirm the member presented/ }).check()
-
-    for (const copyCode of copyCodes) {
-      await page.getByLabel('Physical copy accession tag').fill(copyCode)
-      await page.getByRole('option', { name: new RegExp(copyCode) }).click()
-      await expect(page.getByRole('button', { name: 'Issue loan' })).toBeEnabled()
-      await page.getByRole('button', { name: 'Issue loan' }).click()
-      await expect(page.getByText(new RegExp(`${copyCode} issued to`))).toBeVisible()
-    }
-
-    const memberProfile = page.getByRole('region', { name: 'Find a student or faculty member' })
-    await expect(memberProfile.getByText('2 / 3', { exact: true })).toBeVisible()
-    for (const copyCode of copyCodes) {
-      await page.getByRole('checkbox', { name: `Select ${copyCode} for return` }).check()
-    }
-    await page.getByRole('button', { name: 'Mark 2 selected returned' }).click()
-    await expect(page.getByText('2 physical copies returned and marked available.')).toBeVisible()
-
-    const { data: requests, error: requestError } = await adminClient
-      .from('physical_book_requests')
-      .select('status,copy_id')
-      .eq('student_id', member.id)
-      .in('copy_id', [firstBook.copyId, secondBook.copyId])
-    expect(requestError).toBeNull()
-    expect(requests).toHaveLength(2)
-    expect(requests?.every((request) => request.status === 'returned')).toBe(true)
-    const { data: copies, error: copyStatusError } = await adminClient
-      .from('physical_book_copies')
-      .select('status')
-      .in('id', [firstBook.copyId, secondBook.copyId])
-    expect(copyStatusError).toBeNull()
-    expect(copies?.every((copy) => copy.status === 'available')).toBe(true)
+    await expect(page.getByRole('dialog', { name: 'Find a member' })).toBeVisible()
+    await expect(page.getByText('Active physical loans')).toBeVisible()
+    const topUpButton = page.getByRole('button', { name: 'Record point top-up' })
+    await expect(topUpButton).toBeVisible()
+    await topUpButton.click()
+    const topUpDialog = page.getByRole('dialog', { name: 'Record cash point top-up' })
+    await expect(topUpDialog).toBeVisible()
+    await expect(topUpDialog.getByText('200 points', { exact: true })).toBeVisible()
+    await topUpDialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(topUpDialog).toHaveCount(0)
+    await expect(page.getByText('Issue a physical copy')).toHaveCount(0)
+    await expect(page.getByRole('checkbox', { name: /I confirm the member presented/ })).toHaveCount(0)
   } finally {
     await clearBrowserSession(page)
-    if (firstBookId !== undefined) await removeTestBook(firstBookId)
-    if (secondBookId !== undefined) await removeTestBook(secondBookId)
     await removeTestUser(member)
     await removeTestUser(staff)
   }
 })
 
-test('overdue return and damage case are actionable from the priority queue for librarians only', async ({ page }) => {
+test('checkout exceptions, damage assessment, lost-item recovery, and fine payment follow explicit steps', async ({ page }) => {
   const member = await createTestUser()
   const staff = await createTestUser('librarian')
   const bookTitle = `E2E Queue Overdue ${randomUUID()}`
   const damageTitle = `E2E Queue Damage ${randomUUID()}`
+  const lostTitle = `E2E Queue Lost ${randomUUID()}`
   const institutionalId = await setTestInstitutionalId(member)
   let overdueBookId: number | undefined
   let damageBookId: number | undefined
+  let lostBookId: number | undefined
   let unauthorizedStudent: Awaited<ReturnType<typeof createTestUser>> | undefined
   let adminUser: Awaited<ReturnType<typeof createTestUser>> | undefined
 
@@ -264,6 +317,8 @@ test('overdue return and damage case are actionable from the priority queue for 
     overdueBookId = overdueBook.bookId
     const damageBook = await createPhysicalBook(damageTitle)
     damageBookId = damageBook.bookId
+    const lostBook = await createPhysicalBook(lostTitle)
+    lostBookId = lostBook.bookId
     const memberClient = createUserClient()
     const { error: memberSignInError } = await memberClient.auth.signInWithPassword({ email: member.email, password: member.password })
     expect(memberSignInError).toBeNull()
@@ -282,6 +337,11 @@ test('overdue return and damage case are actionable from the priority queue for 
     }
     const overdueRequest = await requestLoan(overdueBook.bookId)
     const damageRequest = await requestLoan(damageBook.bookId)
+    const lostRequest = await requestLoan(lostBook.bookId)
+    const checkoutCopies = await Promise.all([overdueBook, damageBook, lostBook].map((book) =>
+      adminClient.from('physical_book_copies').select('copy_code').eq('id', book.copyId).single(),
+    ))
+    expect(checkoutCopies.map(({ error }) => error)).toEqual([null, null, null])
     const staffClient = createUserClient()
     const { error: staffSignInError } = await staffClient.auth.signInWithPassword({ email: staff.email, password: staff.password })
     expect(staffSignInError).toBeNull()
@@ -296,15 +356,16 @@ test('overdue return and damage case are actionable from the priority queue for 
       .eq('role', 'admin')
     expect(adminProfileError).toBeNull()
     expect(adminProfiles).toEqual([])
-    const checkoutResults = await Promise.all([overdueRequest, damageRequest].map((request) =>
+    const checkoutResults = await Promise.all([overdueRequest, damageRequest, lostRequest].map((request, index) =>
       staffClient.rpc('admin_confirm_physical_checkout', {
         p_request_id: request.id,
+        p_copy_code: checkoutCopies[index].data!.copy_code,
         p_amount_paid: 0,
         p_payment_notes: null,
         p_id_card_presented: true,
       }),
     ))
-    expect(checkoutResults.map(({ error }) => error)).toEqual([null, null])
+    expect(checkoutResults.map(({ error }) => error)).toEqual([null, null, null])
 
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
@@ -320,44 +381,109 @@ test('overdue return and damage case are actionable from the priority queue for 
       p_id_card_presented: true,
     })
     expect(damageError).toBeNull()
+    const { error: lostError } = await staffClient.rpc('admin_inspect_physical_return', {
+      p_request_id: lostRequest.id,
+      p_copy_condition: 'lost',
+      p_assessed_amount: 50,
+      p_assessment_reason: 'E2E lost-item replacement assessment',
+      p_id_card_presented: true,
+    })
+    expect(lostError).toBeNull()
 
     await signInInBrowser(page, staff)
     await page.goto('/dashboard/admin/physical', { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('heading', { name: 'Today at the desk' })).toBeVisible({ timeout: 15_000 })
-    await page.getByRole('button', { name: 'Due today or overdue' }).click()
+    await expect(page.getByRole('group', { name: 'Filter desk queue' })).toHaveCount(0)
     const overdueItem = page.locator('article').filter({ hasText: bookTitle })
     await expect(overdueItem.getByText('Overdue return')).toBeVisible()
     await overdueItem.getByRole('button', { name: 'Verify ID & return' }).click()
-    const memberSearch = page.getByRole('combobox', { name: 'Student / member ID or name' })
-    await expect(memberSearch).toHaveValue(institutionalId)
-    await memberSearch.press('Enter')
-    await page.getByRole('checkbox', { name: /I confirm the member presented/ }).check()
-    await page.getByRole('button', { name: 'Continue to return' }).click()
-    const checkedOutDialog = page.getByRole('dialog', { name: 'Checked-out copies' })
-    await expect(checkedOutDialog).toBeVisible()
-    const overdueLoan = checkedOutDialog.locator('article').filter({ hasText: bookTitle })
-    await expect(overdueLoan).toBeVisible()
-    await overdueLoan.getByRole('button', { name: 'Record good return' }).click()
+    const returnDialog = page.getByRole('dialog', { name: 'Verify ID & inspect return' })
+    await expect(returnDialog).toBeVisible()
+    await expect(returnDialog.getByText(institutionalId)).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Search members' })).toHaveCount(0)
+    const goodReturn = returnDialog.getByRole('button', { name: /Good condition/ })
+    await expect(goodReturn).toHaveAttribute('aria-pressed', 'true')
+    await expect(returnDialog.getByRole('button', { name: /Damaged/ })).toBeVisible()
+    await expect(returnDialog.getByRole('button', { name: /Not returned · lost/ })).toBeVisible()
+    await returnDialog.getByRole('checkbox', { name: /I confirm the member presented/ }).check()
+    await returnDialog.getByRole('button', { name: 'Continue to return' }).click()
     await page.getByRole('dialog', { name: 'Record physical-book return?' }).getByRole('button', { name: 'Record return' }).click()
     await expect(page.getByText('Return inspection recorded', { exact: false })).toBeVisible()
-    await checkedOutDialog.getByRole('button', { name: 'Close' }).click()
-    await page.getByRole('button', { name: 'Close Find a member' }).click()
     await page.getByRole('button', { name: 'Dismiss success message' }).click()
 
-    await page.getByRole('button', { name: 'All urgent' }).click()
     const damageItem = page.locator('article').filter({ hasText: damageTitle })
     await expect(damageItem.getByText('Damaged item case')).toBeVisible()
     await damageItem.getByRole('button', { name: 'Review case' }).click()
     const damageDialog = page.getByRole('dialog', { name: 'Review damage case' })
     await expect(damageDialog).toBeVisible()
-    await damageDialog.getByRole('button', { name: 'Close' }).click()
+    await expect(damageDialog.getByText('inspect → assess → disposition')).toBeVisible()
+    const damageAmount = damageDialog.getByRole('spinbutton', { name: 'Assessed damage charge (PHP)' })
+    const damageReason = damageDialog.getByRole('textbox', { name: 'Assessment decision and reason' })
+    await damageAmount.fill('15')
+    await damageReason.fill('E2E assessed damage charge')
+    await damageDialog.getByRole('button', { name: 'Save assessment' }).click()
+    await expect(damageDialog.getByText('Assessed: PHP 15.00')).toBeVisible()
+    await damageDialog.getByLabel('Copy disposition').selectOption('available')
+    await damageDialog.getByLabel('Repair / disposition note').fill('E2E repair completed')
+    await damageDialog.getByRole('button', { name: 'Save disposition' }).click()
+    await expect(page.getByText('Copy marked repaired and returned to circulation.')).toBeVisible()
     const casesDialog = page.getByRole('dialog', { name: 'Lost and damage cases' })
     await expect(casesDialog).toBeVisible()
+    const lostCase = casesDialog.locator('tr').filter({ hasText: lostTitle })
+    await expect(lostCase).toBeVisible()
+    await lostCase.getByRole('button', { name: 'Resolve case' }).click()
+    const lostDialog = page.getByRole('dialog', { name: 'Resolve lost-item case' })
+    await expect(lostDialog).toBeVisible()
+    const confirmRecovery = lostDialog.getByRole('button', { name: 'Confirm recovery' })
+    await expect(confirmRecovery).toBeDisabled()
+    await expect(lostDialog.getByRole('button', { name: /Recovered · good condition/ })).toHaveAttribute('aria-pressed', 'false')
+    await lostDialog.getByRole('button', { name: /Recovered · good condition/ }).click()
+    await expect(confirmRecovery).toBeEnabled()
+    await confirmRecovery.click()
+    await expect(page.getByText(/Lost-book hold resolved/)).toBeVisible()
+    const { data: recoveredLoan, error: recoveredLoanError } = await adminClient
+      .from('physical_book_requests')
+      .select('status,incident_status')
+      .eq('id', lostRequest.id)
+      .single()
+    expect(recoveredLoanError).toBeNull()
+    expect(recoveredLoan).toMatchObject({ status: 'returned', incident_status: 'resolved' })
+    const { data: recoveredFine, error: recoveredFineError } = await adminClient
+      .from('fines')
+      .select('status')
+      .eq('physical_book_request_id', lostRequest.id)
+      .eq('fine_type', 'lost_item')
+      .single()
+    expect(recoveredFineError).toBeNull()
+    expect(recoveredFine?.status).toBe('waived')
     await casesDialog.getByRole('button', { name: 'Close cases' }).click()
 
     adminUser = await createTestUser('admin')
     await clearBrowserSession(page)
     await signInInBrowser(page, adminUser)
+    await page.goto('/dashboard/admin/physical/finance', { waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('heading', { name: 'Transactions' })).toBeVisible()
+    const financeSearch = page.getByRole('searchbox', { name: 'Search transactions' })
+    await financeSearch.fill(damageTitle)
+    const damageTransaction = page.getByRole('row').filter({ hasText: damageTitle })
+    await expect(damageTransaction).toBeVisible()
+    await damageTransaction.getByRole('button', { name: 'Record payment' }).click()
+    const paymentDialog = page.getByRole('dialog', { name: 'Record cashier payment?' })
+    const confirmPayment = paymentDialog.getByRole('button', { name: 'Confirm payment received' })
+    await expect(confirmPayment).toBeDisabled()
+    await paymentDialog.getByRole('checkbox', { name: /I confirm PHP 15.00 cash was received/ }).check()
+    await expect(confirmPayment).toBeEnabled()
+    await confirmPayment.click()
+    await expect(page.getByText('Physical-book fine payment recorded.')).toBeVisible()
+    const { data: paidDamageFine, error: paidDamageFineError } = await adminClient
+      .from('fines')
+      .select('status,receipt_number')
+      .eq('physical_book_request_id', damageRequest.id)
+      .eq('fine_type', 'damage')
+      .single()
+    expect(paidDamageFineError).toBeNull()
+    expect(paidDamageFine?.status).toBe('paid')
+    expect(paidDamageFine?.receipt_number).toBeTruthy()
     await page.goto('/dashboard/admin/physical', { waitUntil: 'domcontentloaded' })
     await expect(page).toHaveURL(/\/dashboard\/admin$/)
     await expect(page.getByRole('heading', { name: 'Today at the desk' })).toHaveCount(0)
@@ -372,6 +498,7 @@ test('overdue return and damage case are actionable from the priority queue for 
     await clearBrowserSession(page)
     if (overdueBookId !== undefined) await removeTestBook(overdueBookId)
     if (damageBookId !== undefined) await removeTestBook(damageBookId)
+    if (lostBookId !== undefined) await removeTestBook(lostBookId)
     if (adminUser) await removeTestUser(adminUser)
     if (unauthorizedStudent) await removeTestUser(unauthorizedStudent)
     await removeTestUser(member)
@@ -458,8 +585,24 @@ test('parallel staff checkout attempts create one loan and one receipt', async (
     ))
     expect(staffSignIns.map(({ error }) => error)).toEqual([null, null])
 
+    const { data: availableCopy, error: copyError } = await adminClient
+      .from('physical_book_copies')
+      .select('copy_code')
+      .eq('id', book.copyId)
+      .single()
+    expect(copyError).toBeNull()
+    const wrongCopyResult = await staffClients[0].rpc('admin_confirm_physical_checkout', {
+      p_request_id: request.id,
+      p_copy_code: 'NOT-A-COPY',
+      p_amount_paid: 0,
+      p_payment_notes: null,
+      p_id_card_presented: true,
+    })
+    expect(wrongCopyResult.error?.message).toContain('No physical copy matches')
+
     const results = await Promise.all(staffClients.map((client) => client.rpc('admin_confirm_physical_checkout', {
       p_request_id: request.id,
+      p_copy_code: availableCopy!.copy_code,
       p_amount_paid: 0,
       p_payment_notes: null,
       p_id_card_presented: true,
@@ -468,12 +611,13 @@ test('parallel staff checkout attempts create one loan and one receipt', async (
     expect(results.filter(({ error }) => error?.message.includes('This request is not ready for checkout'))).toHaveLength(1)
 
     const [history, copy, audit] = await Promise.all([
-      adminClient.from('physical_book_loan_history').select('id', { count: 'exact', head: true }).eq('request_id', request.id),
+      adminClient.from('physical_book_loan_history').select('copy_id', { count: 'exact' }).eq('request_id', request.id),
       adminClient.from('physical_book_copies').select('status').eq('book_id', book.bookId).single(),
       adminClient.from('audit_logs').select('id', { count: 'exact', head: true }).eq('action', 'physical_id_verified_at_checkout').eq('target_id', String(request.id)),
     ])
     expect(history.error).toBeNull()
     expect(history.count).toBe(1)
+    expect(history.data?.[0]?.copy_id).toBe(book.copyId)
     expect(copy.error).toBeNull()
     expect(copy.data?.status).toBe('borrowed')
     expect(audit.error).toBeNull()
