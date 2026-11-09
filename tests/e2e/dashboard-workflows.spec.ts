@@ -14,12 +14,15 @@ test('student and faculty dashboards keep common library dialogs available and c
       const walletButton = page.getByRole('button', { name: 'Wallet' })
       await expect(walletButton).toHaveCSS('font-size', '12px')
       await expect(walletButton).toHaveCSS('color', 'rgb(255, 255, 255)')
-      await expect(page.locator('.student-hero-stat-value span').first()).toHaveCSS('font-size', '12px')
+      await expect(page.locator('.student-hero-stat-value span').first()).toHaveCSS('font-size', '11px')
       await expect(page.locator('.student-hero-stat-value').first()).toHaveCSS('display', 'grid')
       await expect(page.locator('.student-hero-stat-value strong').first()).toHaveCSS('font-variant-numeric', 'tabular-nums')
       const summaryCards = page.locator('.student-hero-summary > .student-hero-stat')
       await expect(summaryCards).toHaveCount(3)
-      await expect(summaryCards.first()).toHaveCSS('border-radius', '14px')
+      await expect(summaryCards.first()).toHaveCSS('border-radius', '18px')
+      await expect(summaryCards.first()).toHaveCSS('background-color', 'rgb(252, 251, 247)')
+      await expect(summaryCards.first().locator('.student-hero-stat-value strong')).toHaveCSS('font-size', '25px')
+      await expect(page.getByRole('button', { name: 'Scan book QR' })).toHaveCount(0)
       await expect(page.locator('.student-hero-actions')).toBeVisible()
 
       const sidebar = page.locator('.student-sidebar')
@@ -127,11 +130,6 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(profileDialog.locator('.base-modal-content')).toHaveJSProperty('scrollWidth', await profileDialog.locator('.base-modal-content').evaluate((element) => element.clientWidth))
       await page.setViewportSize({ width: 1280, height: 900 })
       await profileDialog.getByRole('button', { name: 'Close Your profile' }).click()
-
-      await page.getByRole('button', { name: 'Scan book QR' }).click()
-      const scannerDialog = page.getByRole('dialog', { name: 'Scan book QR' })
-      await expect(scannerDialog).toBeVisible()
-      await scannerDialog.getByRole('button', { name: 'Close QR scanner' }).click()
 
       await clearBrowserSession(page)
     }

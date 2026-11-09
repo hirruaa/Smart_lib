@@ -107,16 +107,6 @@ type PhysicalLoan = {
 }
 type PhysicalAvailabilityAlert = { book_id: number; created_at: string; title?: string }
 
-function getPhysicalCopyToken(qrData: string) {
-  try {
-    const token = new URL(qrData, window.location.origin).searchParams.get('copy')
-    return token && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)
-      ? token
-      : null
-  } catch {
-    return null
-  }
-}
 const physicalTitleGroupKey = (book: Pick<Book, 'title' | 'author'>) =>
   [book.title, book.author].map((value) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).join('|')
 const normalizeCatalogSearchText = (value: string) =>
@@ -196,15 +186,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [clearanceError, setClearanceError] = useState<string | null>(null)
   const [physicalReceipt, setPhysicalReceipt] = useState<PhysicalLoan | null>(null)
   const [memberReceipt, setMemberReceipt] = useState<MemberReceipt | null>(null)
-  const [scannerOpen, setScannerOpen] = useState(false)
-  const [scannerError, setScannerError] = useState('')
-  const [scannerStatus, setScannerStatus] = useState('')
-  const [scannerStarting, setScannerStarting] = useState(false)
-  const [scannerStarted, setScannerStarted] = useState(false)
-  const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
-  const scannerStreamRef = useRef<MediaStream | null>(null)
-  const scannerTimerRef = useRef<number | null>(null)
-  const scannerActiveRef = useRef(false)
   const [continueReadingOpen, setContinueReadingOpen] = useState(false)
   const [activeAccessOpen, setActiveAccessOpen] = useState(false)
   const [dataReady, setDataReady] = useState(false)
@@ -286,147 +267,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       .subscribe()
     return () => { void getSupabase().removeChannel(channel) }
   }, [userId])
-
-  useEffect(() => {
-    if (!scannerOpen) return
-    setScannerError('')
-    setScannerStatus('')
-    return () => {
-      scannerActiveRef.current = false
-      setScannerStarting(false)
-      setScannerStarted(false)
-      if (scannerTimerRef.current !== null) window.clearTimeout(scannerTimerRef.current)
-      scannerTimerRef.current = null
-      scannerStreamRef.current?.getTracks().forEach((track) => track.stop())
-      scannerStreamRef.current = null
-      if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
-    }
-  }, [scannerOpen])
-
-  const startPhysicalQrScanner = async () => {
-    setScannerError('')
-    setScannerStatus('Requesting camera access…')
-    setScannerStarting(true)
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setScannerStarting(false)
-      setScannerStatus('')
-      setScannerError(window.isSecureContext
-        ? 'Camera access is unavailable in this browser. Choose a QR image instead.'
-        : 'Camera access requires HTTPS or localhost. Open Mary the Queen College over a secure connection, or choose a QR image.')
-      return
-    }
-
-    scannerActiveRef.current = true
-    try {
-      let stream: MediaStream
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        })
-      } catch (cameraError) {
-        if (!(cameraError instanceof DOMException) || !['OverconstrainedError', 'NotFoundError'].includes(cameraError.name)) throw cameraError
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      }
-
-      if (!scannerActiveRef.current) {
-        stream.getTracks().forEach((track) => track.stop())
-        return
-      }
-
-      scannerStreamRef.current = stream
-      const video = scannerVideoRef.current
-      if (!video) throw new Error('The camera preview could not be initialized.')
-      video.srcObject = stream
-      await video.play()
-      setScannerStarting(false)
-      setScannerStarted(true)
-      setScannerStatus('Camera ready. Center the Mary the Queen College QR sticker in view.')
-
-      const { default: jsQR } = await import('jsqr')
-      const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d', { willReadFrequently: true })
-      if (!context) throw new Error('QR scanning is unavailable in this browser.')
-      let scanCount = 0
-      const scan = () => {
-        if (!scannerActiveRef.current || !scannerVideoRef.current) return
-        const currentVideo = scannerVideoRef.current
-        if (currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && currentVideo.videoWidth > 0) {
-          const scale = Math.min(1, 960 / currentVideo.videoWidth)
-          canvas.width = Math.round(currentVideo.videoWidth * scale)
-          canvas.height = Math.round(currentVideo.videoHeight * scale)
-          context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height)
-          const frame = context.getImageData(0, 0, canvas.width, canvas.height)
-          scanCount += 1
-          const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: scanCount % 4 === 0 ? 'attemptBoth' : 'dontInvert' })
-          if (result?.data) {
-            const copyToken = getPhysicalCopyToken(result.data)
-            if (copyToken) {
-              window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
-              return
-            }
-            setScannerError('This QR code is not a Mary the Queen College physical-book sticker. Try another code or image.')
-            setScannerStatus('')
-            scannerActiveRef.current = false
-            return
-          }
-        }
-        scannerTimerRef.current = window.setTimeout(scan, 180)
-      }
-      scan()
-    } catch (cause) {
-      scannerActiveRef.current = false
-      setScannerStarting(false)
-      setScannerStarted(false)
-      scannerStreamRef.current?.getTracks().forEach((track) => track.stop())
-      scannerStreamRef.current = null
-      if (scannerVideoRef.current) scannerVideoRef.current.srcObject = null
-      setScannerStatus('')
-      setScannerError(cause instanceof DOMException && cause.name === 'NotAllowedError'
-        ? 'The browser blocked camera access. Click the camera/site icon in the address bar and allow Camera access for this site, then select Start camera again.'
-        : cause instanceof DOMException && cause.name === 'NotFoundError'
-          ? 'No camera was found. Check that your webcam is connected and enabled, or choose a QR image.'
-          : cause instanceof DOMException && cause.name === 'NotReadableError'
-            ? 'The webcam is busy or unavailable. Close other apps using it, then select Start camera again.'
-            : cause instanceof DOMException && cause.name === 'SecurityError'
-              ? 'Camera access requires a secure HTTPS connection. Open Mary the Queen College over HTTPS or localhost, or choose a QR image.'
-              : cause instanceof Error
-                ? `Unable to start the camera: ${cause.message}`
-                : 'Unable to start the camera. Check browser and operating-system camera permissions.')
-    }
-  }
-
-  const scanQrImage = async (file: File) => {
-    setScannerError('')
-    setScannerStatus('Reading QR image…')
-    try {
-      const image = await createImageBitmap(file)
-      try {
-        const scale = Math.min(1, 1600 / Math.max(image.width, image.height))
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.max(1, Math.round(image.width * scale))
-        canvas.height = Math.max(1, Math.round(image.height * scale))
-        const context = canvas.getContext('2d', { willReadFrequently: true })
-        if (!context) throw new Error('QR scanning is unavailable in this browser.')
-        context.drawImage(image, 0, 0, canvas.width, canvas.height)
-        const frame = context.getImageData(0, 0, canvas.width, canvas.height)
-        const { default: jsQR } = await import('jsqr')
-        const result = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'attemptBoth' })
-        const copyToken = result?.data ? getPhysicalCopyToken(result.data) : null
-        if (!copyToken) {
-          setScannerError('No Mary the Queen College book QR was found in that image. Try a clearer, well-lit photo.')
-          setScannerStatus('')
-          return
-        }
-        window.location.href = `/dashboard/student?copy=${encodeURIComponent(copyToken)}#explore`
-      } finally {
-        image.close()
-      }
-    } catch (cause) {
-      setScannerError(cause instanceof Error ? `Unable to read that image: ${cause.message}` : 'Unable to read that QR image.')
-      setScannerStatus('')
-    }
-  }
 
   useEffect(() => {
     if (!userId) return
@@ -1294,11 +1134,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-current={activeSidebarItem === 'library' ? 'page' : undefined} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
               <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-current={activeSidebarItem === 'payments' ? 'page' : undefined} aria-label="Loans and charges" title={sidebarCollapsed ? 'Loans and charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
             </div>
-            <div className="student-nav-group">
+            {memberType === 'faculty' ? <div className="student-nav-group">
               <p className="student-nav-group-label">Tools</p>
-              {memberType === 'faculty' ? <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-current={activeSidebarItem === 'materials' ? 'page' : undefined} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button> : null}
-              <button type="button" aria-label="Scan book QR" title={sidebarCollapsed ? 'Scan book QR' : undefined} onClick={() => { setScannerError(''); setScannerOpen(true); setSidebarOpen(false) }}><span className="student-nav-qr-icon" aria-hidden="true">▣</span><span>Scan book QR</span></button>
-            </div>
+              <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-current={activeSidebarItem === 'materials' ? 'page' : undefined} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button>
+            </div> : null}
           </nav>
           <div className="student-sidebar-footer">
             <p className="student-nav-group-label">Account</p>
@@ -1819,43 +1658,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               </div>
               <button type="button" onClick={() => router.push('/contributions')} className="text-xs font-semibold text-pine-700 hover:underline dark:text-pine-200">View contribution history and revisions</button>
             </form>
-          </section>
-        </div>
-      ) : null}
-      {scannerOpen ? (
-        <div className="notification-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setScannerOpen(false) }}>
-          <section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="scanner-modal-title">
-            <div className="notification-modal-header"><div><p className="field-label text-xs font-semibold uppercase tracking-[0.2em]">Physical collection</p><h2 id="scanner-modal-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Scan book QR</h2></div><button type="button" className="notification-modal-close" onClick={() => setScannerOpen(false)} aria-label="Close QR scanner">×</button></div>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Point your camera at a Mary the Queen College copy sticker. The matching book will open in the catalog.</p>
-            <video ref={scannerVideoRef} className="mt-5 aspect-video w-full rounded-2xl bg-slate-950 object-cover" autoPlay muted playsInline />
-            {scannerError ? <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{scannerError}</p> : null}
-            {!scannerError && scannerStatus ? <p aria-live="polite" className="mt-4 text-sm text-slate-600 dark:text-slate-300">{scannerStatus}</p> : null}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void startPhysicalQrScanner()}
-                disabled={scannerStarting || scannerStarted}
-                className="pine-action rounded-xl px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {scannerStarting ? 'Requesting camera...' : scannerStarted ? 'Camera active' : 'Start camera'}
-              </button>
-              <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
-                Choose QR image
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="sr-only"
-                  aria-label="Choose an image containing a Mary the Queen College QR code"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    event.target.value = ''
-                    if (file) void scanQrImage(file)
-                  }}
-                />
-              </label>
-            </div>
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Select Start camera to request browser permission. If access was blocked earlier, allow Camera for this site from the browser’s address-bar controls, then try again. Camera access needs HTTPS or localhost.</p>
           </section>
         </div>
       ) : null}

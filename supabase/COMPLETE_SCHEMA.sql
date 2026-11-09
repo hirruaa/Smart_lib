@@ -1,5 +1,5 @@
--- Smart Lib complete fresh-install schema, including the 20261109 lesson workflow
--- and the 20261108120000 policy/audit migration.
+-- Smart Lib complete fresh-install schema, including the 20261109 lesson workflow,
+-- the 20261108120000 policy/audit migration, and program-based faculty departments.
 -- Use only on a new/empty Supabase project. This script creates the current
 -- tables, functions, policies, storage configuration, closed registration,
 -- staff circulation and payments, member activity ledger, and username login.
@@ -4752,43 +4752,11 @@ create trigger trg_faculty_contributions_only
 before insert or update on public.book_contributions
 for each row execute function public.guard_faculty_contributions();
 
--- Keep department choices aligned with the college structure. Unknown legacy
--- profile department strings are cleared before the obsolete choices are removed.
+-- Preserve the existing department choices. Program-based departments are
+-- seeded from the academic catalog after the college programs are added below.
 insert into public.academic_departments (name, is_active)
 values ('IT Department', true), ('Courses Department', true)
 on conflict do nothing;
-
-update public.profiles
-set department = null
-where department is not null
-  and lower(trim(department)) not in ('it department', 'courses department');
-
-update public.academic_departments
-set name = case lower(trim(name))
-  when 'it department' then 'IT Department'
-  when 'courses department' then 'Courses Department'
-  else name
-end,
-is_active = lower(trim(name)) in ('it department', 'courses department');
-
-delete from public.academic_departments
-where lower(trim(name)) not in ('it department', 'courses department');
-
-alter table public.academic_departments
-  drop constraint if exists academic_departments_school_choices;
-alter table public.academic_departments
-  add constraint academic_departments_school_choices
-  check (name in ('IT Department', 'Courses Department') and is_active);
-
-alter table public.profiles
-  drop constraint if exists profiles_school_department_choices;
-alter table public.profiles
-  add constraint profiles_school_department_choices
-  check (
-    role not in ('student', 'faculty')
-    or department is null
-    or department in ('IT Department', 'Courses Department')
-  );
 
 commit;
 
@@ -5178,6 +5146,20 @@ where not exists (
   where lower(trim(existing.name)) = lower(trim(program.name))
 )
 on conflict (name) do nothing;
+
+commit;
+
+-- ============================================================================
+-- Consolidated source: 20261111_seed_program_departments.sql
+-- ============================================================================
+begin;
+
+insert into public.academic_departments (name, is_active)
+select name, true
+from public.academic_courses
+where is_active
+on conflict (lower(name)) do update
+set is_active = excluded.is_active;
 
 commit;
 

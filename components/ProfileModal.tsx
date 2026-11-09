@@ -23,6 +23,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [courses, setCourses] = useState<string[]>([])
+  const [departments, setDepartments] = useState<string[]>([])
   const [activity, setActivity] = useState<ActivityEvent[]>([])
   const [activityError, setActivityError] = useState<string | null>(null)
 
@@ -48,7 +49,10 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
       setDepartment(data?.department ?? '')
       setCourse(data?.course ?? '')
       setStudentYear(data?.student_year ?? '')
-      const { data: courseChoices } = await supabase.from('academic_courses').select('name').eq('is_active', true).order('name')
+      const [departmentChoices, courseChoices] = await Promise.all([
+        supabase.from('academic_departments').select('name').eq('is_active', true).order('name'),
+        supabase.from('academic_courses').select('name').eq('is_active', true).order('name'),
+      ])
       const loadActivity = async () => {
         const { data: activityRows, error: ledgerError } = await supabase.from('member_activity_ledger')
           .select('id,occurred_at,event_type,summary,actor_role,receipt_number')
@@ -58,9 +62,10 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
         setActivityError(ledgerError ? `Activity history is unavailable: ${ledgerError.message}` : null)
       }
       if (!active) return
-      setCourses((courseChoices ?? []).map((item) => item.name))
+      setDepartments((departmentChoices.data ?? []).map((item) => item.name))
+      setCourses((courseChoices.data ?? []).map((item) => item.name))
       setMessage(null)
-      setError(null)
+      setError(departmentChoices.error ? `Department choices are unavailable: ${departmentChoices.error.message}` : null)
       await loadActivity()
       activityChannel = supabase.channel(`member-ledger-${user.id}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'member_activity_ledger', filter: `member_id=eq.${user.id}` }, () => void loadActivity())
@@ -132,7 +137,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
           {role === 'student'
             ? <label className="profile-field-wide"><span>College / school</span><input value="Mary the Queen College of Quezon City" readOnly /></label>
             : <label><span>School</span><input maxLength={120} value={school} onChange={(event) => setSchool(event.target.value)} placeholder="School or college" /></label>}
-          {role === 'faculty' ? <label><span>Department</span><select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">Select department</option><option value="IT Department">IT Department</option><option value="Courses Department">Courses Department</option></select></label> : null}
+          {role === 'faculty' ? <label><span>Department</span><select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">Select department</option>{departments.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : null}
           {role === 'student' ? <>
             <label className="profile-field-wide"><span>Course</span><select required value={course} onChange={(event) => setCourse(event.target.value)}><option value="">Select course</option>{courses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <label><span>Year level</span><select required value={studentYear} onChange={(event) => setStudentYear(event.target.value)}><option value="">Select year</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select></label>

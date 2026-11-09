@@ -4,8 +4,9 @@ const path = require('path')
 const root = path.resolve(__dirname, '..')
 const schemaDirectory = path.join(root, 'supabase')
 const schemaFiles = fs.readdirSync(schemaDirectory).filter((file) => file.endsWith('.sql'))
-if (schemaFiles.length !== 1 || schemaFiles[0] !== 'COMPLETE_SCHEMA.sql') {
-  throw new Error(`Expected only supabase/COMPLETE_SCHEMA.sql, found: ${schemaFiles.join(', ') || 'no SQL files'}`)
+const allowedSchemaFiles = ['ALL_MIGRATIONS.sql', 'COMPLETE_SCHEMA.sql']
+if (allowedSchemaFiles.some((file) => !schemaFiles.includes(file)) || schemaFiles.some((file) => !allowedSchemaFiles.includes(file))) {
+  throw new Error(`Expected only supabase/COMPLETE_SCHEMA.sql and supabase/ALL_MIGRATIONS.sql, found: ${schemaFiles.join(', ') || 'no SQL files'}`)
 }
 const schema = fs.readFileSync(path.join(schemaDirectory, 'COMPLETE_SCHEMA.sql'), 'utf8')
 const requiredSchemaObjects = [
@@ -22,6 +23,17 @@ const requiredSchemaObjects = [
 
 for (const objectName of requiredSchemaObjects) {
   if (!schema.includes(objectName)) throw new Error(`Missing schema object: ${objectName}`)
+}
+
+const departmentMigrationPath = path.join(root, 'supabase/migrations/20261111_seed_program_departments.sql')
+if (!fs.existsSync(departmentMigrationPath)) throw new Error('Missing program-based faculty departments migration')
+const departmentMigration = fs.readFileSync(departmentMigrationPath, 'utf8')
+for (const token of ['from public.academic_courses', 'where is_active', 'on conflict (lower(name))']) {
+  if (!departmentMigration.includes(token)) throw new Error(`Program-based departments migration is missing: ${token}`)
+}
+const profileModal = fs.readFileSync(path.join(root, 'components/ProfileModal.tsx'), 'utf8')
+for (const token of ["from('academic_departments')", 'departments.map']) {
+  if (!profileModal.includes(token)) throw new Error(`Profile department choices are missing: ${token}`)
 }
 
 const requiredHybridObjects = [
