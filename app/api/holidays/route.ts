@@ -29,7 +29,7 @@ function isCalendarDate(value: string, year: number) {
 }
 
 export async function GET(request: Request) {
-  const requestLimit = rateLimit(request, { name: 'public-holiday-calendar', limit: 10, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'public-holiday-calendar', limit: 10, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
 
   const yearValue = new URL(request.url).searchParams.get('year')

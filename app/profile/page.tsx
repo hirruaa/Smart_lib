@@ -10,7 +10,6 @@ export default function ProfilePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<{ full_name?: string; email: string; role?: string } | null>(null)
   const [fullName, setFullName] = useState('')
-  const [school, setSchool] = useState('')
   const [department, setDepartment] = useState('')
   const [course, setCourse] = useState('')
   const [studentYear, setStudentYear] = useState('')
@@ -34,7 +33,7 @@ export default function ProfilePage() {
 
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('full_name, email, role, school, department, course, student_year')
+        .select('full_name, email, role, department, course, student_year')
         .eq('id', user.id)
         .maybeSingle()
 
@@ -45,7 +44,6 @@ export default function ProfilePage() {
       if (profileData) {
         setProfile(profileData)
         setFullName(profileData.full_name ?? '')
-        setSchool(profileData.school ?? '')
         setDepartment(profileData.department ?? '')
         setCourse(profileData.course ?? '')
         setStudentYear(profileData.student_year ?? '')
@@ -76,10 +74,9 @@ export default function ProfilePage() {
       .from('profiles')
       .update({
         full_name: fullName.trim() || null,
-        school: school.trim() || null,
         department: profile?.role === 'faculty' ? department.trim() || null : null,
-        course: course.trim() || null,
-        student_year: studentYear.trim() || null,
+        course: profile?.role === 'student' ? course.trim() || null : null,
+        student_year: profile?.role === 'student' ? studentYear.trim() || null : null,
       })
       .eq('id', user.id)
 
@@ -113,7 +110,7 @@ export default function ProfilePage() {
     <div className="surface-page min-h-screen px-4 py-12 text-slate-900 antialiased dark:text-slate-100">
       <div className="surface-card mx-auto max-w-3xl p-8 sm:p-10">
         <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Your Profile</h1>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Update your name and review your account role.</p>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Manage your personal details and account security.</p>
 
         {error ? (
           <div className="mt-6 rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
@@ -128,6 +125,7 @@ export default function ProfilePage() {
         ) : null}
 
         <form onSubmit={handleSave} className="mt-8 space-y-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Personal details</h2>
           <div className="grid gap-6 sm:grid-cols-2">
             <label className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Name</span>
@@ -137,10 +135,6 @@ export default function ProfilePage() {
                 className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none"
               />
             </label>
-            <div className="block">
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">School</span>
-              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">Mary the Queen College of Quezon City</p>
-            </div>
             {profile?.role === 'faculty' ? <label className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Faculty</span>
               <input value={department} maxLength={120} onChange={(event) => setDepartment(event.target.value)} className="workspace-input mt-2 w-full rounded-xl border px-4 py-3 text-sm outline-none" placeholder="Faculty" />
@@ -164,11 +158,7 @@ export default function ProfilePage() {
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="block">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Role</span>
-              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">{profile?.role}</p>
-            </div>
-            <div className="block">
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Status</span>
-              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm">Logged in</p>
+              <p className="workspace-value mt-2 rounded-xl border px-4 py-3 text-sm capitalize">{profile?.role || 'Member'}</p>
             </div>
           </div>
 

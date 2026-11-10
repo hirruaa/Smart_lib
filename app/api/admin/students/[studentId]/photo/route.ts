@@ -65,7 +65,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ stu
   if (bodyTooLarge(request, maxPhotoBytes + 1024 * 1024)) {
     return NextResponse.json({ error: 'Photo file must be 10 MB or smaller.' }, { status: 413 })
   }
-  const requestLimit = rateLimit(request, { name: 'admin-member-photo', limit: 20, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'admin-member-photo', limit: 20, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
 
   const studentId = (await params).studentId

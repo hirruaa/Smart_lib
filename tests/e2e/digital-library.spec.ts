@@ -126,3 +126,30 @@ test('catalog relevance ranks title and subject matches ahead of description-onl
     await removeTestUser(user)
   }
 })
+
+test('member catalog renders matching books in manageable pages', async ({ page }) => {
+  const user = await createTestUser()
+  const prefix = `E2E Catalog Paging ${randomUUID()}`
+  const titles = Array.from({ length: 25 }, (_, index) => `${prefix} ${index + 1}`)
+  const bookIds: number[] = []
+
+  try {
+    bookIds.push(...await Promise.all(titles.map((title) => createDigitalBook(title))))
+    await signInInBrowser(page, user)
+    await page.goto('/dashboard/student', { waitUntil: 'domcontentloaded' })
+    await page.getByRole('searchbox', { name: 'Search the library catalog' }).fill(prefix)
+
+    const catalogResults = page.locator('#catalog-results .resource-card')
+    await expect(catalogResults).toHaveCount(24)
+    const pageNavigation = page.getByRole('navigation', { name: 'Catalog pages' })
+    await expect(pageNavigation).toContainText('Page 1 of 2')
+    await pageNavigation.getByRole('button', { name: 'Next' }).click()
+    await expect(catalogResults).toHaveCount(1)
+    await expect(catalogResults.first()).toContainText(titles[24])
+    await expect(pageNavigation).toContainText('Page 2 of 2')
+  } finally {
+    await clearBrowserSession(page)
+    await Promise.all(bookIds.map((bookId) => removeTestBook(bookId)))
+    await removeTestUser(user)
+  }
+})

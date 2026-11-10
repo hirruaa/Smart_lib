@@ -27,7 +27,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return originViolation()
   if (bodyTooLarge(req, 96 * 1024)) return NextResponse.json({ error: 'Highlight request is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(req, { name: 'study-highlight-write', limit: 120, windowMs: 60_000 })
+  const requestLimit = await rateLimit(req, { name: 'study-highlight-write', limit: 120, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()

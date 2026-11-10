@@ -30,15 +30,16 @@ type ChatMessage = {
 type ChatSession = { id: string; title: string; updated_at?: string }
 
 const starterPrompts = [
-  'What should I do if I lost a book?',
-  'How much are overdue fines?',
-  'What books do I currently have borrowed?',
+  'Who is the librarian?',
+  'What if I lost a book?',
+  'How do overdue fines work?',
+  'Do digital books get fines?',
 ]
 
 const initialMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. Ask me any question or concern — how overdue fines work, what to do if a book is lost, borrowing rules, library clearance, or book recommendations.',
+  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. I can help with library rules, fines, lost or damaged items, your loans, the librarian roster, and book recommendations. Tell me what happened and I’ll guide you through the next steps.',
 }
 
 function getSessionTitle(message: string) {
@@ -299,7 +300,7 @@ export default function BookAssistant() {
         <textarea value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSearch() } }} placeholder="Message your library assistant..." rows={1} aria-label="Message your library assistant" />
         <button type="submit" className="assistant-submit" disabled={loading || !query.trim()} aria-label="Send message">Send</button>
       </form>
-      <p className="assistant-disclaimer">Gemini uses your message, recent chat context, matching catalog details, and—when asked—your own loan details to reply. Don’t share sensitive information.</p>
+      <p className="assistant-disclaimer">Answers use current library policy, catalog information, and—when asked—your own loan and fine records. Don’t share sensitive information.</p>
       </section> : null}
     </>
   )

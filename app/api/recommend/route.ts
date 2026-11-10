@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { generateGeminiEmbedding, generateGeminiToolChatReply, GeminiRequestError } from '@/utils/gemini'
+import { generateGeminiChatReply, GeminiRequestError } from '@/utils/gemini'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 
 type AssistantIntent = 'search' | 'research' | 'loans' | 'policy'
 type RecentMessage = { role: 'user' | 'assistant'; content: string }
+type LibraryPolicy = {
+  fine_grace_days: number
+  late_fee_per_day: number | string
+  late_fee_cap: number | string
+  lost_after_days: number
+  policy_notice: string
+}
 type CatalogSearchRow = {
   id: number
   title: string
@@ -18,14 +25,29 @@ type CatalogSearchRow = {
 
 const assistantSearchFillers = new Set([
   'a', 'an', 'and', 'about', 'are', 'book', 'books', 'can', 'could', 'find',
-  'for', 'give', 'help', 'i', 'in', 'looking', 'me', 'need', 'of', 'on',
+  'for', 'give', 'help', 'i', 'in', 'is', 'it', 'located', 'looking', 'me', 'near', 'need', 'of', 'on',
   'please', 'recommend', 'resource', 'resources', 'search', 'show', 'some',
-  'the', 'to', 'want', 'what', 'with', 'you',
+  'the', 'to', 'want', 'what', 'where', 'with', 'you', 'physical', 'inventory',
+  'available', 'availability', 'copies', 'copy', 'shelf', 'location',
 ])
+
+function needsLibrarianRoster(query: string) {
+  return /\b(librarian|library staff|who(?:'s| is) (?:working|on duty))\b/i.test(query)
+}
+
+function needsLibraryPolicy(query: string, intent: AssistantIntent) {
+  if (needsLibrarianRoster(query) && !/\b(fine|fines|overdue|lost|damage|renew|clearance|restriction|suspend|policy)\b/i.test(query)) return false
+  return intent === 'policy'
+    || /\b(fine|fines|late fee|overdue|lost|damage|damaged|renew|renewal|clearance|restriction|suspend|borrow(?:ing)? rule|policy|eligible|eligibility)\b/i.test(query)
+}
+
+function needsPhysicalInventory(query: string) {
+  return /\b(where(?: can i| do i| is| are)?|location|shelf|available|availability|in stock|physical copy|copies)\b/i.test(query)
+}
 
 function getIntent(query: string): AssistantIntent {
   const q = query.toLowerCase()
-  if (/(my|i currently have|active|borrowed|my loan|my due|my account|my status|my clearance|my books|i have)/i.test(q) && /(book|books|loan|due|borrow|expire|renew|return)/i.test(q)) {
+  if (/(my|for me|i currently have|active|borrowed|my loan|my due|my account|my status|my clearance|my books|i have|do i owe|will i owe|what do i owe|am i eligible|can i borrow|am i allowed)/i.test(q) && /(book|books|loan|due|borrow|expire|renew|return|fine|fines|fee|clearance|balance|eligible|overdue|status|account|owe)/i.test(q)) {
     return 'loans'
   }
   if (/(recommend|suggest|find (?:books?|resources?)|search (?:for )?(?:books?|resources?)|looking for (?:books?|resources?)|(?:books?|resources?|materials) (?:about|on|for)|titles by|reading list)/i.test(q) && !/(lost|fine|damage|penalty|how much|policy|rule|role|clearance|hours|what to do|procedure)/i.test(q)) {
@@ -35,6 +57,46 @@ function getIntent(query: string): AssistantIntent {
     return 'research'
   }
   return 'policy'
+}
+
+function getImmediatePolicyAnswer(
+  query: string,
+  policy: LibraryPolicy | null,
+  librarians: string[],
+  configuredLibrarian: string | null,
+  librarianLookupFailed: boolean,
+  frontDeskFallback: string,
+) {
+  const q = query.toLowerCase()
+  if (/\b(who(?:'s| is) (?:the )?(?:current )?librarian|current librarian|name of (?:the )?librarian|librarian(?:'s)? name)\b/i.test(q)) {
+    const names = librarians.length ? librarians : configuredLibrarian ? [configuredLibrarian] : []
+    if (names.length) return `The current librarian${names.length === 1 ? ' is' : 's are'} ${names.join(', ')}.`
+    if (librarianLookupFailed) return `I can't verify the current librarian roster right now. Please ask at ${frontDeskFallback}.`
+    return `I don't have a current librarian name on file. Please ask at ${frontDeskFallback}.`
+  }
+
+  if (/\b(?:digital|ebook|e-book)\b/i.test(q) && /\b(overdue|late|fine|fines)\b/i.test(q)) {
+    return 'Digital access does not accrue overdue fines. Access ends on the due date shown in your account; ask the library desk if you need help with a specific title.'
+  }
+
+  if (/\b(damag(?:e|ed)|wet|torn|broken)\b/i.test(q) && /\b(book|item|borrowed|library)\b/i.test(q)) {
+    return `Please stop using the item and report the damage to library staff as soon as possible. Staff must inspect it and assess any charge; I can't quote a fixed damage fee. Ask at ${frontDeskFallback}.`
+  }
+
+  if (/\b(lost|misplaced|can't find|cannot find)\b/i.test(q) && /\b(book|item|borrowed)\b/i.test(q)) {
+    if (!policy) return null
+    const dailyFee = Number(policy.late_fee_per_day).toFixed(2)
+    const cap = Number(policy.late_fee_cap).toFixed(2)
+    return `Report the lost physical book to library staff as soon as possible so they can update the loan and explain the next steps. An overdue or lost physical item restricts new checkouts. For general-circulation physical books, the current policy has a ${policy.fine_grace_days}-day grace period, then PHP ${dailyFee} per chargeable day (excluding Sundays and library-recorded holidays), capped at PHP ${cap} per item. At ${policy.lost_after_days} days overdue, the item is classified as lost and late-fine accrual stops. Any lost-item/replacement charge is assessed by staff; there is no fixed replacement amount I can quote. Existing loans retain the policy snapshot saved at checkout, so staff can confirm the exact terms for your loan. Ask at ${frontDeskFallback}.`
+  }
+
+  if (/\b(overdue|late|fine|fines|late fee)\b/i.test(q) && /\b(how much|how are|what is|what are|calculate|policy|charge|charged|work)\b/i.test(q)) {
+    if (/\b(my|me|for me|my account|my fine|my fines|i owe|do i|will i)\b/i.test(q)) return null
+    if (!policy) return null
+    return `For general-circulation physical books, the current policy allows ${policy.fine_grace_days} grace days, then charges PHP ${Number(policy.late_fee_per_day).toFixed(2)} per chargeable day. Sundays and library-recorded holidays are not chargeable, and the total is capped at PHP ${Number(policy.late_fee_cap).toFixed(2)} per item. This doesn't apply to digital access, which does not accrue overdue fines. Existing physical loans retain the policy snapshot saved at checkout, so check with staff about a specific loan.`
+  }
+
+  return null
 }
 
 function getCatalogQuery(query: string) {
@@ -61,13 +123,13 @@ function filterRelevantCatalogRows(query: string, rows: CatalogSearchRow[]) {
 function parseHistory(value: unknown): RecentMessage[] | null {
   if (value === undefined) return []
   if (!Array.isArray(value)) return null
-  const messages = value.slice(-6)
+  const messages = value.slice(-4)
   if (messages.some((message) =>
     !message || typeof message !== 'object'
     || !['user', 'assistant'].includes(message.role)
     || typeof message.content !== 'string'
     || !message.content.trim()
-    || message.content.length > 2000
+    || message.content.length > 1000
   )) return null
   return messages.map((message) => ({
     role: message.role as 'user' | 'assistant',
@@ -79,7 +141,7 @@ export async function POST(req: Request) {
   try {
     if (!sameOrigin(req)) return originViolation()
     if (bodyTooLarge(req, 32_768)) return NextResponse.json({ error: 'Chat request is too large.' }, { status: 413 })
-    const requestLimit = rateLimit(req, { name: 'assistant', limit: 20, windowMs: 60_000 })
+    const requestLimit = await rateLimit(req, { name: 'assistant', limit: 20, windowMs: 60_000 })
     if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
     const requestText = await req.text()
     if (requestText.length > 24000) {
@@ -112,25 +174,47 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Your library profile could not be verified. Please try again.' }, { status: 503 })
     }
     const memberRole = memberProfile.role
+    let frontDeskFallback = 'the Mary the Queen College Library circulation desk'
+    const needsRoster = needsLibrarianRoster(query)
+    const needsPolicy = needsLibraryPolicy(query, intent)
+    const needsAssistantSettings = needsRoster || needsPolicy
+    const [assistantSettingsResult, policyResult, librarianResult] = await Promise.all([
+      needsAssistantSettings
+        ? supabase.from('library_assistant_settings')
+          .select('librarian_name, front_desk_fallback').eq('id', true).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      needsPolicy
+        ? supabase.from('library_policy_settings')
+          .select('fine_grace_days, late_fee_per_day, late_fee_cap, lost_after_days, policy_notice').eq('id', 1).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      needsRoster
+        ? supabase.rpc('assistant_current_librarians')
+        : Promise.resolve({ data: null, error: null }),
+    ])
+    if (assistantSettingsResult.error) console.error('Library assistant settings could not be loaded:', assistantSettingsResult.error)
+    if (policyResult.error) console.error('Live library policy could not be loaded:', policyResult.error)
+    if (librarianResult.error) console.error('Current librarian roster could not be loaded:', librarianResult.error)
+    if (assistantSettingsResult.data?.front_desk_fallback?.trim()) frontDeskFallback = assistantSettingsResult.data.front_desk_fallback.trim()
+    const currentPolicy = policyResult.data as LibraryPolicy | null
+    const currentLibrarians = ((librarianResult.data ?? []) as Array<{ full_name: string | null }>)
+      .map((librarian) => librarian.full_name?.trim())
+      .filter((name): name is string => Boolean(name))
+    const configuredLibrarian = assistantSettingsResult.data?.librarian_name?.trim() || null
+
+    const immediateAnswer = getImmediatePolicyAnswer(
+      query,
+      currentPolicy,
+      currentLibrarians,
+      configuredLibrarian,
+      Boolean(librarianResult.error),
+      frontDeskFallback,
+    )
+    if (immediateAnswer) return NextResponse.json({ query, intent, answer: immediateAnswer, results: [], loans: [] })
+    if (needsPolicy && !currentPolicy) {
+      return NextResponse.json({ error: 'Current library policy is temporarily unavailable. Please contact the library desk.' }, { status: 503 })
+    }
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json({ error: 'The AI assistant is not configured. Ask the administrator to add GEMINI_API_KEY.' }, { status: 503 })
-    }
-
-    let policyText = ''
-    let frontDeskFallback = 'the Mary the Queen College Library circulation desk'
-    let policySettingsUnavailable = false
-    try {
-      const { data: assistantSettings, error: settingsError } = await supabase.from('library_assistant_settings')
-        .select('librarian_name, policy_text, front_desk_fallback').eq('id', true).maybeSingle()
-      if (settingsError) throw settingsError
-      if (assistantSettings?.policy_text?.trim()) policyText = assistantSettings.policy_text.trim()
-      if (assistantSettings?.front_desk_fallback?.trim()) frontDeskFallback = assistantSettings.front_desk_fallback.trim()
-    } catch (error) {
-      policySettingsUnavailable = true
-      console.error('Library assistant policy settings could not be loaded:', error)
-    }
-    if (intent === 'policy' && policySettingsUnavailable) {
-      return NextResponse.json({ error: 'Library policy settings are temporarily unavailable. Please contact the library desk.' }, { status: 503 })
     }
 
     const previousUserQuery = [...history].reverse().find((message) => message.role === 'user')?.content
@@ -144,6 +228,10 @@ export async function POST(req: Request) {
     const catalogPromise = shouldSearchCatalog
       ? supabase.rpc('search_books', { p_query: catalogQuery, p_limit: 10 })
       : Promise.resolve({ data: [], error: null })
+    const shouldSearchInventory = needsPhysicalInventory(query)
+    const inventoryPromise = shouldSearchInventory
+      ? supabase.rpc('assistant_search_physical_inventory', { p_query: getCatalogQuery(query) })
+      : Promise.resolve({ data: [], error: null })
     const digitalLoanPromise = intent === 'loans'
       ? supabase
         .from('borrow_requests')
@@ -155,13 +243,27 @@ export async function POST(req: Request) {
     const physicalLoanPromise = intent === 'loans'
       ? supabase
         .from('physical_book_requests')
-        .select('status, due_date, books(title, author)')
+        .select('id, status, due_date, policy_grace_days, policy_daily_fine, policy_fine_cap, policy_lost_days, books(title, author)')
         .eq('student_id', user.id)
         .order('requested_at', { ascending: false })
         .limit(20)
       : Promise.resolve({ data: [], error: null })
+    const finesPromise = intent === 'loans'
+      ? supabase
+        .from('fines')
+        .select('amount, status, fine_type, fine_reason, physical_book_request_id, created_at')
+        .eq('student_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      : Promise.resolve({ data: [], error: null })
 
-    const [rpc, digitalLoanResult, physicalLoanResult] = await Promise.all([catalogPromise, digitalLoanPromise, physicalLoanPromise])
+    const [rpc, inventoryResult, digitalLoanResult, physicalLoanResult, finesResult] = await Promise.all([
+      catalogPromise,
+      inventoryPromise,
+      digitalLoanPromise,
+      physicalLoanPromise,
+      finesPromise,
+    ])
     let results: CatalogSearchRow[] = []
     if (shouldSearchCatalog) {
       if (rpc.error) {
@@ -170,12 +272,16 @@ export async function POST(req: Request) {
       }
       results = filterRelevantCatalogRows(catalogQuerySource, (rpc.data ?? []) as CatalogSearchRow[])
     }
+    if (shouldSearchInventory && inventoryResult.error) {
+      console.error('Library assistant physical inventory search failed:', inventoryResult.error)
+      return NextResponse.json({ error: 'Physical inventory is temporarily unavailable. Please try again.' }, { status: 503 })
+    }
 
     let loans: Array<Record<string, unknown>> = []
     if (intent === 'loans') {
-      if (digitalLoanResult.error || physicalLoanResult.error) {
-        console.error('Library assistant loan lookup failed:', digitalLoanResult.error ?? physicalLoanResult.error)
-        return NextResponse.json({ error: 'Your loan details are temporarily unavailable. Please try again.' }, { status: 503 })
+      if (digitalLoanResult.error || physicalLoanResult.error || finesResult.error) {
+        console.error('Library assistant account lookup failed:', digitalLoanResult.error ?? physicalLoanResult.error ?? finesResult.error)
+        return NextResponse.json({ error: 'Your loan or fine details are temporarily unavailable. Please try again.' }, { status: 503 })
       }
       loans = [
         ...(digitalLoanResult.data ?? []).map((loan) => ({
@@ -186,9 +292,16 @@ export async function POST(req: Request) {
         })),
         ...(physicalLoanResult.data ?? []).map((loan) => ({
           type: 'Physical circulation',
+          request_id: loan.id,
           status: loan.status,
           due_date: loan.due_date,
           books: loan.books,
+          policySnapshot: {
+            graceDays: loan.policy_grace_days,
+            dailyFine: loan.policy_daily_fine,
+            fineCap: loan.policy_fine_cap,
+            lostAfterDays: loan.policy_lost_days,
+          },
         })),
       ]
     }
@@ -198,15 +311,30 @@ export async function POST(req: Request) {
       title,
       author,
       category,
-      description: description?.slice(0, 300) ?? null,
+      description: description?.slice(0, 160) ?? null,
       available_copies,
     }))
 
     const context = JSON.stringify({
       memberRole,
       currentUserLoans: loans,
+      currentUserFines: intent === 'loans' ? (finesResult.data ?? []) : [],
       catalog: catalogContext,
-      customPolicy: policyText || undefined,
+      physicalInventory: shouldSearchInventory ? inventoryResult.data ?? [] : [],
+      currentLibrarians: currentLibrarians.length ? currentLibrarians : configuredLibrarian ? [configuredLibrarian] : [],
+      ...(needsPolicy ? { circulationGuidance: {
+        overdueOrLostPhysicalItem: 'Blocks new physical checkout requests and availability-queue entries; new digital checkouts are also restricted while a physical item is overdue or lost.',
+        unpaidPhysicalFine: 'Can affect borrowing privileges; staff collect physical fine payments at the library cashier.',
+        physicalRenewals: 'Handled by library staff. Overdue physical loans and loans with an open incident cannot be renewed; fees depend on the selected active term.',
+        numericSuspensionThreshold: 'Do not state a numeric fine-balance suspension threshold; ask library staff to confirm.',
+      } } : {}),
+      libraryPolicy: currentPolicy ? {
+        fineGraceDays: currentPolicy.fine_grace_days,
+        lateFeePerChargeableDay: currentPolicy.late_fee_per_day,
+        lateFeeCapPerItem: currentPolicy.late_fee_cap,
+        lostAfterDays: currentPolicy.lost_after_days,
+        notice: currentPolicy.policy_notice,
+      } : null,
     })
 
     const geminiMessages = [
@@ -222,32 +350,23 @@ export async function POST(req: Request) {
 
     let answer: string
     try {
-      answer = await generateGeminiToolChatReply(
+      answer = await generateGeminiChatReply(
         geminiMessages,
         [
           'You are the Smart Lib AI Assistant for Mary the Queen College of Quezon City.',
-          'Be friendly, concise, and useful. Treat the live context and configured library policy as the only authoritative source for library-specific facts.',
-          'Never invent fines, due-date rules, replacement requirements, clearance effects, payment methods, loan durations, account permissions, library hours, or staff contacts. If the configured policy does not answer a policy question, say that you cannot verify it and direct the member to the library desk.',
-          'For book discovery, recommend only titles present in the supplied catalog results. Explain relevance using their title, author, category, or description, and do not claim a title is available unless the supplied data says so.',
-          'When asked about personal loans, use only currentUserLoans. Do not infer loans or account status from conversation history.',
-          'For physical inventory, availability, or location questions, use search_physical_inventory and report only its returned matches.',
-          `For in-person assistance, physical payments, or pickups and returns, direct the member to ${frontDeskFallback}.`,
-          policyText ? `Configured library policy:\n${policyText}` : 'No verified policy text is configured. Do not answer policy-specific questions from general assumptions.',
-        ].join('\n\n'),
-        [{ name: 'search_physical_inventory', description: 'Find active physical or hybrid titles with current availability and recorded shelf locations.', parameters: { type: 'OBJECT', properties: { query: { type: 'STRING', description: 'Title, author, ISBN, or category.' } }, required: ['query'] } }],
-        {
-          search_physical_inventory: async (args) => {
-            const lookup = typeof args.query === 'string' ? args.query.trim().slice(0, 120) : ''
-            if (!lookup) return { error: 'A title, author, ISBN, or category is required.' }
-            try {
-              const { data, error } = await supabase.rpc('assistant_search_physical_inventory', { p_query: lookup })
-              if (error) return { error: 'Physical inventory lookup is temporarily unavailable.' }
-              return { matches: data ?? [] }
-            } catch {
-              return { error: 'Physical inventory lookup is temporarily unavailable.' }
-            }
-          },
-        },
+          'Be concise and practical: answer directly, give ordered next steps, and explain likely consequences. Ask only a necessary follow-up.',
+          'Use supplied live data as the only authority for library facts. Never invent fees, dates, eligibility, clearance effects, locations, hours, or contacts. If information is missing, say so and refer the user to the library desk.',
+          'Use libraryPolicy for current physical fine and lost-item rules; for an existing physical loan use its policySnapshot. Lost/damage charges are staff-assessed; never make up a replacement cost. Digital access has no overdue fines.',
+          'Use only currentUserLoans/currentUserFines for the signed-in member; report unpaid fines as outstanding and never infer their account status from chat history.',
+          'Recommend only supplied catalog titles. Use physicalInventory results for location and availability. currentLibrarians is a roster, not an on-duty schedule.',
+          `For in-person help or physical payments, direct the member to ${frontDeskFallback}.`,
+          currentPolicy ? `Current policy: ${JSON.stringify({
+            fineGraceDays: currentPolicy.fine_grace_days,
+            lateFeePerChargeableDay: currentPolicy.late_fee_per_day,
+            lateFeeCapPerItem: currentPolicy.late_fee_cap,
+            lostAfterDays: currentPolicy.lost_after_days,
+          })}` : 'Live structured library policy is unavailable; do not state policy-specific facts.',
+        ].join('\n'),
       )
     } catch (error: unknown) {
       if (error instanceof GeminiRequestError) {

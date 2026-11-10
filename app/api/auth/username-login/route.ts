@@ -7,7 +7,7 @@ import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation }
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 2_048)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
-  const limit = rateLimit(request, { name: 'username-login', limit: 8, windowMs: 60_000 })
+  const limit = await rateLimit(request, { name: 'username-login', limit: 8, windowMs: 60_000 })
   if (!limit.allowed) return tooManyRequests(limit.retryAfterSeconds)
 
   const body = await request.json().catch(() => null)

@@ -70,7 +70,7 @@ export default function StaffCashPointTopUpModal({
   const selectedBundle = bundles.find((bundle) => bundle.points === bundlePoints) ?? bundles[0]
   return <BaseModal
     open={open && member !== null}
-    title={receipt ? 'Cash top-up receipt' : 'Record cash point top-up'}
+    title={receipt ? 'Points receipt' : 'Add points'}
     eyebrow="Member points"
     description={receipt ? undefined : 'Select a published bundle and record it only after receiving the cash.'}
     onClose={close}
@@ -110,7 +110,7 @@ export default function StaffCashPointTopUpModal({
       </label>
       <div className="flex justify-end gap-2">
         <button type="button" disabled={saving} onClick={close} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
-        <button type="button" disabled={saving || !cashReceived} onClick={() => void recordTopUp()} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Recording…' : 'Record sale & issue receipt'}</button>
+        <button type="button" disabled={saving || !cashReceived} onClick={() => void recordTopUp()} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Adding points…' : 'Add points & issue receipt'}</button>
       </div>
     </div> : null}
   </BaseModal>

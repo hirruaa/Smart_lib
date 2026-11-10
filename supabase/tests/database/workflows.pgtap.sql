@@ -1,7 +1,7 @@
 -- Behavioral database tests for an isolated Supabase test database.
 -- Apply COMPLETE_SCHEMA.sql to a disposable local database first.
 begin;
-select plan(98);
+select plan(101);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -680,6 +680,21 @@ select is(
    where action = 'book_updated' and target_type = 'book' and target_id = 910004),
   1,
   'Catalog metadata changes are recorded in the audit log'
+);
+select is(
+  (select allowed from public.consume_api_rate_limit('qa-test', repeat('a', 64), 2, 60)),
+  true,
+  'The shared API limiter allows requests below the configured limit'
+);
+select is(
+  (select allowed from public.consume_api_rate_limit('qa-test', repeat('a', 64), 2, 60)),
+  true,
+  'The shared API limiter permits the final request in the window'
+);
+select is(
+  (select allowed from public.consume_api_rate_limit('qa-test', repeat('a', 64), 2, 60)),
+  false,
+  'The shared API limiter blocks requests over the configured limit'
 );
 select * from finish();
 rollback;

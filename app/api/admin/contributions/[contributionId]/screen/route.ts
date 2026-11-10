@@ -10,7 +10,7 @@ export const maxDuration = 90
 
 export async function POST(request: Request, { params }: { params: Promise<{ contributionId: string }> }) {
   if (!sameOrigin(request)) return originViolation()
-  const requestLimit = rateLimit(request, { name: 'contribution-ai-screen', limit: 10, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'contribution-ai-screen', limit: 10, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const contributionId = Number((await params).contributionId)
   if (!Number.isInteger(contributionId) || contributionId < 1) {

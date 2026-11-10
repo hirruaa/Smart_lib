@@ -47,7 +47,7 @@ export async function PUT(request: Request) {
   try {
     if (!sameOrigin(request)) return originViolation()
     if (bodyTooLarge(request, 512 * 1024)) return NextResponse.json({ error: 'Drawing request is too large.' }, { status: 413 })
-    const requestLimit = rateLimit(request, { name: 'study-drawing-write', limit: 120, windowMs: 60_000 })
+    const requestLimit = await rateLimit(request, { name: 'study-drawing-write', limit: 120, windowMs: 60_000 })
     if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
     const body = await request.json()
     const bookId = Number(body.bookId)

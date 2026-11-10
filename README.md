@@ -49,7 +49,7 @@ For deployment, configure the real Supabase project values in the Vercel project
 
 ### Continuous integration
 
-GitHub Actions runs dependency auditing, repository system-contract checks, and a production build on pull requests and pushes to `main`. The build uses placeholder Supabase configuration and does not connect to a database. The workflow does not run Playwright or pgTAP; those still require the isolated local Supabase test environment described above.
+GitHub Actions runs dependency auditing, repository system-contract checks, a production build, and axe-core WCAG 2.2 A/AA scans of the public policy pages on pull requests and pushes to `main`. The build and public-page scan use placeholder Supabase configuration and do not connect to a database. Authenticated Playwright workflows and pgTAP still require the isolated local Supabase test environment described above.
 
 Before relying on this as a release gate, require the `CI / verify` status check in GitHub branch protection and configure Vercel to wait for the required Git checks before production deployment. Confirm those controls in the actual project settings; the workflow alone does not prevent an automatic deployment.
 
@@ -59,6 +59,7 @@ The following checks require access to the actual Supabase and hosting projects;
 
 - [ ] Disable public Supabase Auth sign-ups and verify an ordinary public registration is rejected while a trusted administrator invitation can still be completed.
 - [ ] Review the deployed migration history and apply pending migrations only after a staging/backup review. Confirm role-provisioning, physical-request serialization, cash-only payment, and exact-copy checkout migrations `20261061`, `20261062`, `20261107`, and `20261108` are present.
+- [ ] Apply `20261114110000_shared_api_rate_limits.sql` and verify `consume_api_rate_limit` executes only as `service_role`; API mutations fail closed with HTTP 503 if shared rate limiting cannot be reached.
 - [ ] Confirm RLS is enabled and policies are correct for member, financial, audit, and storage data. Never expose the Supabase service-role key to the browser.
 - [ ] Verify production environment variables, canonical HTTPS origin, and the daily physical-reminder cron schedule in the hosting provider. Observe a safe scheduled run and configure alerts for function failures; the handler writes failures to server logs.
 - [ ] Create a private Drive backup and verify the archive exists. Enable Supabase native backup/PITR retention appropriate to the recovery objectives, restore a backup into an isolated project, and record measured recovery time and data-loss window. A successful export alone is not a restore test.
@@ -66,7 +67,7 @@ The following checks require access to the actual Supabase and hosting projects;
 - [ ] Run a representative load test against staging with realistic catalog/member/loan volumes. Record latency/error thresholds and capacity; no production-scale performance result is implied by local functional tests.
 - [ ] Have library finance owners document correction/refund procedures for mistaken transactions and confirm corrections preserve the original audit trail.
 
-`npm audit` should report no known dependency vulnerabilities, `npm test` exercises the system check and browser flows, and `supabase/tests/database/workflows.pgtap.sql` verifies database invariants. These are necessary local gates, not substitutes for the project-setting, backup/restore, alert-delivery, or capacity checks above.
+`npm audit` should report no known dependency vulnerabilities, `npm test` exercises the system check and authenticated browser flows, `npm run test:a11y` runs the public-page accessibility scan against a production build, and `supabase/tests/database/workflows.pgtap.sql` verifies database invariants. These are necessary gates, not substitutes for the project-setting, backup/restore, alert-delivery, or capacity checks above.
 
 ## Google Drive backups
 

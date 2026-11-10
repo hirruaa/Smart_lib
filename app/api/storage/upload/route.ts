@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 55 * 1024 * 1024)) return NextResponse.json({ error: 'Upload request is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'ebook-upload', limit: 5, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'ebook-upload', limit: 5, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   if (!sameOrigin(request)) return originViolation()
-  const requestLimit = rateLimit(request, { name: 'upload-cleanup', limit: 20, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'upload-cleanup', limit: 20, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

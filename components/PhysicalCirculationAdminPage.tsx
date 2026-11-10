@@ -39,7 +39,7 @@ type LoanHistory = {
 type Profile = {
   id: string; email: string; full_name: string | null; role: string
   institutional_id?: string | null; student_photo_path?: string | null
-  username?: string | null; school?: string | null; department?: string | null
+  username?: string | null; department?: string | null
   course?: string | null; student_year?: string | null; created_at?: string | null
 }
 type MemberActivityEvent = {
@@ -48,11 +48,12 @@ type MemberActivityEvent = {
   related_request_id: number | null
 }
 type PrintPayment = { id: number; student_id: string; amount: number; description: string; receipt_number: string; created_at: string }
+type PointTopUp = { id: number; member_id: string; bundle_points: number; amount_paid: number; receipt_number: string; created_at: string }
 type PhysicalRenewal = { id: number; request_id: number; student_id: string; copy_id: number; duration_days: number; previous_due_date: string; new_due_date: string; fee_amount: number; amount_received: number; receipt_number: string; created_at: string }
 type RenewalDraft = { loanId: number; durationDays: number; amountPaid: string; notes: string }
 type AvailabilityAlertEntry = { student_id: string; book_id: number; created_at: string }
 type PhysicalFine = { id: number; physical_book_request_id: number; student_id: string; amount: number; status: string; fine_type: 'late_fee' | 'lost_item' | 'damage' | 'other'; created_at: string; paid_at?: string | null; waived_at?: string | null; refunded_at?: string | null; refund_due_at?: string | null; refund_reason?: string | null; fine_reason?: string | null; waiver_reason?: string | null; receipt_number?: string | null }
-type FinanceReceipt = { kind: 'fine'; fine: PhysicalFine } | { kind: 'checkout'; loan: LoanHistory } | { kind: 'renewal'; renewal: PhysicalRenewal } | { kind: 'print'; payment: PrintPayment }
+type FinanceReceipt = { kind: 'fine'; fine: PhysicalFine } | { kind: 'checkout'; loan: LoanHistory } | { kind: 'renewal'; renewal: PhysicalRenewal } | { kind: 'print'; payment: PrintPayment } | { kind: 'topup'; topup: PointTopUp }
 type LibraryHoliday = { holiday_date: string; name: string; source: 'manual' | 'nager'; provider_synced_at: string | null }
 type LibraryPolicySettings = {
   id: number
@@ -148,6 +149,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [availabilityAlerts, setAvailabilityAlerts] = useState<AvailabilityAlertEntry[]>([])
   const [physicalFines, setPhysicalFines] = useState<PhysicalFine[]>([])
   const [printPayments, setPrintPayments] = useState<PrintPayment[]>([])
+  const [pointTopUps, setPointTopUps] = useState<PointTopUp[]>([])
   const [printReceiptForm, setPrintReceiptForm] = useState({ studentId: '', amount: '', description: '' })
   const [holidays, setHolidays] = useState<LibraryHoliday[]>([])
   const [holidayYear, setHolidayYear] = useState(String(new Date().getFullYear() + 1))
@@ -282,21 +284,22 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         error: null,
       }
     })()
-    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, renewalResult, policyResult] = await Promise.all([
+    const [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, topUpResult, renewalResult, policyResult] = await Promise.all([
       supabase.from('books').select('id,title,author,category,discipline,genre,isbn,description,catalog_type,cover_image_url,is_archived').order('title'),
       copyResultPromise,
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_loan_options').select('id,book_id,duration_days,fee_amount,is_active').order('book_id').order('duration_days'),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_requests').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,transaction_reference,status,requested_at,checked_out_at,due_date,returned_at,receipt_number,reservation_expires_at,incident_type,incident_status,incident_note,incident_assessed_amount,incident_assessed_at,incident_resolved_at,incident_resolved_by').order('requested_at', { ascending: false }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_loan_history').select('id,student_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,status,checked_out_at,due_date,returned_at,return_condition,receipt_number').order('checked_out_at', { ascending: false }),
-      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('profiles').select('id,email,full_name,role,institutional_id,student_photo_path,username,school,department,course,student_year,created_at').in('role', ['student', 'faculty']),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('profiles').select('id,email,full_name,role,institutional_id,student_photo_path,username,department,course,student_year,created_at').in('role', ['student', 'faculty']),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_waitlist').select('student_id,book_id,created_at').order('created_at', { ascending: true }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('fines').select('id,physical_book_request_id,student_id,amount,status,fine_type,created_at,paid_at,waived_at,refund_due_at,refunded_at,refund_reason,fine_reason,waiver_reason,receipt_number').not('physical_book_request_id', 'is', null).order('created_at', { ascending: false }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) :       supabase.from('library_holidays').select('holiday_date,name,source,provider_synced_at').order('holiday_date', { ascending: true }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('library_print_payments').select('id,student_id,amount,description,receipt_number,created_at').order('created_at', { ascending: false }),
+      catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('point_topups').select('id,member_id,bundle_points,amount_paid,receipt_number,created_at').order('created_at', { ascending: false }),
       catalogOnly ? Promise.resolve({ data: [], error: null }) : supabase.from('physical_book_renewals').select('id,request_id,student_id,copy_id,duration_days,previous_due_date,new_due_date,fee_amount,amount_received,receipt_number,created_at').order('created_at', { ascending: false }),
       supabase.from('library_policy_settings').select('id,fine_grace_days,late_fee_per_day,late_fee_cap,lost_after_days,faculty_lesson_reward_points,policy_notice,updated_at').eq('id', 1).single(),
     ])
-    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, renewalResult].find((result) => result.error)
+    const failed = [bookResult, copyResult, optionResult, loanResult, historyResult, memberResult, availabilityAlertsResult, fineResult, holidayResult, printPaymentResult, topUpResult, renewalResult].find((result) => result.error)
     if (failed?.error) {
       setLoadError(`Unable to load physical circulation: ${failed.error.message}`)
       setLoading(false)
@@ -312,6 +315,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setPhysicalFines((fineResult.data ?? []) as PhysicalFine[])
     setHolidays((holidayResult.data ?? []) as LibraryHoliday[])
     setPrintPayments((printPaymentResult.data ?? []) as PrintPayment[])
+    setPointTopUps((topUpResult.data ?? []) as PointTopUp[])
     setPhysicalRenewals((renewalResult.data ?? []) as PhysicalRenewal[])
     if (policyResult.error || !policyResult.data) {
       setPolicySettings(null)
@@ -1584,6 +1588,11 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         description: `Print service · ${payment.description}`, amount: Number(payment.amount), status: 'paid', receiptNumber: payment.receipt_number,
         source: { kind: 'print' as const, payment },
       })),
+      ...pointTopUps.map((topup) => ({
+        id: `topup-${topup.id}`, date: topup.created_at, member: profiles.find((item) => item.id === topup.member_id)?.full_name || profiles.find((item) => item.id === topup.member_id)?.email || 'Member',
+        description: `Points top-up · ${topup.bundle_points.toLocaleString()} points`, amount: Number(topup.amount_paid), status: 'paid', receiptNumber: topup.receipt_number,
+        source: { kind: 'topup' as const, topup },
+      })),
     ]
     const query = fineSearch.trim().toLocaleLowerCase()
     return rows
@@ -1601,7 +1610,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           : a.amount - b.amount
         return financeSort.direction === 'asc' ? comparison : -comparison
       })
-  }, [queueLoans, physicalFines, loans, loanHistory, physicalRenewals, printPayments, profiles, books, fineSearch, fineStatusFilter, fineDateFrom, fineDateTo, copies, financeSort])
+  }, [queueLoans, physicalFines, loans, loanHistory, physicalRenewals, printPayments, pointTopUps, profiles, books, fineSearch, fineStatusFilter, fineDateFrom, fineDateTo, copies, financeSort])
   const setFinanceDatePreset = (preset: 'today' | 'last7' | 'month') => {
     const today = new Date()
     const from = new Date(today)
@@ -1811,10 +1820,13 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           message={error}
           onClose={() => setError('')}
         />
-        {message ? <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
-          <p>{message}</p>
-          <button type="button" aria-label="Dismiss success message" onClick={() => setMessage('')} className="shrink-0 rounded-lg px-2 py-1 font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900">×</button>
-        </div> : null}
+        <ResultModal
+          open={Boolean(message)}
+          status="success"
+          successTitle="Action completed"
+          message={message}
+          onClose={() => setMessage('')}
+        />
         {loadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">
           <p>{loadError}</p>
           <button type="button" onClick={retryLoad} className="shrink-0 rounded-lg border border-rose-700 px-3 py-1.5 font-semibold hover:bg-rose-100 dark:border-rose-300 dark:hover:bg-rose-900">Retry</button>
@@ -1959,7 +1971,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
               <h3 className="text-lg font-semibold">{selectedDeskMember.full_name || selectedDeskMember.email}</h3>
               {!librarianMode && deskEligibility ? <span className={`rounded-full px-3 py-1 text-xs font-bold ${deskEligibility === 'ELIGIBLE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : deskEligibility === 'BLOCKED' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'}`}>{deskEligibility}</span> : null}
               {!librarianMode && (selectedDeskMember.role === 'student' || selectedDeskMember.role === 'faculty')
-                ? <button type="button" onClick={() => setTopUpMember(selectedDeskMember)} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/30">Record point top-up</button>
+                ? <button type="button" onClick={() => setTopUpMember(selectedDeskMember)} className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/30">Add points</button>
                 : null}
             </div>
             <dl className="mt-2 grid gap-x-5 gap-y-1 text-sm sm:grid-cols-2"><div><dt className="text-xs text-slate-500">Institutional ID</dt><dd className="font-medium">{selectedDeskMember.institutional_id || 'Not recorded'}</dd></div><div><dt className="text-xs text-slate-500">Email / role</dt><dd className="break-all font-medium">{selectedDeskMember.email} · {selectedDeskMember.role}</dd></div><div><dt className="text-xs text-slate-500">Active physical loans</dt><dd className="font-medium">{selectedDeskMemberLoans.length} / 3</dd></div><div><dt className="text-xs text-slate-500">Unpaid fines</dt><dd className="font-medium">PHP {selectedDeskMemberUnpaid.toFixed(2)}</dd></div></dl>
@@ -2071,7 +2083,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">{selectedDeskMember.role}</span>
               {librarianMode && (selectedDeskMember.role === 'student' || selectedDeskMember.role === 'faculty')
-                ? <button type="button" onClick={() => setTopUpMember(selectedDeskMember)} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500">Record point top-up</button>
+                ? <button type="button" onClick={() => setTopUpMember(selectedDeskMember)} className="rounded-xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500">Add points</button>
                 : null}
             </div>
           </div>
@@ -2134,7 +2146,6 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
                   {[
                     ['Institutional ID', selectedDeskMember.institutional_id || 'Not recorded'],
                     ['Role', selectedDeskMember.role],
-                    ['School', selectedDeskMember.school || 'Not recorded'],
                     ['Department', selectedDeskMember.department || 'Not recorded'],
                     ['Course / program', selectedDeskMember.course || 'Not recorded'],
                     ['Year level', selectedDeskMember.student_year || 'Not recorded'],
@@ -3052,29 +3063,35 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       const receiptNumber = financeReceipt.kind === 'fine' ? financeReceipt.fine.receipt_number
         : financeReceipt.kind === 'checkout' ? financeReceipt.loan.receipt_number
           : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.receipt_number
-            : financeReceipt.payment.receipt_number
+            : financeReceipt.kind === 'print' ? financeReceipt.payment.receipt_number
+              : financeReceipt.topup.receipt_number
       const title = financeReceipt.kind === 'fine' ? fineTypeLabel(financeReceipt.fine.fine_type)
         : financeReceipt.kind === 'checkout' ? 'Physical book checkout'
-          : financeReceipt.kind === 'renewal' ? 'Physical loan renewal' : 'Print service'
+          : financeReceipt.kind === 'renewal' ? 'Physical loan renewal'
+            : financeReceipt.kind === 'topup' ? 'Points top-up' : 'Print service'
       const amount = financeReceipt.kind === 'fine' ? Number(financeReceipt.fine.amount)
         : financeReceipt.kind === 'checkout' ? Number(financeReceipt.loan.fee_amount)
           : financeReceipt.kind === 'renewal' ? Number(financeReceipt.renewal.amount_received)
-            : Number(financeReceipt.payment.amount)
+            : financeReceipt.kind === 'print' ? Number(financeReceipt.payment.amount)
+              : Number(financeReceipt.topup.amount_paid)
       const memberId = financeReceipt.kind === 'fine' ? financeReceipt.fine.student_id
         : financeReceipt.kind === 'checkout' ? financeReceipt.loan.student_id
           : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.student_id
-            : financeReceipt.payment.student_id
+            : financeReceipt.kind === 'print' ? financeReceipt.payment.student_id
+              : financeReceipt.topup.member_id
       const description = financeReceipt.kind === 'fine'
         ? `${bookName(loans.find((loan) => loan.id === financeReceipt.fine.physical_book_request_id)?.book_id ?? 0)} · Case #${financeReceipt.fine.physical_book_request_id}${financeReceipt.fine.fine_reason ? ` · ${financeReceipt.fine.fine_reason}` : ''}`
         : financeReceipt.kind === 'checkout'
           ? `${bookName(financeReceipt.loan.book_id)} · ${copyCode(financeReceipt.loan.copy_id)} · ${financeReceipt.loan.duration_days} days`
           : financeReceipt.kind === 'renewal'
             ? `${bookName(loans.find((loan) => loan.id === financeReceipt.renewal.request_id)?.book_id ?? 0)} · ${copyCode(financeReceipt.renewal.copy_id)} · ${financeReceipt.renewal.duration_days} days · Due ${new Date(financeReceipt.renewal.new_due_date).toLocaleDateString()}`
-            : financeReceipt.payment.description
+            : financeReceipt.kind === 'print' ? financeReceipt.payment.description
+              : `${financeReceipt.topup.bundle_points.toLocaleString()} points added to the member account`
       const date = financeReceipt.kind === 'fine' ? financeReceipt.fine.paid_at ?? financeReceipt.fine.created_at
         : financeReceipt.kind === 'checkout' ? financeReceipt.loan.checked_out_at
           : financeReceipt.kind === 'renewal' ? financeReceipt.renewal.created_at
-            : financeReceipt.payment.created_at
+            : financeReceipt.kind === 'print' ? financeReceipt.payment.created_at
+              : financeReceipt.topup.created_at
       return <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFinanceReceipt(null) }}><section className="physical-finance-receipt w-full max-w-lg rounded-2xl bg-white p-6 text-slate-900 shadow-2xl dark:bg-slate-900 dark:text-slate-100" role="dialog" aria-modal="true" aria-labelledby="finance-receipt-title"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Smart Lib · Official receipt</p><h2 id="finance-receipt-title" className="mt-1 text-xl font-semibold">{title}</h2></div><button type="button" data-print-hide onClick={() => setFinanceReceipt(null)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">Close</button></div><p className="mt-5 border-y border-dashed border-slate-300 py-3 font-mono text-sm">Receipt {receiptNumber ?? 'Unavailable'}</p><dl className="mt-4 space-y-3 text-sm"><div><dt className="text-xs text-slate-500">Received from</dt><dd className="font-medium">{memberName(memberId)}</dd></div><div><dt className="text-xs text-slate-500">Details</dt><dd>{description}</dd></div><div><dt className="text-xs text-slate-500">Date</dt><dd>{new Date(date).toLocaleString()}</dd></div><div><dt className="text-xs text-slate-500">Amount</dt><dd className="text-lg font-semibold">PHP {amount.toFixed(2)}</dd></div>{financeReceipt.kind === 'fine' ? <div><dt className="text-xs text-slate-500">Payment status</dt><dd className="capitalize">{financeReceipt.fine.status}</dd></div> : financeReceipt.kind === 'checkout' ? <div><dt className="text-xs text-slate-500">Payment</dt><dd className="capitalize">{financeReceipt.loan.payment_method} · {financeReceipt.loan.payment_status}</dd></div> : financeReceipt.kind === 'renewal' ? <div><dt className="text-xs text-slate-500">Payment</dt><dd>PHP {Number(financeReceipt.renewal.amount_received).toFixed(2)} received · {financeReceipt.renewal.duration_days} days</dd></div> : null}</dl><p className="mt-6 text-xs text-slate-500">Keep this receipt for your records.</p><div data-print-hide className="mt-5 flex justify-end"><button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Print receipt</button></div></section></div>
     })() : null}
     <StaffMemberEnrollmentModal

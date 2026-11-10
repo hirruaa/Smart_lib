@@ -1,5 +1,30 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import { clearBrowserSession, createTestUser, removeTestUser, signInInBrowser } from './support'
+
+test('member dashboard and wallet modal have no critical or serious WCAG 2.2 violations', async ({ page }) => {
+  const student = await createTestUser()
+  try {
+    await signInInBrowser(page, student)
+    const dashboardResults = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze()
+    const dashboardIssues = dashboardResults.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
+    expect(dashboardIssues, dashboardIssues.map((violation) => `${violation.id}: ${violation.help}`).join('; ')).toEqual([])
+
+    await page.getByRole('button', { name: 'Wallet' }).click()
+    const wallet = page.getByRole('dialog', { name: 'Points wallet' })
+    await expect(wallet).toBeVisible()
+    const modalResults = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze()
+    const modalIssues = modalResults.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
+    expect(modalIssues, modalIssues.map((violation) => `${violation.id}: ${violation.help}`).join('; ')).toEqual([])
+  } finally {
+    await clearBrowserSession(page)
+    await removeTestUser(student)
+  }
+})
 
 test('student and faculty dashboards keep common library dialogs available and closable', async ({ page }) => {
   const student = await createTestUser('student')
@@ -10,6 +35,9 @@ test('student and faculty dashboards keep common library dialogs available and c
       await signInInBrowser(page, user)
       await page.goto(route, { waitUntil: 'domcontentloaded' })
       await expect(page.locator('#explore').getByRole('searchbox', { name: 'Search the library catalog' })).toBeVisible()
+      await expect(page.locator('#explore').getByRole('heading', { name: 'Explore the catalog' })).toBeVisible()
+      await expect(page.locator('#explore .catalog-heading-stat')).toBeVisible()
+      await expect(page.locator('#explore .dashboard-catalog-search-submit')).toHaveCSS('color', 'rgb(255, 255, 255)')
       await expect(page.locator('.student-hero-summary')).toBeVisible()
       const walletButton = page.getByRole('button', { name: 'Wallet' })
       await expect(walletButton).toHaveCSS('font-size', '12px')
@@ -63,9 +91,26 @@ test('student and faculty dashboards keep common library dialogs available and c
         }
         await route.fulfill({ json: { answer: 'The current library policy is available from the circulation desk.' } })
       })
+      await page.setViewportSize({ width: 517, height: 570 })
       await page.getByRole('button', { name: 'Open library assistant' }).click()
       const assistantPanel = page.locator('.assistant-floating-window')
       await expect(assistantPanel).toBeVisible()
+      const assistantLayout = await assistantPanel.evaluate((panel) => {
+        const bounds = (selector: string) => {
+          const element = panel.querySelector<HTMLElement>(selector)
+          if (!element) throw new Error(`Missing assistant layout element: ${selector}`)
+          const rect = element.getBoundingClientRect()
+          return { top: rect.top, bottom: rect.bottom }
+        }
+        return {
+          thread: bounds('.assistant-thread'),
+          suggestions: bounds('.assistant-suggestions'),
+          composer: bounds('.assistant-composer'),
+        }
+      })
+      expect(assistantLayout.thread.bottom).toBeLessThanOrEqual(assistantLayout.suggestions.top + 1)
+      expect(assistantLayout.suggestions.bottom).toBeLessThanOrEqual(assistantLayout.composer.top + 1)
+      await page.setViewportSize({ width: 1280, height: 900 })
       const assistantPrompt = 'What is the overdue fine policy?'
       await assistantPanel.getByRole('textbox', { name: 'Message your library assistant' }).fill(assistantPrompt)
       await assistantPanel.getByRole('button', { name: 'Send message' }).click()
@@ -90,13 +135,20 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(notificationsDialog).toBeVisible()
       await notificationsDialog.getByRole('button', { name: 'Close notifications' }).click()
 
-      await page.getByRole('button', { name: 'Wallet' }).click()
+      const walletLauncher = page.getByRole('button', { name: 'Wallet' })
+      await walletLauncher.click()
       const walletDialog = page.getByRole('dialog', { name: 'Points wallet' })
       await expect(walletDialog).toBeVisible()
       const walletClose = walletDialog.getByRole('button', { name: 'Close Points wallet' })
       await expect(walletClose).toBeFocused()
+      const walletDetails = walletDialog.getByRole('button', { name: 'View wallet details' })
+      await page.keyboard.press('Shift+Tab')
+      await expect(walletDetails).toBeFocused()
+      await page.keyboard.press('Tab')
+      await expect(walletClose).toBeFocused()
       await page.keyboard.press('Escape')
       await expect(walletDialog).toHaveCount(0)
+      await expect(walletLauncher).toBeFocused()
 
       await page.getByRole('button', { name: 'View loans and charges' }).click()
       const loansDialog = page.getByRole('dialog', { name: 'Physical requests & loans' })
@@ -121,6 +173,9 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(profileDialog).toBeVisible()
       await expect(profileDialog.locator('.profile-identity')).toBeVisible()
       await expect(profileDialog.getByRole('heading', { name: 'Personal details' })).toBeVisible()
+      await expect(profileDialog.getByRole('heading', { name: 'Account activity' })).toHaveCount(0)
+      await expect(profileDialog.getByText('School', { exact: true })).toHaveCount(0)
+      await expect(profileDialog.getByRole('button', { name: 'Update password' })).toHaveCSS('color', 'rgb(255, 255, 255)')
       await expect(profileDialog).toHaveCSS('width', '672px')
       await expect(profileDialog.locator('.base-modal-content')).toHaveJSProperty('scrollWidth', await profileDialog.locator('.base-modal-content').evaluate((element) => element.clientWidth))
       await page.setViewportSize({ width: 390, height: 844 })

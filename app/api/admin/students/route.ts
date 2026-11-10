@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { randomBytes } from 'node:crypto'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
@@ -9,7 +8,7 @@ import { isAdminRole, isStaffRole } from '@/utils/roles'
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 16_384)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'admin-create-member', limit: 20, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'admin-create-member', limit: 20, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const sessionClient = await createClient()
   const { data: { user } } = await sessionClient.auth.getUser()
@@ -35,6 +34,7 @@ export async function POST(request: Request) {
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid student data.' }, { status: 400 })
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : ''
+  const initialPassword = typeof body.password === 'string' ? body.password : ''
   const role = body.role === 'faculty' || body.role === 'librarian' ? body.role : body.role === 'student' || body.role === undefined ? 'student' : null
   const fullName = boundedText(body.fullName ?? '', 120)
   const school = 'Mary the Queen College of Quezon City'
@@ -47,6 +47,7 @@ export async function POST(request: Request) {
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
   if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) return NextResponse.json({ error: 'Username must be 3–30 characters and use letters, numbers, periods, underscores, or hyphens.' }, { status: 400 })
+  if (initialPassword.length < 12 || initialPassword.length > 128) return NextResponse.json({ error: 'Initial password must be between 12 and 128 characters.' }, { status: 400 })
   if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
   if (profile.role === 'librarian' && role === 'librarian') {
     return NextResponse.json({ error: 'Librarians may invite student and faculty members only.' }, { status: 403 })
@@ -70,8 +71,19 @@ export async function POST(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   })
   const { data: usernameMatch, error: usernameLookupError } = await adminClient
-    .from('profiles').select('id').eq('username', username).maybeSingle()
-  if (usernameLookupError) return apiError('Unable to verify username availability.', 503, usernameLookupError)
+    .from('profiles').select('id').eq('username', username).limit(1).maybeSingle()
+  if (usernameLookupError) {
+    const usernameColumnMissing = usernameLookupError.code === '42703'
+      || usernameLookupError.code === 'PGRST204'
+      || /column .*username.* does not exist/i.test(usernameLookupError.message)
+    return apiError(
+      usernameColumnMissing
+        ? 'Username accounts are not enabled in the database yet. Apply the admin-provisioned usernames migration, then try again.'
+        : 'Unable to verify username availability.',
+      503,
+      usernameLookupError
+    )
+  }
   if (usernameMatch) return NextResponse.json({ error: 'That username is already in use.' }, { status: 409 })
   if (institutionalId) {
     const { data: idMatch, error: idLookupError } = await adminClient
@@ -118,14 +130,13 @@ export async function POST(request: Request) {
 
   if (!created.user) return NextResponse.json({ error: 'The invitation was created without a member account. Contact an administrator.' }, { status: 500 })
 
-  const temporaryPassword = randomBytes(24).toString('base64url')
   const { error: passwordSetupError } = await adminClient.auth.admin.updateUserById(created.user.id, {
-    password: temporaryPassword,
+    password: initialPassword,
     app_metadata: { ...created.user.app_metadata, must_change_password: true },
   })
   if (passwordSetupError) {
     const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-    if (rollbackError) console.error('Unable to roll back member invitation after temporary password setup failed.', rollbackError)
+    if (rollbackError) console.error('Unable to roll back member invitation after initial password setup failed.', rollbackError)
     return apiError('Unable to set up the temporary account password.', 500, passwordSetupError)
   }
 
@@ -143,6 +154,9 @@ export async function POST(request: Request) {
     if (profileUpdateError) {
       const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
       if (rollbackError) console.error('Unable to roll back member invitation after profile setup failed.', rollbackError)
+      if (profileUpdateError.code === '23505' && /username/i.test(profileUpdateError.message)) {
+        return NextResponse.json({ error: 'That username was just claimed. Choose another username and try again.' }, { status: 409 })
+      }
       return apiError('Unable to save the invited member profile.', 500, profileUpdateError)
     }
   }
@@ -164,13 +178,13 @@ export async function POST(request: Request) {
     return apiError('Unable to record the member invitation audit event.', 500, auditError)
   }
 
-  return NextResponse.json({ success: true, email, username, userId: created.user.id, temporaryPassword })
+  return NextResponse.json({ success: true, email, username, userId: created.user.id })
 }
 
 export async function DELETE(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 4_096)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'admin-delete-member', limit: 10, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'admin-delete-member', limit: 10, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
 
   const sessionClient = await createClient()

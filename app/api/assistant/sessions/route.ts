@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 128 * 1024)) return NextResponse.json({ error: 'Assistant request body is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'assistant-session-write', limit: 60, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'assistant-session-write', limit: 60, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   if (!sameOrigin(request)) return originViolation()
-  const requestLimit = rateLimit(request, { name: 'assistant-session-delete', limit: 30, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'assistant-session-delete', limit: 30, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

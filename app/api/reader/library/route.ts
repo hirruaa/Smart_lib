@@ -8,7 +8,7 @@ const isMissingTableError = (error: { code?: string; message?: string } | null) 
   Boolean(error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '')))
 
 export async function GET(request: Request) {
-  const requestLimit = rateLimit(request, { name: 'reader-library', limit: 120, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'reader-library', limit: 120, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
 
   const supabase = await createClient()

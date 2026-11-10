@@ -19,6 +19,9 @@ const requiredSchemaObjects = [
   'fines',
   'academic_departments',
   'provision_profile',
+  'assistant_current_librarians',
+  'api_rate_limit_buckets',
+  'consume_api_rate_limit',
 ]
 
 for (const objectName of requiredSchemaObjects) {
@@ -30,6 +33,16 @@ if (!fs.existsSync(departmentMigrationPath)) throw new Error('Missing program-ba
 const departmentMigration = fs.readFileSync(departmentMigrationPath, 'utf8')
 for (const token of ['from public.academic_courses', 'where is_active', 'on conflict (lower(name))']) {
   if (!departmentMigration.includes(token)) throw new Error(`Program-based departments migration is missing: ${token}`)
+}
+const assistantDirectoryMigrationPath = path.join(root, 'supabase/migrations/20261114100000_library_assistant_current_librarians.sql')
+if (!fs.existsSync(assistantDirectoryMigrationPath)) throw new Error('Missing current librarian directory migration')
+const assistantDirectoryMigration = fs.readFileSync(assistantDirectoryMigrationPath, 'utf8')
+for (const token of ['assistant_current_librarians()', "profile.role = 'librarian'", 'from public, anon', 'to authenticated']) {
+  if (!assistantDirectoryMigration.includes(token)) throw new Error(`Current librarian directory migration is missing: ${token}`)
+}
+const assistantRoute = fs.readFileSync(path.join(root, 'app/api/recommend/route.ts'), 'utf8')
+for (const token of ["from('library_policy_settings')", "rpc('assistant_current_librarians')", "from('fines')", 'getImmediatePolicyAnswer']) {
+  if (!assistantRoute.includes(token)) throw new Error(`Library assistant live guidance is missing: ${token}`)
 }
 const profileModal = fs.readFileSync(path.join(root, 'components/ProfileModal.tsx'), 'utf8')
 for (const token of ["from('academic_departments')", 'departments.map']) {
@@ -64,6 +77,19 @@ for (const token of [
   'public.accept_physical_waitlist_offer',
 ]) {
   if (!cashOnlyMigration.includes(token)) throw new Error(`Cash-only migration is missing: ${token}`)
+}
+const cashTopUpConstraintMigrationPath = path.join(root, 'supabase/migrations/20261110123000_fix_cash_topup_transaction_check.sql')
+if (!fs.existsSync(cashTopUpConstraintMigrationPath)) throw new Error('Missing cash point top-up transaction constraint repair migration')
+const cashTopUpConstraintMigration = fs.readFileSync(cashTopUpConstraintMigrationPath, 'utf8')
+for (const token of ['point_transactions_transaction_type_check', "'cash_topup'", "'contribution_reward'", "'admin_adjustment'"]) {
+  if (!cashTopUpConstraintMigration.includes(token)) throw new Error(`Cash point top-up constraint migration is missing: ${token}`)
+}
+
+const sharedRateLimitMigrationPath = path.join(root, 'supabase/migrations/20261114110000_shared_api_rate_limits.sql')
+if (!fs.existsSync(sharedRateLimitMigrationPath)) throw new Error('Missing shared API rate-limit migration')
+const sharedRateLimitMigration = fs.readFileSync(sharedRateLimitMigrationPath, 'utf8')
+for (const token of ['api_rate_limit_buckets', 'consume_api_rate_limit', 'to service_role', 'enable row level security']) {
+  if (!sharedRateLimitMigration.includes(token)) throw new Error(`Shared API rate-limit migration is missing: ${token}`)
 }
 
 const requiredFiles = [

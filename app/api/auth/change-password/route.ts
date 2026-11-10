@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   if (authError) return apiError('Unable to verify your account.', 401, authError)
   if (!user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
 
-  const limit = rateLimit(request, { name: 'change-password', limit: 5, windowMs: 15 * 60_000, identity: user.id })
+  const limit = await rateLimit(request, { name: 'change-password', limit: 5, windowMs: 15 * 60_000, identity: user.id })
   if (!limit.allowed) return tooManyRequests(limit.retryAfterSeconds)
 
   const body = await request.json().catch(() => null)

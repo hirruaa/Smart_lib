@@ -55,7 +55,7 @@ export default function PasswordChangeForm({ onSuccess }: { onSuccess: () => voi
       <PasswordInput required minLength={12} maxLength={128} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
     </label>
     <p className="text-xs text-slate-500">Use at least 12 characters. Avoid reusing a password from another account.</p>
-    <button type="submit" disabled={saving} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950">
+    <button type="submit" disabled={saving} className="password-change-submit rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
       {saving ? 'Updating password…' : 'Update password'}
     </button>
   </form>

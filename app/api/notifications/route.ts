@@ -26,7 +26,7 @@ export async function GET() {
 export async function PATCH(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 8_192)) return NextResponse.json({ error: 'Notification request is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'notification-write', limit: 120, windowMs: 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'notification-write', limit: 120, windowMs: 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()

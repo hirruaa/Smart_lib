@@ -135,9 +135,10 @@ export async function generateGeminiChatReply(messages: GeminiChatMessage[], sys
   if (!contents.length || contents[contents.length - 1].role !== 'user') {
     throw new GeminiRequestError('The conversation has no current user message.', undefined, 'invalid-history')
   }
+  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL
   return callGemini(
     contents,
-    { maxOutputTokens: 450, thinkingConfig: { thinkingLevel: 'low' } },
+    { maxOutputTokens: 320, thinkingConfig: { thinkingLevel: model.startsWith('gemini-3') ? 'minimal' : 'low' } },
     systemInstruction,
   )
 }

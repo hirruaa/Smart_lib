@@ -111,6 +111,7 @@ const physicalTitleGroupKey = (book: Pick<Book, 'title' | 'author'>) =>
   [book.title, book.author].map((value) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).join('|')
 const normalizeCatalogSearchText = (value: string) =>
   value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const catalogPageSize = 24
 const catalogSearchScore = (book: Book, query: string) => {
   const normalizedQuery = normalizeCatalogSearchText(query)
   const terms = normalizedQuery.split(/\s+/).filter(Boolean)
@@ -550,6 +551,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
   const [selectedFormat, setSelectedFormat] = useState<'all' | 'digital' | 'physical'>('all')
   const [availablePhysicalOnly, setAvailablePhysicalOnly] = useState(false)
+  const [catalogPage, setCatalogPage] = useState(1)
 
   const openCatalogDetails = (book: Book) => {
     setDurationDays(String(DIGITAL_ACCESS_DURATION_OPTIONS.includes(book.access_duration_days as typeof DIGITAL_ACCESS_DURATION_OPTIONS[number]) ? book.access_duration_days : 30))
@@ -632,6 +634,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     },
     [catalogBooks, debouncedSearch, selectedCategory, selectedFormat, availablePhysicalOnly, catalogSort]
   )
+  const catalogPageCount = Math.max(1, Math.ceil(filteredBooks.length / catalogPageSize))
+  const visibleBooks = filteredBooks.slice((catalogPage - 1) * catalogPageSize, catalogPage * catalogPageSize)
+
+  useEffect(() => {
+    setCatalogPage(1)
+  }, [debouncedSearch, selectedCategory, selectedFormat, availablePhysicalOnly, catalogSort])
+
+  useEffect(() => {
+    if (catalogPage > catalogPageCount) setCatalogPage(catalogPageCount)
+  }, [catalogPage, catalogPageCount])
 
   const activeLoans = useMemo(
     () => borrowRequests.filter((request) =>
@@ -641,6 +653,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     ),
     [borrowRequests, clock]
   )
+  const getCatalogMemberStatus = (book: Book) => {
+    if (book.catalog_type !== 'physical' && activeLoans.some((loan) => loan.book_id === book.id)) {
+      return { label: 'Borrowed', kind: 'borrowed' }
+    }
+
+    if (book.catalog_type === 'digital') return null
+
+    const relatedBookIds = new Set(book.physical_book_ids ?? [book.id])
+    const memberLoans = physicalLoans.filter((loan) => relatedBookIds.has(loan.book_id))
+    if (memberLoans.some((loan) => loan.status === 'checked_out')) return { label: 'Borrowed', kind: 'borrowed' }
+    if (memberLoans.some((loan) => loan.status === 'return_pending')) return { label: 'Return awaiting confirmation', kind: 'pending' }
+    if (memberLoans.some((loan) => loan.status === 'pending')) return { label: 'Awaiting librarian confirmation', kind: 'pending' }
+    return null
+  }
   const ownedContributionBooks = useMemo(
     () => books.filter((book) => book.isOwner && book.pdf_url),
     [books]
@@ -648,6 +674,16 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const activePhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'checked_out' || loan.status === 'return_pending').length
   const pendingPhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'pending').length
   const unpaidFineCount = clearanceFines.filter((fine) => fine.status === 'unpaid').length
+  const overduePhysicalLoanCount = physicalLoans.filter((loan) =>
+    loan.status === 'checked_out' && Boolean(loan.due_date && new Date(loan.due_date).getTime() < clock)
+  ).length
+  const pendingDigitalRequestCount = borrowRequests.filter((request) => request.status === 'pending').length
+  const returnConfirmationCount = physicalLoans.filter((loan) => loan.status === 'return_pending').length
+  const dueSoonPhysicalLoanCount = physicalLoans.filter((loan) => {
+    if (loan.status !== 'checked_out' || !loan.due_date) return false
+    const daysRemaining = Math.ceil((new Date(loan.due_date).getTime() - clock) / (1000 * 60 * 60 * 24))
+    return daysRemaining >= 0 && daysRemaining <= 3
+  }).length
 
   const matchesActivity = (kind: 'loans' | 'charges' | 'alerts', status: string, text: string) => {
     const filterMatches = activityTypeFilter === 'all'
@@ -1224,49 +1260,77 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           </div>
         </header>
 
-        {urgentLoans.length > 0 ? (
-          <div className="student-priority-alert rounded-[1.75rem] border border-amber-300 bg-amber-50/90 p-5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <span className="text-xl" aria-hidden="true">⚠️</span>
-                <div>
-                  <h3 className="font-semibold text-amber-900 dark:text-amber-200">
-                    Access Expiring Soon
-                  </h3>
-                  <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
-                    {urgentLoans.map((loan) =>
-                      `"${loan.title}" expires ${loan.diffDays === 0 ? 'today' : `in ${loan.diffDays} day(s)`}.`
-                    ).join(' ')}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {urgentLoans.map((loan) => (
-                  <button
-                    key={loan.id}
-                    type="button"
-                    onClick={() => void handleLoanAction(loan.id)}
-                    disabled={loanActionId === loan.id}
-                    className="rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-500 dark:text-slate-950"
-                  >
-                    {loanActionId === loan.id ? 'Renewing...' : `Renew "${loan.title?.slice(0, 16)}..." (+14d)`}
-                  </button>
-                ))}
-              </div>
+        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-labelledby="member-next-actions-title">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-pine-700 dark:text-pine-200">Your account</p>
+              <h2 id="member-next-actions-title" className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">What needs your attention</h2>
             </div>
+            <p className="text-sm text-slate-500 dark:text-slate-400" aria-live="polite">
+              {overduePhysicalLoanCount + unpaidFineCount + pendingPhysicalLoanCount + pendingDigitalRequestCount + returnConfirmationCount + dueSoonPhysicalLoanCount + urgentLoans.length > 0
+                ? 'Your next steps, all in one place.'
+                : 'No urgent account tasks right now.'}
+            </p>
           </div>
-        ) : null}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {overduePhysicalLoanCount > 0 ? <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30">
+              <h3 className="font-semibold text-rose-900 dark:text-rose-100">{overduePhysicalLoanCount} overdue physical book{overduePhysicalLoanCount === 1 ? '' : 's'}</h3>
+              <p className="mt-1 text-sm text-rose-800 dark:text-rose-200">Please return the book or contact library staff about your loan.</p>
+              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-rose-800 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-900">Review physical loans</button>
+            </article> : null}
+            {unpaidFineCount > 0 ? <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+              <h3 className="font-semibold text-amber-950 dark:text-amber-100">{unpaidFineCount} unpaid charge{unpaidFineCount === 1 ? '' : 's'}</h3>
+              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">Review the charge details and resolve payment with library staff.</p>
+              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-amber-800 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-900">Review charges</button>
+            </article> : null}
+            {pendingPhysicalLoanCount + pendingDigitalRequestCount > 0 ? <article className="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
+              <h3 className="font-semibold text-sky-950 dark:text-sky-100">{pendingPhysicalLoanCount + pendingDigitalRequestCount} request{pendingPhysicalLoanCount + pendingDigitalRequestCount === 1 ? '' : 's'} awaiting review</h3>
+              <p className="mt-1 text-sm text-sky-900 dark:text-sky-200">Check the status of your digital and physical borrowing requests.</p>
+              <button type="button" onClick={() => setRequestsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-sky-900 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-950 dark:bg-sky-300 dark:text-slate-950">View requests</button>
+            </article> : null}
+            {returnConfirmationCount > 0 ? <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{returnConfirmationCount} return{ returnConfirmationCount === 1 ? '' : 's'} awaiting confirmation</h3>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Library staff will update your loan once the return is checked.</p>
+              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-700">View loan status</button>
+            </article> : null}
+            {dueSoonPhysicalLoanCount > 0 ? <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+              <h3 className="font-semibold text-amber-950 dark:text-amber-100">{dueSoonPhysicalLoanCount} physical loan{dueSoonPhysicalLoanCount === 1 ? '' : 's'} due soon</h3>
+              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">Check the due date and return the book on time.</p>
+              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg border border-amber-700 px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 dark:border-amber-300 dark:text-amber-100 dark:hover:bg-amber-900">Review due dates</button>
+            </article> : null}
+            {urgentLoans.map((loan) => <article key={`urgent-${loan.id}`} className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+              <h3 className="font-semibold text-amber-950 dark:text-amber-100">Digital access expires {loan.diffDays === 0 ? 'today' : `in ${loan.diffDays} day${loan.diffDays === 1 ? '' : 's'}`}</h3>
+              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">{loan.title}</p>
+              <button type="button" disabled={loanActionId === loan.id} onClick={() => void handleLoanAction(loan.id)} className="mt-3 min-h-11 rounded-lg bg-amber-800 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-900 disabled:opacity-50 dark:bg-amber-300 dark:text-slate-950">{loanActionId === loan.id ? 'Renewing…' : 'Renew access'}</button>
+            </article>)}
+            {overduePhysicalLoanCount + unpaidFineCount + pendingPhysicalLoanCount + pendingDigitalRequestCount + returnConfirmationCount + dueSoonPhysicalLoanCount + urgentLoans.length === 0 ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+              <h3 className="font-semibold text-emerald-950 dark:text-emerald-100">You’re all caught up</h3>
+              <p className="mt-1 text-sm text-emerald-900 dark:text-emerald-200">Browse the catalog whenever you’re ready to find your next resource.</p>
+              <button type="button" onClick={() => document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })} className="mt-3 min-h-11 rounded-lg bg-emerald-800 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-900">Explore catalog</button>
+            </div> : null}
+          </div>
+        </section>
 
         <BookAssistant />
 
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="space-y-6">
             <div id="explore" className="catalog-panel rounded-[2rem] p-6 lg:p-8">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Book catalog & discovery</h2>
+              <header className="catalog-heading">
+                <div className="catalog-heading-copy">
+                  <p className="catalog-eyebrow">Library collection</p>
+                  <h2>Explore the catalog</h2>
+                  <p className="catalog-description">Find print and digital resources selected for your studies.</p>
+                </div>
+                <div className="catalog-heading-stat" aria-label={`${catalogBooks.length} titles in the collection`}>
+                  <strong>{catalogBooks.length}</strong>
+                  <span>titles</span>
+                </div>
+              </header>
               <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
                 <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
                 <SearchIcon />
-                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Find a book, author, ISBN, or subject…" />
+                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search by title, author, ISBN, or subject" />
                 {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
                 <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
               </form>
@@ -1327,19 +1391,21 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
 
               <div className="mt-4 flex items-center justify-end">
                 <div className="text-xs text-slate-500 dark:text-slate-400">
-                  Showing <span className="font-bold text-slate-900 dark:text-slate-100">{filteredBooks.length}</span> of {catalogBooks.length} volumes
+                  Showing <span className="font-bold text-slate-900 dark:text-slate-100">{filteredBooks.length === 0 ? 0 : (catalogPage - 1) * catalogPageSize + 1}–{Math.min(catalogPage * catalogPageSize, filteredBooks.length)}</span> of {filteredBooks.length} matching titles
                 </div>
               </div>
 
               <div id="catalog-results" className="mt-6 grid scroll-mt-6 items-stretch gap-4 md:grid-cols-2">
                 {filteredBooks.length > 0 ? (
-                  filteredBooks.map((book) => (
-                    <article
+                  visibleBooks.map((book) => {
+                    const memberStatus = getCatalogMemberStatus(book)
+                    const openAction = book.catalog_type === 'physical' ? 'Choose loan options' : 'View details and actions'
+                    return <article
                       key={book.id}
-                      className="resource-card rounded-[1.5rem] p-5"
+                      className="resource-card catalog-book-card rounded-[1.5rem] p-5"
                       role="button"
                       tabIndex={0}
-                      aria-label={book.catalog_type === 'physical' ? `Choose loan options for ${book.title}` : `View details and actions for ${book.title}`}
+                      aria-label={`${openAction} for ${book.title}${memberStatus ? `, ${memberStatus.label}` : ''}`}
                       aria-haspopup="dialog"
                       onClick={() => book.catalog_type === 'physical' ? openPhysicalBorrowOptions(book) : openCatalogDetails(book)}
                       onKeyDown={(event) => {
@@ -1350,27 +1416,41 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                         }
                       }}
                     >
-                      <div className="resource-card-layout">
-                        <div className="resource-cover">
+                      <div className="resource-card-layout catalog-book-layout">
+                        <div className="resource-cover catalog-book-cover">
                           <div className="resource-cover-placeholder" aria-hidden="true"><span className="resource-cover-mark"><img src="/mary-the-queen-college-crest.jpg" alt="" loading="lazy" /></span><span>{book.category}</span></div>
                           {book.cover_image_url ? <img className="resource-cover-image" src={book.cover_image_url} alt={`${book.title} cover`} loading="lazy" onError={(event) => { event.currentTarget.remove() }} /> : null}
                         </div>
-                        <div className="resource-card-heading">
-                          <div className="flex flex-wrap items-center gap-2"><p className="text-celadon text-sm font-semibold uppercase tracking-[0.2em]">{book.category}</p><span className="rounded-full border border-paper-300 bg-paper-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:border-forest-700 dark:bg-forest-800 dark:text-slate-300">{book.catalog_type === 'physical' ? 'Physical' : book.catalog_type === 'hybrid' ? 'Digital + physical' : 'Digital'}</span></div>
-                          <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3>
-                          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">by {book.author}</p>
-                          {book.description?.trim() ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{book.description}</p> : null}
-                          {book.catalog_type !== 'digital' ? <p className="mt-2 text-xs font-medium text-pine-700 dark:text-pine-200">{book.physical_available_copies ?? 0} available · {book.physical_registered_copies ?? 0} total copies</p> : null}
+                        <div className="resource-card-heading catalog-book-copy">
+                          <div className="catalog-book-labels">
+                            <span className="catalog-book-category">{book.category}</span>
+                            <span className="catalog-format-badge">{book.catalog_type === 'physical' ? 'Print' : book.catalog_type === 'hybrid' ? 'Print + digital' : 'Digital'}</span>
+                            {memberStatus ? <span className={`catalog-member-status is-${memberStatus.kind}`} aria-label={`Your status: ${memberStatus.label}`}>{memberStatus.label}</span> : null}
+                          </div>
+                          <h3>{book.title}</h3>
+                          <p className="catalog-book-author">by {book.author}</p>
+                          {book.description?.trim() ? <p className="catalog-book-description">{book.description}</p> : null}
+                          <div className="catalog-book-footer">
+                            {book.catalog_type !== 'digital' ? <span className={`catalog-stock-indicator${(book.physical_available_copies ?? 0) > 0 ? ' is-available' : ''}`}>
+                              <span aria-hidden="true" />{(book.physical_available_copies ?? 0) > 0 ? `${book.physical_available_copies} available` : 'Currently unavailable'}
+                            </span> : <span className="catalog-stock-indicator is-digital"><span aria-hidden="true" />Digital access</span>}
+                            <span className="catalog-book-open">{book.catalog_type === 'physical' ? 'Loan options' : 'View details'} <span aria-hidden="true">→</span></span>
+                          </div>
                         </div>
                       </div>
                     </article>
-                  ))
+                  })
                 ) : dataReady ? (
                   <div className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-8 text-center text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     No matching resources. Try a broader title, author, or subject.
                   </div>
                 ) : null}
               </div>
+              {catalogPageCount > 1 ? <nav className="mt-6 flex items-center justify-center gap-3" aria-label="Catalog pages">
+                <button type="button" disabled={catalogPage === 1} onClick={() => { setCatalogPage((page) => Math.max(1, page - 1)); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-100">Previous</button>
+                <span className="text-sm text-slate-600 dark:text-slate-300" aria-current="page">Page {catalogPage} of {catalogPageCount}</span>
+                <button type="button" disabled={catalogPage === catalogPageCount} onClick={() => { setCatalogPage((page) => Math.min(catalogPageCount, page + 1)); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="min-h-11 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-100">Next</button>
+              </nav> : null}
 
               {requestStatus ? (
                 <div className="mt-6 rounded-[1.5rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">

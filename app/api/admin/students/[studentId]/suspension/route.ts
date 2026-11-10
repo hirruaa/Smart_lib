@@ -64,7 +64,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ stu
 export async function POST(request: Request, { params }: { params: Promise<{ studentId: string }> }) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 4_096)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
-  const requestLimit = rateLimit(request, { name: 'admin-member-suspension', limit: 20, windowMs: 60 * 60_000 })
+  const requestLimit = await rateLimit(request, { name: 'admin-member-suspension', limit: 20, windowMs: 60 * 60_000 })
   if (!requestLimit.allowed) return tooManyRequests(requestLimit.retryAfterSeconds)
 
   const studentId = (await params).studentId

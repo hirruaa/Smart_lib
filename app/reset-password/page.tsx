@@ -41,7 +41,7 @@ export default function ResetPasswordPage() {
 
         <div className="text-center">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            {required ? 'Change your temporary password' : 'Set New Password'}
+            {required ? 'Change your initial password' : 'Set New Password'}
           </h1>
           <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
             {required
@@ -57,7 +57,7 @@ export default function ResetPasswordPage() {
         )}
 
         {hasSession === false
-          ? <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">This password link is invalid or has expired. Sign in with your temporary password or request a new recovery link.</p>
+          ? <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">This password link is invalid or has expired. Sign in with your initial password or request a new recovery link.</p>
           : hasSession ? <div className="mt-6"><PasswordChangeForm onSuccess={handlePasswordChanged} /></div> : null}
       </div>
     </div>

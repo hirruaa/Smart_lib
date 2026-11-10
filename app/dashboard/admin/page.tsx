@@ -304,8 +304,8 @@ export default function AdminPage() {
   const [bookDetailsDraft, setBookDetailsDraft] = useState({ title: '', author: '', category: '', genre: '', sourceType: 'staff_added' as Book['source_type'], courseCode: '', isbn: '', description: '', coverImageUrl: '' })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [newStudent, setNewStudent] = useState({ username: '', email: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
-  const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; temporaryPassword: string } | null>(null)
+  const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
+  const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditActors, setAuditActors] = useState<AuditActor[]>([])
   const [auditActorError, setAuditActorError] = useState<string | null>(null)
@@ -959,7 +959,6 @@ export default function AdminPage() {
         student.full_name,
         student.email,
         student.role,
-        student.school,
         student.department,
         student.course,
         student.student_year,
@@ -1386,13 +1385,8 @@ export default function AdminPage() {
       setSaving(false)
       return false
     } else {
-      if (typeof data.temporaryPassword !== 'string') {
-        setError('The account was created, but its one-time password was not returned. Contact an administrator before closing this page.')
-        setSaving(false)
-        return false
-      }
-      setCreatedMemberCredentials({ email: String(data.email), username: String(data.username), temporaryPassword: data.temporaryPassword })
-      setNewStudent({ username: '', email: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
+      setCreatedMemberCredentials({ email: String(data.email), username: String(data.username), initialPassword: newStudent.password })
+      setNewStudent({ username: '', email: '', password: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
       await loadData()
     }
     setSaving(false)
@@ -2183,7 +2177,7 @@ export default function AdminPage() {
                 <button type="button" onClick={() => setMemberToolModal('catalogs')} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Manage academic catalogs</button>
               </div>
               <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_10rem_12rem_auto]">
-                <input type="search" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search name, email, school, or course..." aria-label="Search members" className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                <input type="search" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Search name, email, ID, or course..." aria-label="Search members" className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                 <select value={userRoleFilter} onChange={(event) => setUserRoleFilter(event.target.value as typeof userRoleFilter)} aria-label="Filter members by role" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="all">All roles</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="librarian">Librarians</option></select>
                 <select value={userLoanFilter} onChange={(event) => setUserLoanFilter(event.target.value as typeof userLoanFilter)} aria-label="Filter members by digital access" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="all">Any loan activity</option><option value="active">Has active loans</option><option value="none">No active loans</option></select>
                 <p className="self-center text-xs text-slate-500 dark:text-slate-400">{filteredStudentDetails.length} of {studentDetails.length} members</p>
@@ -2242,7 +2236,7 @@ export default function AdminPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member accounts</p>
                       <h3 id="create-member-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3>
-                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details. We’ll email an activation link and show you a unique temporary password to share directly.</p>
+                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details and set an initial password. We’ll email an activation link; share the password directly.</p>
                     </div>
                     <button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="shrink-0 rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
                   </div>
@@ -2257,6 +2251,10 @@ export default function AdminPage() {
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Email address
                         <input type="email" required autoComplete="email" value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className={memberInviteInput} />
+                      </label>
+                      <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Initial password
+                        <input type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} className={memberInviteInput} />
+                        <span className="mt-1 block text-xs font-normal text-slate-500">Use 12–128 characters. The member must change it at first sign-in.</span>
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Account type
                         <select required value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className={memberInviteInput}>
@@ -2283,18 +2281,18 @@ export default function AdminPage() {
                       </label> : null}
                     </div>
                     <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
-                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change the one-time password before entering the library. Share it separately from the email link.</p>
+                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change this password before entering the library. Share it separately from the email link.</p>
                       <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
                     </div>
                   </form>
                 </section>
               </div> : null}
               {createdMemberCredentials ? <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4" role="presentation">
-                <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
+                <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="initial-password-title">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Account created</p>
-                  <h3 id="temporary-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the temporary password</h3>
+                  <h3 id="initial-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the initial password</h3>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The activation link was emailed to <strong>{createdMemberCredentials.email}</strong>. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
-                  <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.temporaryPassword}</code>
+                  <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.initialPassword}</code>
                   <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the activation link. The member must change it before accessing the library. This password will not be shown again.</p>
                   <div className="mt-6 flex justify-end"><button type="button" onClick={() => setCreatedMemberCredentials(null)} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Done</button></div>
                 </section>
