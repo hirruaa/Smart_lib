@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getSupabase } from '@/utils/supabase/client'
 import { Skeleton } from '@/components/skeletons'
+import PasswordChangeForm from '@/components/PasswordChangeForm'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -184,6 +185,12 @@ export default function ProfilePage() {
             </button>
           </div>
         </form>
+
+        <section className="mt-10 border-t border-slate-200 pt-8 dark:border-slate-700" aria-labelledby="profile-password-title">
+          <h2 id="profile-password-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">Change password</h2>
+          <p className="mt-2 mb-5 text-sm text-slate-600 dark:text-slate-300">Update your account password whenever you need to.</p>
+          <PasswordChangeForm onSuccess={() => setMessage('Password updated successfully.')} />
+        </section>
       </div>
     </div>
   )

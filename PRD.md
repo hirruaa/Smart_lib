@@ -99,7 +99,7 @@ Priorities: **P0** = required before public production launch; **P1** = core pro
 ### 5.2 Digital browse, access, and reading
 
 1. A student or faculty member searches or browses digital books/materials.
-2. The catalog clearly presents whether access is free, points-based, restricted, or premium, plus the available access duration or configured price.
+2. The catalog clearly presents whether access is free, points-based, or restricted, plus the available access duration or point cost.
 3. The member requests eligible free or points access.
 4. The server/database validates the member, resource, duration, existing access, and point balance. It grants free access or atomically deducts points and grants access.
 5. On success, the member can read immediately; no administrator approval is inserted into this eligible free/points flow.
@@ -382,7 +382,7 @@ The 2026-10-09 targeted QA pass built the application and manually checked repre
 |---|---|---|
 | Unauthenticated `GET /api/notifications` returned 500 instead of 401 during QA. | Incorrect auth failure behavior; can obscure the real cause and pollute error monitoring. | Fix the auth error handling and add unauthenticated/expired-session tests. |
 | `/sitemap.xml` returned 500 when `NEXT_PUBLIC_SITE_URL` was unset. | Deployment will fail to serve sitemap until canonical HTTPS origin is configured. | Set the production environment variable and verify sitemap/robots on the deployed domain. |
-| A first dashboard load reported `books.premium_price` missing; after a server restart the dashboard loaded. | Possible stale/transient database/cache issue or schema drift; unresolved by local smoke testing. | Compare the deployed database against the release schema and run an end-to-end catalog query in staging. |
+| A first dashboard load reported `books.premium_price` missing; after a server restart the dashboard loaded. | Historical schema drift report; paid e-book purchases have since been retired and the unused field is removed by migration. | Verify the current release schema is applied in staging. |
 | `npm test` is a static system/schema-presence check; the repository had no automated browser/integration suite at QA time. | Core persistence, authorization boundaries, and concurrency are not proven by the current canonical test command. | Add and run automated tests for the critical journeys before launch. |
 | Docker-backed isolated infrastructure, backup restoration, production uptime, load, and broader cross-browser checks were not performed. | Production operational readiness and scale behavior remain unknown. | Complete staging and operations gates; record evidence and accepted limits. |
 

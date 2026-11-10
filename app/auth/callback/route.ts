@@ -18,5 +18,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL(`/verify-email?status=error&message=${encodeURIComponent(error.message)}`, requestUrl.origin))
   }
 
-  return NextResponse.redirect(new URL(`${safeNext}?status=success`, requestUrl.origin))
+  const destination = new URL(safeNext, requestUrl.origin)
+  destination.searchParams.set('status', 'success')
+  return NextResponse.redirect(destination)
 }

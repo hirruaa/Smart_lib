@@ -64,14 +64,6 @@ type Book = {
   is_archived: boolean
 }
 
-type Material = {
-  id: number
-  title: string
-  description: string | null
-  resource_url: string | null
-  created_at: string | null
-}
-
 type RequestItem = {
   id: number
   student_id: string
@@ -124,7 +116,6 @@ type MemberFine = {
   waiver_reason: string | null; receipt_number: string | null; created_at: string; paid_at: string | null
 }
 type MemberPrintPayment = { id: number; amount: number; description: string; receipt_number: string | null; created_at: string }
-type MemberEbookPurchase = { id: number; book_id: number; fee_amount: number; status: string; receipt_number: string | null; requested_at: string; reviewed_at: string | null }
 type MemberPointTransaction = { id: number; amount: number; transaction_type: string; description: string; created_at: string }
 type MemberLedgerEvent = { id: number; occurred_at: string; event_type: string; summary: string; actor_role: string; receipt_number: string | null; related_request_type: string | null; related_request_id: number | null }
 type MemberAccountHistory = {
@@ -133,7 +124,6 @@ type MemberAccountHistory = {
   physicalLoans: MemberPhysicalLoan[]
   fines: MemberFine[]
   printPayments: MemberPrintPayment[]
-  ebookPurchases: MemberEbookPurchase[]
   pointTransactions: MemberPointTransaction[]
   activityLedger: MemberLedgerEvent[]
 }
@@ -232,12 +222,10 @@ function AdminNavIcon({ section }: { section: string }) {
     overview: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
     books: <><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v17H7.5A2.5 2.5 0 0 0 5 22V5.5Z" /><path d="M5 20.5A2.5 2.5 0 0 1 7.5 18H19M9 7h6M9 10h4" /></>,
     requests: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 12h6M9 16h4" /></>,
-    'physical-fines': <><path d="M12 3v18M17 7.5c-.8-1-2.3-1.5-4.5-1.5-2.4 0-4 1-4 2.7 0 4.2 9 1.4 9 5.8 0 1.8-1.8 3-4.5 3-2.2 0-4-.7-5-1.9" /></>,
     'physical-finance': <><path d="M12 3v18M17 7.5c-.8-1-2.3-1.5-4.5-1.5-2.4 0-4 1-4 2.7 0 4.2 9 1.4 9 5.8 0 1.8-1.8 3-4.5 3-2.2 0-4-.7-5-1.9" /></>,
     users: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M16 14a5 5 0 0 1 4.5 6" /></>,
     physical: <><path d="M4 7h16v13H4z" /><path d="M8 7V4h8v3M8 12h8M8 16h5" /></>,
     policy: <><path d="M6 3h12v18l-6-3-6 3z" /><path d="M9 8h6M9 12h6" /></>,
-    materials: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
     contributions: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h5" /><path d="m14 16 2 2 4-4" /></>,
     audit: <><path d="M4 5h16M4 12h16M4 19h16" /><circle cx="7" cy="5" r="1" /><circle cx="7" cy="12" r="1" /><circle cx="7" cy="19" r="1" /></>,
   }
@@ -317,6 +305,7 @@ export default function AdminPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ username: '', email: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
+  const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; temporaryPassword: string } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditActors, setAuditActors] = useState<AuditActor[]>([])
   const [auditActorError, setAuditActorError] = useState<string | null>(null)
@@ -418,6 +407,7 @@ export default function AdminPage() {
     setSection(nextSection)
     if (nextSection === 'physical' || nextSection === 'physical-finance') setPhysicalSectionVisited(true)
   }
+  const activeSectionLabel = navGroups.flatMap((group) => group.items).find((item) => item.section === section)?.label ?? 'Admin workspace'
 
 
   useEffect(() => {
@@ -838,18 +828,17 @@ export default function AdminPage() {
       const supabase = getSupabase()
       const fineCalculation = await supabase.rpc('calculate_overdue_fines')
       if (!active) return
-      const [digital, physicalRequests, physicalLoans, fines, printPayments, ebookPurchases, pointTransactions, activityLedger] = await Promise.all([
+      const [digital, physicalRequests, physicalLoans, fines, printPayments, pointTransactions, activityLedger] = await Promise.all([
         supabase.from('digital_book_loan_history').select('id,borrow_request_id,student_id,book_id,requested_at,borrowed_at,due_date,returned_at,duration_days,renewal_count,points_cost,status').eq('student_id', selectedMember.id).order('requested_at', { ascending: false }),
         supabase.from('physical_book_requests').select('id,book_id,status,payment_status,payment_method,fee_amount,requested_at,checked_out_at,due_date,returned_at,receipt_number').eq('student_id', selectedMember.id).order('requested_at', { ascending: false }),
         supabase.from('physical_book_loan_history').select('id,request_id,book_id,copy_id,duration_days,fee_amount,payment_method,payment_status,checked_out_at,due_date,returned_at,return_condition,status,receipt_number,notes').eq('student_id', selectedMember.id).order('checked_out_at', { ascending: false }),
         supabase.from('fines').select('id,physical_book_request_id,borrow_request_id,amount,status,fine_type,fine_reason,waiver_reason,receipt_number,created_at,paid_at').eq('student_id', selectedMember.id).order('created_at', { ascending: false }),
         supabase.from('library_print_payments').select('id,amount,description,receipt_number,created_at').eq('student_id', selectedMember.id).order('created_at', { ascending: false }),
-        supabase.from('ebook_purchase_requests').select('id,book_id,fee_amount,status,receipt_number,requested_at,reviewed_at').eq('student_id', selectedMember.id).order('requested_at', { ascending: false }),
         supabase.from('point_transactions').select('id,amount,transaction_type,description,created_at').eq('user_id', selectedMember.id).order('created_at', { ascending: false }),
         supabase.from('member_activity_ledger').select('id,occurred_at,event_type,summary,actor_role,receipt_number,related_request_type,related_request_id').eq('member_id', selectedMember.id).order('occurred_at', { ascending: false }).order('id', { ascending: false }).limit(100),
       ])
       if (!active) return
-      const failed = [digital, physicalRequests, physicalLoans, fines, printPayments, ebookPurchases, pointTransactions, activityLedger].find((result) => result.error)?.error
+      const failed = [digital, physicalRequests, physicalLoans, fines, printPayments, pointTransactions, activityLedger].find((result) => result.error)?.error
       if (failed) {
         setMemberAccountHistoryError(`Some account history could not be loaded: ${failed.message}`)
       } else if (fineCalculation.error) {
@@ -862,7 +851,6 @@ export default function AdminPage() {
         physicalLoans: (physicalLoans.data ?? []) as MemberPhysicalLoan[],
         fines: (fines.data ?? []) as MemberFine[],
         printPayments: (printPayments.data ?? []) as MemberPrintPayment[],
-        ebookPurchases: (ebookPurchases.data ?? []) as MemberEbookPurchase[],
         pointTransactions: (pointTransactions.data ?? []) as MemberPointTransaction[],
         activityLedger: (activityLedger.data ?? []) as MemberLedgerEvent[],
       })
@@ -950,20 +938,6 @@ export default function AdminPage() {
     request.status === 'approved' &&
     !request.returned_date &&
     Boolean(request.due_date && new Date(request.due_date).getTime() > now)
-  const materials = useMemo(
-    () =>
-      books
-        .filter((book) => book.catalog_type !== 'physical' && !!book.pdf_url)
-        .map((book) => ({
-          id: book.id,
-          title: book.title,
-          description: book.description,
-          resource_url: book.pdf_url,
-          created_at: book.created_at,
-        })),
-    [books]
-  )
-
   const pendingRequests = requests.filter((request) => request.status === 'pending')
   const activeDigitalAccess = requests.filter(isActiveDigitalAccess)
 
@@ -1252,8 +1226,8 @@ export default function AdminPage() {
         return
       }
     }
-    if (memberEditForm.role !== 'librarian' && !/^\d{4}-\d{5}$/.test(memberEditForm.institutionalId)) {
-      setError('Enter a 9-digit institutional ID in NNNN-NNNNN format.')
+    if (memberEditForm.role !== 'librarian' && !/^\d{5,8}$/.test(memberEditForm.institutionalId)) {
+      setError('Enter an institutional ID using 5–8 digits only.')
       return
     }
     setSaving(true)
@@ -1412,7 +1386,12 @@ export default function AdminPage() {
       setSaving(false)
       return false
     } else {
-      setActionMessage(`Invitation sent to ${data.email}. Username: ${data.username}.`)
+      if (typeof data.temporaryPassword !== 'string') {
+        setError('The account was created, but its one-time password was not returned. Contact an administrator before closing this page.')
+        setSaving(false)
+        return false
+      }
+      setCreatedMemberCredentials({ email: String(data.email), username: String(data.username), temporaryPassword: data.temporaryPassword })
       setNewStudent({ username: '', email: '', fullName: '', role: 'student', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
       await loadData()
     }
@@ -1631,30 +1610,37 @@ export default function AdminPage() {
             <AdminDashboardSkeleton />
           ) : (
             <>
-          <header className={`dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40${section === 'overview' ? ' admin-welcome-hero' : ''}`}>
-            <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
-            <div className={`admin-welcome-layout${section === 'overview' ? ' admin-welcome-layout--overview' : ''}`}>
-              <div className="admin-welcome-copy">
-                {section === 'overview' ? <p className="admin-overview-kicker">Library administration</p> : null}
-                <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
-                {section === 'overview' ? <p className="admin-welcome-caption">A clear view of what needs attention and how your library is doing.</p> : null}
-              </div>
-              {section === 'overview' ? <nav className="admin-overview-actions" aria-label="Quick actions">
+          {section === 'overview' ? (
+            <header className="dashboard-hero rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40 admin-welcome-hero">
+              <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
+              <div className="admin-welcome-layout admin-welcome-layout--overview">
+                <div className="admin-welcome-copy">
+                  <p className="admin-overview-kicker">Library administration</p>
+                  <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Welcome back, {profile?.full_name?.trim() || 'Admin'}</h1>
+                  <p className="admin-welcome-caption">A clear view of what needs attention and how your library is doing.</p>
+                </div>
+                <nav className="admin-overview-actions" aria-label="Quick actions">
                 <button type="button" onClick={() => { setSection('users'); setMemberToolModal('createMember') }} className="admin-quick-action">
                   <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.5" /><path d="M3 20a6 6 0 0 1 12 0M19 8v6m-3-3h6" /></svg></span>
-                  <span><strong>Invite a member</strong><small>Add a student or staff account</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                  <span><strong>Invite a member</strong></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
                 </button>
-                <button type="button" onClick={() => setSection('users')} className="admin-quick-action">
-                  <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3.5 14.6 9l6 .8-4.3 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.3-4.2 6-.8L12 3.5Z" /></svg></span>
-                  <span><strong>Record point top-up</strong><small>Choose a member and record cash</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                <button type="button" onClick={() => { navigateToSection('books'); setNewBookOpen(true) }} className="admin-quick-action">
+                  <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H20v18H7.5A2.5 2.5 0 0 0 5 22V4.5Z" /><path d="M5 5v15m7-10h4m-2-2v4" /></svg></span>
+                  <span><strong>Add digital book</strong></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
                 </button>
                 <button type="button" onClick={() => navigateToSection('physical')} className="admin-quick-action">
                   <span className="admin-quick-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5v-12Z" /><path d="M4 6v12m5-11h7m-7 4h7" /></svg></span>
-                  <span><strong>Add a physical book</strong><small>Grow your physical catalog</small></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
+                  <span><strong>Add a physical book</strong></span><span className="admin-quick-action-arrow" aria-hidden="true">↗</span>
                 </button>
-              </nav> : null}
-            </div>
-          </header>
+                </nav>
+              </div>
+            </header>
+          ) : (
+            <header className="admin-section-header">
+              <button type="button" className="admin-mobile-toggle" onClick={() => setSidebarOpen(true)} aria-controls="admin-navigation" aria-expanded={sidebarOpen} aria-label="Open admin navigation"><span aria-hidden="true">☰</span></button>
+              <h1>{activeSectionLabel}</h1>
+            </header>
+          )}
 
           {section === 'overview' && (
             <section className="admin-overview">
@@ -2065,8 +2051,7 @@ export default function AdminPage() {
           {section === 'requests' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-5">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Digital history</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Eligible free and points access is automatic. Revoke active access only when necessary.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Eligible free and points access is automatic. Revoke active access only when necessary.</p>
               </div>
               {pendingRequests.length > 0 ? <details className="mb-5 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
                 <summary className="cursor-pointer text-sm font-semibold text-amber-900 dark:text-amber-200">{pendingRequests.length} legacy pending requests · informational only</summary>
@@ -2114,136 +2099,9 @@ export default function AdminPage() {
             </section>
           )}
 
-          {false && section === 'materials' && (
-            <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">PDF attachments</h2>
-                <p className="mt-1 max-w-2xl text-sm text-slate-500 dark:text-slate-400">This is the file-management view for the same digital catalog records. It does not create a second catalog; it attaches or replaces the PDF on an existing digital or hybrid title.</p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-700">
-                  <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold">Title</th>
-                      <th className="px-4 py-3 font-semibold">Reader</th>
-                      <th className="px-4 py-3 font-semibold">Published</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                    {materials.length > 0 ? (
-                      materials.map((material) => (
-                        <tr key={material.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/80">
-                          <td className="px-4 py-4 text-slate-800 dark:text-slate-100">{material.title}</td>
-                          <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                            <a href={`/reader/${material.id}`} className="text-sky-600 hover:text-sky-500 dark:text-sky-300">
-                              Open reader
-                            </a>
-                          </td>
-                          <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{material.created_at ? new Date(material.created_at).toLocaleDateString() : 'Unknown'}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={3} className="px-4 py-8 text-center text-slate-600 dark:text-slate-300">
-                          No published PDF materials found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault()
-                  if (!pdfBookId || (!pdfUrl && !materialFile)) {
-                    setError('Please select a book and either upload a PDF file or provide a URL.')
-                    return
-                  }
-                  setSaving(true)
-                  setError(null)
-                  const supabase = getSupabase()
-
-                  let finalUrl = pdfUrl.trim()
-                  let attachedStorage: Record<string, unknown> = { storage_provider: finalUrl ? 'external' : 'supabase' }
-                  if (materialFile) {
-                    setActionMessage('Uploading e-book to library storage...')
-                    const formData = new FormData()
-                    formData.append('file', materialFile)
-                    formData.append('category', 'Books')
-                    formData.append('isbn', books.find((book) => book.id === pdfBookId)?.isbn ?? '')
-                    formData.append('provider', 'supabase')
-                    formData.append('allow_fallback', 'false')
-                    const uploadResponse = await fetch('/api/storage/upload', { method: 'POST', body: formData })
-                    const uploadResult = await uploadResponse.json()
-                    if (!uploadResponse.ok) {
-                      setError(`Upload failed: ${uploadResult.error || 'Unable to upload PDF.'}`)
-                      setSaving(false)
-                      return
-                    }
-                    finalUrl = uploadResult.pdf_url || uploadResult.storage_path || ''
-                    attachedStorage = { storage_provider: uploadResult.storage_provider, storage_file_id: uploadResult.storage_file_id || null, storage_path: uploadResult.storage_path || null, file_name: uploadResult.file_name || materialFile.name, file_size: uploadResult.file_size || materialFile.size, mime_type: uploadResult.mime_type || 'application/pdf' }
-                  }
-
-                  const { error } = await supabase.from('books').update({ pdf_url: finalUrl, ...attachedStorage }).eq('id', pdfBookId)
-                  if (error) {
-                    setError(error.message)
-                  } else {
-                    setActionMessage('PDF attached to book successfully.')
-                    setPdfBookId(null)
-                    setPdfUrl('')
-                    setMaterialFile(null)
-                    await loadData()
-                  }
-                  setSaving(false)
-                }}
-                className="mt-6 rounded-[1.75rem] border border-slate-200 bg-slate-50 p-6 dark:border-slate-700 dark:bg-slate-800/60"
-              >
-                <div className="space-y-4">
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">1. Choose the catalog book</span>
-                    <select
-                      value={pdfBookId ?? ''}
-                      onChange={(event) => setPdfBookId(Number(event.target.value) || null)}
-                      required
-                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                    >
-                      <option value="">Choose a book</option>
-                      {books.filter((book) => book.catalog_type !== 'physical').map((book) => (
-                        <option key={book.id} value={book.id}>
-                          {book.title} ({book.author})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div>
-                    <EbookUploader
-                      onFileSelected={(file) => setMaterialFile(file)}
-                      onUrlEntered={(url) => setPdfUrl(url)}
-                      currentValue={pdfUrl}
-                      disabled={saving}
-                      allowExternalUrl={false}
-                    />
-
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="mt-6 inline-flex w-full items-center justify-center rounded-3xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
-                >
-                  {saving ? 'Uploading and attaching...' : '3. Upload and attach PDF'}
-                </button>
-              </form>
-            </section>
-          )}
-
           {section === 'audit' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 dark:border-slate-800 dark:bg-slate-900/80">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Audit log</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review who performed recent actions, what changed, and when. The dashboard loads the latest 1,000 events.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Review who performed recent actions, what changed, and when. The dashboard loads the latest 1,000 events.</p>
               <label className="mt-4 block max-w-xl text-sm font-medium">Search loaded events
                 <input type="search" value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} placeholder="Action, actor, target, or event detail" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
               </label>
@@ -2284,8 +2142,7 @@ export default function AdminPage() {
           {section === 'contributions' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Faculty lesson review</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Review faculty teaching resources before publishing. Approval adds the lesson to the resource shelf and offers the configured {defaultLessonReward}-point reward by default; it never creates a book.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Review faculty teaching resources before publishing. Approval adds the lesson to the resource shelf and offers the configured {defaultLessonReward}-point reward by default; it never creates a book.</p>
                 {lessonPolicyError ? <p role="status" className="mt-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{lessonPolicyError}</p> : null}
                 <button type="button" onClick={() => setShowContributionHistory((shown) => !shown)} className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold dark:border-slate-700">{showContributionHistory ? 'Hide review history' : `Review history (${reviewedContributions.length})`}</button>
               </div>
@@ -2319,8 +2176,7 @@ export default function AdminPage() {
           {section === 'users' && (
             <section className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-2xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-slate-950/40">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Member management</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage accounts and academics. Select a member to review or correct profile details.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Manage accounts and academics. Select a member to review or correct profile details.</p>
               </div>
               <div className="mb-6 flex flex-wrap gap-3">
                 <button type="button" onClick={() => setMemberToolModal('createMember')} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Invite member</button>
@@ -2386,7 +2242,7 @@ export default function AdminPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member accounts</p>
                       <h3 id="create-member-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3>
-                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details. We’ll email a secure link so they can set their own password.</p>
+                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details. We’ll email an activation link and show you a unique temporary password to share directly.</p>
                     </div>
                     <button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="shrink-0 rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
                   </div>
@@ -2410,10 +2266,11 @@ export default function AdminPage() {
                         </select>
                       </label>
                       {newStudent.role !== 'librarian' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Institutional ID
-                        <input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={newStudent.institutionalId} onChange={(event) => {
-                          const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
-                          setNewStudent({ ...newStudent, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
-                        }} placeholder="2026-01042" className={memberInviteInput} />
+                        <input required inputMode="numeric" maxLength={8} pattern="[0-9]{5,8}" value={newStudent.institutionalId} onChange={(event) => {
+                          const digits = event.target.value.replace(/\D/g, '').slice(0, 8)
+                          setNewStudent({ ...newStudent, institutionalId: digits })
+                        }} placeholder="5–8 digits" className={memberInviteInput} />
+                        <span className="mt-1 block text-xs font-normal text-slate-500">Enter 5–8 digits only.</span>
                       </label> : null}
                       {newStudent.role === 'faculty' ? <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Department
                         <select required value={newStudent.department} onChange={(event) => setNewStudent({ ...newStudent, department: event.target.value })} className={memberInviteInput}><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
@@ -2426,10 +2283,20 @@ export default function AdminPage() {
                       </label> : null}
                     </div>
                     <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
-                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member receives a secure email link to create their password.</p>
+                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change the one-time password before entering the library. Share it separately from the email link.</p>
                       <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
                     </div>
                   </form>
+                </section>
+              </div> : null}
+              {createdMemberCredentials ? <div className="fixed inset-0 z-[110] grid place-items-center bg-slate-950/60 p-4" role="presentation">
+                <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Account created</p>
+                  <h3 id="temporary-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the temporary password</h3>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The activation link was emailed to <strong>{createdMemberCredentials.email}</strong>. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
+                  <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.temporaryPassword}</code>
+                  <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the activation link. The member must change it before accessing the library. This password will not be shown again.</p>
+                  <div className="mt-6 flex justify-end"><button type="button" onClick={() => setCreatedMemberCredentials(null)} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Done</button></div>
                 </section>
               </div> : null}
               <div className="overflow-x-auto">
@@ -2486,7 +2353,7 @@ export default function AdminPage() {
             </div>
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Profile and academics</h3><dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">{selectedMember.role === 'student' ? <><div><dt className="text-slate-500">Course</dt><dd className="font-medium" title={selectedMember.course ? `Saved value: ${selectedMember.course}` : undefined}>{memberCourseDisplay(selectedMember.course, academicCourses)}{selectedMember.course && memberCourseDisplay(selectedMember.course, academicCourses) === 'Needs review' ? ` (${selectedMember.course})` : ''}</dd></div><div><dt className="text-slate-500">Year level</dt><dd className="font-medium" title={selectedMember.student_year ? `Saved value: ${selectedMember.student_year}` : undefined}>{memberYearDisplay(selectedMember.student_year)}{selectedMember.student_year && memberYearDisplay(selectedMember.student_year) === 'Needs review' ? ` (${selectedMember.student_year})` : ''}</dd></div></> : selectedMember.role === 'faculty' ? <div><dt className="text-slate-500">Faculty</dt><dd className="font-medium">{selectedMember.department || 'Not set'}</dd></div> : <div><dt className="text-slate-500">Account type</dt><dd className="font-medium">Librarian</dd></div>}</dl></section>
-              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account summary</h3><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.digitalLoans.length ?? 0} digital loan records</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.physicalLoans.length ?? 0} physical checkouts</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberFineStatusAvailable ? memberAccountHistory?.fines.filter((fine) => fine.status === 'unpaid').length ?? 0 : '—'} unpaid fines</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{(memberAccountHistory?.printPayments.length ?? 0) + (memberAccountHistory?.ebookPurchases.length ?? 0)} payment records</p></div></section>
+              <section><h3 className="font-semibold text-slate-900 dark:text-slate-100">Account summary</h3><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.digitalLoans.length ?? 0} digital loan records</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.physicalLoans.length ?? 0} physical checkouts</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberFineStatusAvailable ? memberAccountHistory?.fines.filter((fine) => fine.status === 'unpaid').length ?? 0 : '—'} unpaid fines</p><p className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">{memberAccountHistory?.printPayments.length ?? 0} print payments</p></div></section>
             </div>
             <section className="mt-6 rounded-2xl border border-slate-200 p-4 dark:border-slate-700" aria-labelledby="member-access-controls-title">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2541,7 +2408,7 @@ export default function AdminPage() {
                 <section><h4 className="text-sm font-semibold">Digital borrowing</h4><div className="mt-2 space-y-2">{memberAccountHistory.digitalLoans.map((loan) => <article key={`digital-${loan.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{bookMap.get(loan.book_id)?.title ?? `Book #${loan.book_id}`}</p><p className="text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ` · Due ${new Date(loan.due_date).toLocaleDateString()}` : ''}{loan.returned_at ? ` · Returned ${new Date(loan.returned_at).toLocaleDateString()}` : ''}</p></div><span className="text-xs font-semibold capitalize">{loan.status.replace(/_/g, ' ')} · {loan.points_cost} points</span></article>)}{memberAccountHistory.digitalLoans.length === 0 ? <p className="text-sm text-slate-500">No digital borrowing records.</p> : null}</div></section>
                 <section><h4 className="text-sm font-semibold">Physical circulation</h4><div className="mt-2 space-y-2">{memberAccountHistory.physicalLoans.map((loan) => <article key={`physical-loan-${loan.id}`} className="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{bookMap.get(loan.book_id)?.title ?? `Book #${loan.book_id}`}</p><span className="text-xs font-semibold capitalize">{loan.status.replace(/_/g, ' ')}{loan.return_condition ? ` · ${loan.return_condition}` : ''}</span></div><p className="mt-1 text-xs text-slate-500">Checked out {new Date(loan.checked_out_at).toLocaleDateString()} · Due {new Date(loan.due_date).toLocaleDateString()}{loan.returned_at ? ` · Returned ${new Date(loan.returned_at).toLocaleDateString()}` : ''} · ₱{Number(loan.fee_amount).toFixed(2)} · {loan.payment_method} / {loan.payment_status}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt {loan.receipt_number}</p> : null}{loan.notes ? <p className="mt-1 text-xs text-slate-500">Staff note: {loan.notes}</p> : null}</article>)}{memberAccountHistory.physicalRequests.filter((request) => !memberAccountHistory!.physicalLoans.some((loan) => loan.request_id === request.id)).map((request) => <article key={`physical-request-${request.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{bookMap.get(request.book_id)?.title ?? `Book #${request.book_id}`}</p><p className="text-xs text-slate-500">Requested {new Date(request.requested_at).toLocaleDateString()} · ₱{Number(request.fee_amount).toFixed(2)} · {request.payment_method} / {request.payment_status}</p></div><span className="text-xs font-semibold capitalize">{request.status.replace(/_/g, ' ')}</span></article>)}{memberAccountHistory.physicalLoans.length === 0 && memberAccountHistory.physicalRequests.length === 0 ? <p className="text-sm text-slate-500">No physical requests or checkout records.</p> : null}</div></section>
                 <section><h4 className="text-sm font-semibold">Fines &amp; penalties</h4><div className="mt-2 space-y-2">{memberAccountHistory.fines.map((fine) => <article key={`fine-${fine.id}`} className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium capitalize">{fine.fine_type.replace(/_/g, ' ')} · ₱{Number(fine.amount).toFixed(2)}</p><p className="text-xs text-slate-500">{fine.fine_reason || fine.waiver_reason || 'No reason recorded'} · {new Date(fine.created_at).toLocaleDateString()}</p>{fine.receipt_number ? <p className="font-mono text-xs text-pine-700 dark:text-pine-200">Receipt {fine.receipt_number}</p> : null}</div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${fine.status === 'unpaid' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200' : fine.status === 'paid' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>{fine.status}</span></article>)}{memberAccountHistory.fines.length === 0 ? <p className="text-sm text-slate-500">No fines or penalties recorded.</p> : null}</div></section>
-                <section><h4 className="text-sm font-semibold">Payments &amp; receipts</h4><div className="mt-2 space-y-2">{memberAccountHistory.printPayments.map((payment) => <article key={`print-payment-${payment.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">Print service · {payment.description}</p><p className="text-xs text-slate-500">₱{Number(payment.amount).toFixed(2)} · {new Date(payment.created_at).toLocaleDateString()}</p></div><span className="font-mono text-xs">{payment.receipt_number || 'Receipt unavailable'}</span></article>)}{memberAccountHistory.ebookPurchases.map((purchase) => <article key={`ebook-purchase-${purchase.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">Digital purchase · {bookMap.get(purchase.book_id)?.title ?? `Book #${purchase.book_id}`}</p><p className="text-xs text-slate-500">₱{Number(purchase.fee_amount).toFixed(2)} · {new Date(purchase.requested_at).toLocaleDateString()}</p></div><span className="text-xs font-semibold capitalize">{purchase.status.replace(/_/g, ' ')}{purchase.receipt_number ? ` · ${purchase.receipt_number}` : ''}</span></article>)}{memberAccountHistory.printPayments.length === 0 && memberAccountHistory.ebookPurchases.length === 0 ? <p className="text-sm text-slate-500">No print or digital purchase transactions.</p> : null}</div></section>
+                <section><h4 className="text-sm font-semibold">Payments &amp; receipts</h4><div className="mt-2 space-y-2">{memberAccountHistory.printPayments.map((payment) => <article key={`print-payment-${payment.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">Print service · {payment.description}</p><p className="text-xs text-slate-500">₱{Number(payment.amount).toFixed(2)} · {new Date(payment.created_at).toLocaleDateString()}</p></div><span className="font-mono text-xs">{payment.receipt_number || 'Receipt unavailable'}</span></article>)}{memberAccountHistory.printPayments.length === 0 ? <p className="text-sm text-slate-500">No print payments recorded.</p> : null}</div></section>
                 <section><h4 className="text-sm font-semibold">Points transactions</h4><div className="mt-2 space-y-2">{memberAccountHistory.pointTransactions.map((transaction) => <article key={`points-${transaction.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{transaction.description}</p><p className="text-xs text-slate-500">{transaction.transaction_type.replace(/_/g, ' ')} · {new Date(transaction.created_at).toLocaleDateString()}</p></div><span className={`font-semibold ${transaction.amount > 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-700 dark:text-slate-300'}`}>{transaction.amount > 0 ? '+' : ''}{transaction.amount} points</span></article>)}{memberAccountHistory.pointTransactions.length === 0 ? <p className="text-sm text-slate-500">No points transactions recorded.</p> : null}</div></section>
                 <section><h4 className="text-sm font-semibold">Contributions</h4><div className="mt-2 space-y-2">{contributions.filter((contribution) => contribution.user_id === selectedMember.id).map((contribution) => <article key={`contribution-${contribution.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"><div><p className="font-medium">{contribution.title}</p><p className="text-xs text-slate-500">Submitted {contribution.created_at ? new Date(contribution.created_at).toLocaleDateString() : 'Date unavailable'}</p></div><span className="text-xs font-semibold capitalize">{contribution.status.replace(/_/g, ' ')}</span></article>)}{contributions.every((contribution) => contribution.user_id !== selectedMember.id) ? <p className="text-sm text-slate-500">No contributions recorded.</p> : null}</div></section>
               </> : null}
@@ -2568,10 +2435,11 @@ export default function AdminPage() {
                   </select>
                 </label>
                 {memberEditForm.role !== 'librarian' ? <label className="block text-sm font-medium">Institutional ID
-                  <input required inputMode="numeric" maxLength={10} pattern="[0-9]{4}-?[0-9]{5}" value={memberEditForm.institutionalId} onChange={(event) => {
-                    const digits = event.target.value.replace(/\D/g, '').slice(0, 9)
-                    setMemberEditForm({ ...memberEditForm, institutionalId: digits.length > 4 ? `${digits.slice(0, 4)}-${digits.slice(4)}` : digits })
-                  }} placeholder="2026-01042" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+                  <input required inputMode="numeric" maxLength={8} pattern="[0-9]{5,8}" value={memberEditForm.institutionalId} onChange={(event) => {
+                    const digits = event.target.value.replace(/\D/g, '').slice(0, 8)
+                    setMemberEditForm({ ...memberEditForm, institutionalId: digits })
+                  }} placeholder="5–8 digits" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+                  <span className="mt-1 block text-xs font-normal text-slate-500">Enter 5–8 digits only.</span>
                 </label> : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   {memberEditForm.role === 'faculty' ? <label className="block text-sm font-medium">Department<select required value={memberEditForm.department} onChange={(event) => setMemberEditForm({ ...memberEditForm, department: event.target.value })} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950"><option value="">Select department</option>{academicDepartments.filter((item) => item.is_active || item.name === memberEditForm.department).map((item) => <option key={item.id} value={item.name}>{item.name}{item.is_active ? '' : ' (inactive)'}</option>)}</select></label> : null}

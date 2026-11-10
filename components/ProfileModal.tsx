@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { getSupabase } from '@/utils/supabase/client'
 import BaseModal from './BaseModal'
+import PasswordChangeForm from './PasswordChangeForm'
 
 type ProfileModalProps = {
   open: boolean
@@ -152,6 +153,13 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
           <button type="submit" className="profile-modal-primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
         </div>
       </form>
+
+      <section className="profile-activity-ledger" aria-labelledby="profile-password-title">
+        <div className="profile-activity-heading">
+          <div><h3 id="profile-password-title">Password</h3><p>Change your account password at any time.</p></div>
+        </div>
+        <PasswordChangeForm onSuccess={() => { setError(null); setMessage('Password updated successfully.') }} />
+      </section>
 
       <section className="profile-activity-ledger" aria-labelledby="profile-activity-title">
         <div className="profile-activity-heading">

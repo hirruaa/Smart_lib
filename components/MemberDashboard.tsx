@@ -1177,6 +1177,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <span>Active loans</span>
                   <strong>{activePhysicalLoanCount}</strong>
                 </div>
+                <p className="student-hero-stat-detail">{physicalLoans.length} total physical request{physicalLoans.length === 1 ? '' : 's'}</p>
+                <button type="button" onClick={() => setPaymentsOpen(true)}>View loans and charges</button>
+              </section>
+              <section className="student-hero-stat student-hero-lending">
                 <div className="student-hero-stat-value">
                   <span>Unpaid charges</span>
                   <strong>{unpaidFineCount}</strong>
@@ -1186,31 +1190,31 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                     ? `${unpaidFineCount} outstanding charge${unpaidFineCount === 1 ? '' : 's'} to resolve with library staff`
                     : pendingPhysicalLoanCount > 0
                       ? `${pendingPhysicalLoanCount} request${pendingPhysicalLoanCount === 1 ? '' : 's'} awaiting librarian confirmation`
-                      : `${physicalLoans.length} total physical request${physicalLoans.length === 1 ? '' : 's'}`}
+                      : 'No unpaid charges'}
                 </p>
-                <button type="button" onClick={() => setPaymentsOpen(true)}>View loans and charges</button>
               </section>
               <section className="student-hero-stat student-hero-reading">
                 <div className="student-hero-stat-value">
                   <span>Reading now</span>
                   <strong>{continueReading.length}</strong>
                 </div>
-                <div className="student-hero-stat-value">
-                  <span>Completed</span>
-                  <strong>{borrowRequests.filter((request) => request.status === 'returned').length}</strong>
-                </div>
                 <p className="student-hero-stat-detail">
                   {continueReading.length > 0
                     ? `${Object.keys(readingProgress).filter((bookId) => continueReading.some((loan) => loan.book_id === Number(bookId))).length} books with saved progress`
                     : 'No active e-books to resume'}
                 </p>
-                <div className="student-hero-stat-actions">
-                  <button type="button" onClick={() => setHistoryOpen(true)}>History</button>
-                  <button type="button" onClick={() => {
-                    if (continueReading.length > 0) setContinueReadingOpen(true)
-                    else document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })
-                  }}>{continueReading.length > 0 ? 'Continue' : 'Browse'}</button>
+                <button type="button" onClick={() => {
+                  if (continueReading.length > 0) setContinueReadingOpen(true)
+                  else document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })
+                }}>{continueReading.length > 0 ? 'Continue' : 'Browse'}</button>
+              </section>
+              <section className="student-hero-stat student-hero-reading">
+                <div className="student-hero-stat-value">
+                  <span>Completed</span>
+                  <strong>{borrowRequests.filter((request) => request.status === 'returned').length}</strong>
                 </div>
+                <p className="student-hero-stat-detail">Books returned</p>
+                <button type="button" onClick={() => setHistoryOpen(true)}>History</button>
               </section>
             </div>
             <div className="student-hero-actions">

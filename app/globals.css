@@ -1068,7 +1068,6 @@ html.dark .profile-activity-ledger code { color: #b5c9b8; }
 .librarian-sidebar-brand .school-brand-name { color: var(--theme-text, #242a28); }
 .librarian-sidebar-brand .school-brand-subtitle { color: #596a5f; }
 .librarian-sidebar-brand .student-sidebar-label { margin: 28px 10px 14px; }
-.librarian-sidebar-close { display: none; }
 @media (min-width: 901px) {
   .physical-librarian-workspace,
   .physical-librarian-workspace .librarian-sidebar { transition: padding-left .2s ease, width .2s ease; }
@@ -1233,8 +1232,7 @@ html.dark .librarian-sidebar-footer .librarian-desk-sign-out:hover { border-colo
     transition: transform .25s ease;
   }
   .librarian-sidebar.dashboard-sidebar-open { transform: translateX(0); }
-  .librarian-sidebar-collapse-toggle { display: none; }
-  .librarian-sidebar-close { display: grid; width: 40px; height: 40px; }
+  .librarian-sidebar-collapse-toggle { display: grid; }
   .librarian-mobile-toggle {
     position: fixed;
     z-index: 35;
@@ -3253,57 +3251,43 @@ html[data-theme] .admin-shell .admin-overview-grid > .admin-overview-column { an
 .admin-shell .admin-welcome-hero {
   position: relative;
   overflow: hidden;
-  border-color: #37594f !important;
-  background:
-    radial-gradient(ellipse at 86% 12%, rgba(201, 220, 185, .19), transparent 34%),
-    linear-gradient(118deg, #203e36 0%, #2d5146 58%, #3b6253 100%) !important;
-  color: #f7f5eb;
-}
-.admin-shell .admin-welcome-hero::after {
-  position: absolute;
-  right: 12%;
-  bottom: -96px;
-  width: 250px;
-  height: 190px;
-  border: 1px solid rgba(238, 230, 191, .16);
-  border-radius: 50%;
-  box-shadow: 0 0 0 22px rgba(238, 230, 191, .035), 0 0 0 48px rgba(238, 230, 191, .025);
-  content: "";
-  pointer-events: none;
+  border-color: var(--theme-border) !important;
+  background: var(--theme-panel) !important;
+  color: var(--theme-text);
 }
 .admin-welcome-copy { position: relative; z-index: 1; min-width: 0; }
 .admin-welcome-layout { position: relative; z-index: 1; display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; }
-.admin-welcome-layout--overview { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.1fr); gap: clamp(18px, 2vw, 32px); }
-.admin-shell .admin-welcome-hero .admin-overview-kicker { color: #d7ddba !important; }
-.admin-shell .admin-welcome-hero h1 { margin-top: 8px; color: #fffdf6 !important; font-size: clamp(1.7rem, 3vw, 2.45rem); letter-spacing: -.045em; }
-.admin-welcome-caption { margin: 8px 0 0; color: rgba(247, 245, 235, .76); font-size: 13px; }
+.admin-welcome-layout--overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.admin-shell .admin-welcome-hero .admin-overview-kicker { color: var(--theme-accent-strong) !important; }
+.admin-shell .admin-welcome-hero h1 { margin-top: 8px; color: var(--theme-text) !important; font-size: clamp(1.7rem, 3vw, 2.45rem); letter-spacing: -.045em; overflow-wrap: anywhere; }
+.admin-welcome-caption { margin: 8px 0 0; color: var(--theme-text-muted, var(--theme-muted)); font-size: 13px; line-height: 1.5; }
 .admin-overview-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
-  gap: 8px;
+  gap: 10px;
 }
 .admin-overview-actions .admin-quick-action {
   display: grid;
   min-width: 0;
-  min-height: 72px;
-  grid-template-columns: 30px minmax(0, 1fr) 12px;
+  min-height: 56px;
+  grid-template-columns: 34px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 7px;
-  border: 1px solid rgba(247, 245, 235, .2) !important;
-  border-radius: 15px !important;
-  background: rgba(247, 245, 235, .08) !important;
-  padding: 9px !important;
+  gap: 10px;
+  border: 1px solid var(--theme-border) !important;
+  border-radius: 14px !important;
+  background: var(--theme-panel-soft) !important;
+  padding: 12px !important;
+  color: var(--theme-text) !important;
   text-align: left;
 }
-.admin-overview-actions .admin-quick-action:hover { border-color: rgba(247, 245, 235, .48) !important; background: rgba(247, 245, 235, .15) !important; }
-.admin-quick-action-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 10px; background: rgba(215, 221, 186, .14); color: #e4e9cf; }
+.admin-overview-actions .admin-quick-action:hover { border-color: var(--theme-accent) !important; background: var(--theme-accent-pale) !important; }
+.admin-overview-actions .admin-quick-action .admin-quick-action-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--theme-accent-soft); color: var(--theme-accent-strong); }
 .admin-quick-action-icon svg { width: 18px; height: 18px; }
 .admin-overview-actions .admin-quick-action > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
-.admin-overview-actions .admin-quick-action strong { overflow: hidden; color: #fffdf6; font-size: 10px; line-height: 1.25; text-overflow: ellipsis; }
-.admin-overview-actions .admin-quick-action small { overflow: hidden; color: rgba(247, 245, 235, .72); font-size: 8px; line-height: 1.3; text-overflow: ellipsis; }
-.admin-quick-action-arrow { color: rgba(247, 245, 235, .66); font-size: 13px; text-align: center; transition: transform .18s ease; }
-.admin-overview-actions .admin-quick-action:hover .admin-quick-action-arrow { transform: translate(2px, -2px); color: #fffdf6; }
+.admin-overview-actions .admin-quick-action strong { color: var(--theme-text); font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.admin-overview-actions .admin-quick-action .admin-quick-action-arrow { color: var(--theme-accent-strong); font-size: 15px; text-align: center; transition: transform .18s ease; }
+.admin-overview-actions .admin-quick-action:hover .admin-quick-action-arrow { transform: translate(2px, -2px); }
 .admin-overview-panel {
   min-width: 0;
   border: 1px solid var(--theme-border, #e2ded4);
@@ -3407,8 +3391,8 @@ html.dark .admin-glance-stat--sage { --glance-bg: #2e3b32; --glance-border: #496
 html.dark .admin-glance-stat--blue { --glance-bg: #2d393b; --glance-border: #435d60; --glance-icon: #374e50; --glance-color: #a9d0d1; }
 html.dark .admin-glance-stat--gold { --glance-bg: #39372e; --glance-border: #65583c; --glance-icon: #51462f; --glance-color: #e5c785; }
 html.dark .admin-glance-stat--plum { --glance-bg: #39333e; --glance-border: #5a4b60; --glance-icon: #483d4e; --glance-color: #cfb8d7; }
-html[data-theme] .admin-shell .admin-welcome-hero { border-color: #37594f !important; background: radial-gradient(ellipse at 86% 12%, rgba(201, 220, 185, .19), transparent 34%), linear-gradient(118deg, #203e36 0%, #2d5146 58%, #3b6253 100%) !important; }
-html[data-theme] .admin-shell .admin-welcome-hero h1 { color: #fffdf6 !important; }
+html[data-theme] .admin-shell .admin-welcome-hero { border-color: var(--theme-border) !important; background: var(--theme-panel) !important; }
+html[data-theme] .admin-shell .admin-welcome-hero h1 { color: var(--theme-text) !important; }
 html[data-theme] .admin-shell .admin-overview-panel { border-color: var(--theme-border) !important; background: var(--theme-panel) !important; }
 html[data-theme] .admin-shell .admin-attention-panel { background: linear-gradient(135deg, var(--theme-panel), var(--theme-panel-soft)) !important; }
 @media (prefers-reduced-motion: reduce) {
@@ -5171,7 +5155,7 @@ html.dark[data-theme] .admin-shell .admin-nav-button[class~="dark:bg-slate-800"]
   min-width: 0;
   grid-column: 1 / -1;
   grid-row: 2;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 .student-hero-stat {
@@ -5188,11 +5172,6 @@ html.dark[data-theme] .admin-shell .admin-nav-button[class~="dark:bg-slate-800"]
   padding: 18px 20px;
   box-shadow: 0 8px 20px rgba(13, 35, 29, .12);
 }
-.student-hero-stat::before { position: absolute; top: 0; right: 0; left: 0; height: 4px; background: #78938a; content: ''; }
-.student-hero-points::before { background: #b39355; }
-.student-hero-lending::before { background: #78938a; }
-.student-hero-reading::before { background: #6f91a0; }
-.student-hero-stat + .student-hero-stat { border-left: 1px solid #e2ded4; }
 .student-hero-stat-value { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(3ch, auto); align-items: baseline; gap: 10px; }
 .student-hero-stat-value span { color: #66746d; font-size: 11px; font-weight: 750; letter-spacing: .045em; line-height: 1.35; }
 .student-hero-stat-value strong { min-width: 3ch; color: #1d3831; font-size: 25px; font-variant-numeric: tabular-nums; font-weight: 800; line-height: 1; text-align: right; }
@@ -5237,14 +5216,12 @@ html[data-theme] .student-shell .student-hero .student-hero-stat .student-hero-s
 html[data-theme] .student-shell .student-hero .student-hero-stat .student-hero-stat-notice { color: #a3533e !important; }
 
 @media (max-width: 1200px) {
-  .student-hero-summary { gap: 10px; }
+  .student-hero-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .student-hero-stat { padding: 16px; }
 }
 @media (max-width: 720px) {
   .student-hero-top { gap: 16px; }
   .student-hero-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .student-hero-stat + .student-hero-stat { border-left: 1px solid #e2ded4; }
-  .student-hero-reading { grid-column: 1 / -1; }
 }
 @media (max-width: 520px) {
   .student-hero-top { grid-template-columns: minmax(0, 1fr) auto; gap: 16px 8px; }
@@ -5379,6 +5356,69 @@ html[data-theme] .dashboard-sidebar .admin-sidebar-toggle:focus-visible {
   color: var(--theme-text, #242a28) !important;
   outline-color: var(--theme-accent-soft, var(--theme-border, #dde5de)) !important;
 }
+.dashboard-sidebar .student-sidebar-header,
+.dashboard-sidebar .admin-sidebar-brand-row {
+  min-width: 0;
+  gap: 8px;
+}
+.dashboard-sidebar .school-brand {
+  min-width: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+}
+.dashboard-sidebar .school-brand-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.dashboard-sidebar .school-brand-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-sidebar .school-brand-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-sidebar .dashboard-sidebar-collapse-control,
+.dashboard-sidebar .student-sidebar-toggle,
+.dashboard-sidebar .admin-sidebar-toggle {
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  width: 40px !important;
+  height: 40px !important;
+  padding: 0 !important;
+}
+.dashboard-sidebar .dashboard-sidebar-collapse-control svg,
+.dashboard-sidebar .student-sidebar-toggle svg,
+.dashboard-sidebar .admin-sidebar-toggle svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  color: #fcd900 !important;
+  filter: none !important;
+}
+.dashboard-sidebar .librarian-sidebar-close { display: none !important; }
+.student-layout.sidebar-collapsed .student-sidebar,
+.admin-layout.admin-sidebar-collapsed .admin-sidebar,
+.physical-librarian-workspace.librarian-sidebar-collapsed .librarian-sidebar {
+  padding: 54px 10px 16px;
+}
+.student-layout.sidebar-collapsed .student-sidebar-header,
+.physical-librarian-workspace.librarian-sidebar-collapsed .student-sidebar-header {
+  position: static;
+}
+.student-layout.sidebar-collapsed .dashboard-sidebar-collapse-control,
+.physical-librarian-workspace.librarian-sidebar-collapsed .dashboard-sidebar-collapse-control {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
 .dashboard-sidebar:is(.student-sidebar, .librarian-sidebar) .student-nav a,
 .dashboard-sidebar:is(.student-sidebar, .librarian-sidebar) .student-nav button,
 .dashboard-sidebar.admin-sidebar .admin-nav-button {
@@ -5432,6 +5472,11 @@ html[data-theme] .dashboard-sidebar .admin-sidebar-toggle:focus-visible {
 @media (min-width: 901px) {
   .student-layout.sidebar-collapsed,
   .admin-layout.admin-sidebar-collapsed { grid-template-columns: 84px minmax(0, 1fr); }
+  .dashboard-layout:is(.student-layout, .admin-layout).dashboard-sidebar-collapsed > .dashboard-sidebar {
+    width: 84px;
+    min-width: 84px;
+  }
+  .physical-librarian-workspace.librarian-sidebar-collapsed .librarian-sidebar { padding: 54px 10px 16px; }
   .physical-librarian-workspace.librarian-sidebar-collapsed { padding-left: 140px !important; }
   .physical-librarian-workspace.librarian-sidebar-collapsed .librarian-sidebar { width: 84px; }
 }
@@ -5439,5 +5484,47 @@ html[data-theme] .dashboard-sidebar .admin-sidebar-toggle:focus-visible {
   .dashboard-sidebar:is(.student-sidebar, .admin-sidebar, .librarian-sidebar) {
     border-radius: 0 24px 24px 0;
     box-shadow: 18px 0 40px rgba(38, 63, 58, .12);
+  }
+  .dashboard-sidebar .librarian-sidebar-collapse-toggle {
+    position: static;
+    transform: none;
+  }
+  .student-layout.sidebar-collapsed .student-sidebar,
+  .admin-layout.admin-sidebar-collapsed .admin-sidebar,
+  .physical-librarian-workspace.librarian-sidebar-collapsed .librarian-sidebar {
+    padding: max(22px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
+  }
+}
+.admin-shell .admin-section-header {
+  position: relative;
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+.admin-shell .admin-section-header h1 {
+  margin: 0;
+  color: var(--theme-text, #242a28);
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: -.025em;
+}
+html[data-theme] .admin-shell main > header.admin-section-header {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+@media (max-width: 900px) {
+  .admin-shell .admin-section-header {
+    min-height: 56px;
+    padding-left: 56px !important;
+  }
+  .admin-shell .admin-section-header .admin-mobile-toggle {
+    top: 8px;
+    left: 0;
   }
 }

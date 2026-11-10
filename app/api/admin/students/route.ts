@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { randomBytes } from 'node:crypto'
 import { createClient } from '@/utils/supabase/server'
 import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
@@ -41,10 +42,7 @@ export async function POST(request: Request) {
   const course = boundedText(body.course ?? '', 120)
   const studentYear = boundedText(body.studentYear ?? '', 40)
   const institutionalIdInput = typeof body.institutionalId === 'string' ? body.institutionalId : ''
-  const institutionalIdDigits = institutionalIdInput.replace(/\D/g, '')
-  const institutionalId = institutionalIdDigits.length === 9
-    ? `${institutionalIdDigits.slice(0, 4)}-${institutionalIdDigits.slice(4)}`
-    : institutionalIdInput.trim()
+  const institutionalId = institutionalIdInput
   const identityVerified = body.identityVerified === true
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
@@ -61,8 +59,8 @@ export async function POST(request: Request) {
   if (role === 'student' && (!course || !studentYear)) {
     return NextResponse.json({ error: 'Choose a course program and year level for the student account.' }, { status: 400 })
   }
-  if (role !== 'librarian' && !/^\d{4}-\d{5}$/.test(institutionalId)) {
-    return NextResponse.json({ error: 'Enter a 9-digit institutional ID (for example, 2026-01042).' }, { status: 400 })
+  if (role !== 'librarian' && !/^\d{5,8}$/.test(institutionalId)) {
+    return NextResponse.json({ error: 'Enter an institutional ID using 5–8 digits only.' }, { status: 400 })
   }
   if (department === null || course === null || studentYear === null) {
     return NextResponse.json({ error: 'Profile details exceed the allowed length.' }, { status: 400 })
@@ -100,8 +98,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Choose a valid year level.' }, { status: 400 })
     }
   }
+  const inviteCallback = new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL || request.url)
+  inviteCallback.searchParams.set('next', '/reset-password?required=1')
   const { data: created, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
-    redirectTo: new URL('/auth/callback?next=/reset-password', process.env.NEXT_PUBLIC_SITE_URL || request.url).toString(),
+    redirectTo: inviteCallback.toString(),
     data: {
       full_name: fullName,
       username,
@@ -117,6 +117,17 @@ export async function POST(request: Request) {
   if (error) return apiError('Unable to send the account invitation. The email may already be registered or Auth email delivery may be unavailable.', 409, error)
 
   if (!created.user) return NextResponse.json({ error: 'The invitation was created without a member account. Contact an administrator.' }, { status: 500 })
+
+  const temporaryPassword = randomBytes(24).toString('base64url')
+  const { error: passwordSetupError } = await adminClient.auth.admin.updateUserById(created.user.id, {
+    password: temporaryPassword,
+    app_metadata: { ...created.user.app_metadata, must_change_password: true },
+  })
+  if (passwordSetupError) {
+    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
+    if (rollbackError) console.error('Unable to roll back member invitation after temporary password setup failed.', rollbackError)
+    return apiError('Unable to set up the temporary account password.', 500, passwordSetupError)
+  }
 
   {
     const { error: profileUpdateError } = await adminClient.from('profiles').update({
@@ -153,7 +164,7 @@ export async function POST(request: Request) {
     return apiError('Unable to record the member invitation audit event.', 500, auditError)
   }
 
-  return NextResponse.json({ success: true, email, username, userId: created.user.id })
+  return NextResponse.json({ success: true, email, username, userId: created.user.id, temporaryPassword })
 }
 
 export async function DELETE(request: Request) {

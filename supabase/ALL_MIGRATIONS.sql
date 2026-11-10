@@ -2082,17 +2082,23 @@ grant execute on function public.admin_confirm_physical_checkout(bigint, numeric
 -- <<< END MIGRATION: 20261031_physical_payment_audit.sql
 
 -- >>> BEGIN MIGRATION: 20261032_enable_premium_ebooks.sql
--- Enable the existing staff-verified premium e-book purchase workflow.
--- Premium titles require payment evidence and staff approval; approval grants
--- permanent access and issues a digital receipt.
+-- Compatibility grants for legacy databases that still have these RPCs.
+-- Paid e-book purchases are retired by later migrations.
 
 drop trigger if exists prevent_unverified_premium_ebook on public.books;
 
-revoke all on function public.request_premium_ebook_purchase(bigint, text, text) from public, anon;
-grant execute on function public.request_premium_ebook_purchase(bigint, text, text) to authenticated;
-
-revoke all on function public.admin_decide_ebook_purchase(bigint, text) from public, anon;
-grant execute on function public.admin_decide_ebook_purchase(bigint, text) to authenticated;
+do $$
+begin
+  if to_regprocedure('public.request_premium_ebook_purchase(bigint, text, text)') is not null then
+    execute 'revoke all on function public.request_premium_ebook_purchase(bigint, text, text) from public, anon';
+    execute 'grant execute on function public.request_premium_ebook_purchase(bigint, text, text) to authenticated';
+  end if;
+  if to_regprocedure('public.admin_decide_ebook_purchase(bigint, text)') is not null then
+    execute 'revoke all on function public.admin_decide_ebook_purchase(bigint, text) from public, anon';
+    execute 'grant execute on function public.admin_decide_ebook_purchase(bigint, text) to authenticated';
+  end if;
+end;
+$$;
 -- <<< END MIGRATION: 20261032_enable_premium_ebooks.sql
 
 -- >>> BEGIN MIGRATION: 20261033_fix_points_unlock_deduction.sql
@@ -5440,7 +5446,7 @@ grant execute on function public.admin_waive_physical_fine(bigint, text, text) t
 alter table public.book_contributions
   add column if not exists rejection_reason text;
 drop function if exists public.admin_review_book_contribution(bigint, text, integer, integer);
-create function public.admin_review_book_contribution(
+create or replace function public.admin_review_book_contribution(
   contribution_id bigint,
   decision text,
   reward_points integer default 25,
@@ -7392,6 +7398,114 @@ where id = 'ebooks';
 commit;
 -- <<< END MIGRATION: 20261110_faculty_contribution_office_formats.sql
 
+-- >>> BEGIN MIGRATION: 20261110_retire_legacy_premium_ebooks.sql
+-- Permanently retire paid e-book purchases and remove their historical data.
+-- Empty the private proof bucket through the Storage API before applying this
+-- migration; direct SQL deletion from storage.objects does not delete blobs.
+begin;
+
+do $$
+begin
+  if to_regclass('storage.buckets') is not null
+    and exists (select 1 from storage.buckets where id = 'ebook-payment-proofs') then
+    raise exception 'Run node scripts/purge-retired-ebook-proofs.mjs with CONFIRM_EBOOK_PROOF_PURGE=1 before applying this migration';
+  end if;
+end;
+$$;
+
+drop policy if exists ebook_payment_proofs_upload_own on storage.objects;
+drop policy if exists ebook_payment_proofs_read_own_or_admin on storage.objects;
+drop policy if exists ebook_payment_proofs_delete_unlinked_own on storage.objects;
+
+drop function if exists public.request_premium_ebook_purchase(bigint, text, text);
+drop function if exists public.admin_decide_ebook_purchase(bigint, text);
+
+delete from public.book_access_grants where access_type = 'premium_purchase';
+delete from public.notifications where event_type like 'ebook_purchase%';
+
+do $$
+declare
+  trigger_mode "char";
+  has_ledger_trigger boolean;
+begin
+  select tgenabled into trigger_mode
+  from pg_trigger
+  where tgrelid = 'public.member_activity_ledger'::regclass
+    and tgname = 'member_activity_ledger_no_update'
+    and not tgisinternal;
+  has_ledger_trigger := found;
+
+  if has_ledger_trigger and trigger_mode <> 'D' then
+    execute 'alter table public.member_activity_ledger disable trigger member_activity_ledger_no_update';
+  end if;
+
+  delete from public.member_activity_ledger
+  where related_request_type = 'ebook_purchase'
+    or event_type like 'ebook_purchase%'
+    or entity_type = 'ebook_purchase_requests';
+
+  if has_ledger_trigger and trigger_mode = 'O' then
+    execute 'alter table public.member_activity_ledger enable trigger member_activity_ledger_no_update';
+  elsif has_ledger_trigger and trigger_mode = 'A' then
+    execute 'alter table public.member_activity_ledger enable always trigger member_activity_ledger_no_update';
+  elsif has_ledger_trigger and trigger_mode = 'R' then
+    execute 'alter table public.member_activity_ledger enable replica trigger member_activity_ledger_no_update';
+  end if;
+end;
+$$;
+
+drop table if exists public.ebook_purchase_requests;
+
+do $$
+declare
+  function_definition text;
+  old_branch text := $old$
+    if tg_table_name = 'ebook_purchase_requests'
+       and old_row->>'status' is not distinct from new_row->>'status'
+       and old_row->>'receipt_number' is not distinct from new_row->>'receipt_number' then return new; end if;
+$old$;
+  old_case text := $old$
+    when 'ebook_purchase_requests' then
+      related_type_value := 'ebook_purchase'; related_id_value := nullif(source_row->>'id', '')::bigint;
+      event_type_value := case when source_row->>'status' = 'approved' then 'ebook_purchase_approved' else 'ebook_purchase_status_changed' end;
+      summary_value := 'Digital purchase ' || coalesce(source_row->>'status', 'updated') || '.';
+$old$;
+begin
+  if to_regprocedure('public.record_member_activity_event()') is not null then
+    function_definition := pg_get_functiondef('public.record_member_activity_event()'::regprocedure);
+    function_definition := replace(function_definition, old_branch, '');
+    function_definition := replace(function_definition, old_case, '');
+    if position('ebook_purchase_requests' in function_definition) > 0 then
+      raise exception 'Unable to remove the retired purchase branch from record_member_activity_event()';
+    end if;
+    execute function_definition;
+  end if;
+
+  if to_regprocedure('public.admin_delete_catalog_book(bigint)') is not null then
+    function_definition := pg_get_functiondef('public.admin_delete_catalog_book(bigint)'::regprocedure);
+    function_definition := replace(function_definition,
+      '    or exists (select 1 from public.ebook_purchase_requests where book_id = p_book_id)' || E'\n', '');
+    if position('ebook_purchase_requests' in function_definition) > 0 then
+      raise exception 'Unable to remove the retired purchase reference from admin_delete_catalog_book()';
+    end if;
+    execute function_definition;
+  end if;
+end;
+$$;
+
+update public.books
+set access_mode = case
+  when catalog_type = 'physical' then 'restricted'
+  when access_points > 0 then 'points'
+  else 'free'
+end
+where access_mode = 'premium';
+
+alter table public.books drop column if exists premium_price;
+
+commit;
+-- <<< END MIGRATION: 20261110_retire_legacy_premium_ebooks.sql
+
 -- >>> BEGIN MIGRATION: 20261111_seed_program_departments.sql
 begin;
 
@@ -7405,3 +7519,194 @@ set is_active = excluded.is_active;
 
 commit;
 -- <<< END MIGRATION: 20261111_seed_program_departments.sql
+
+-- >>> BEGIN MIGRATION: 20261112090000_automatic_ph_holiday_calendar.sql
+begin;
+
+alter table public.library_holidays
+  add column if not exists source text not null default 'manual',
+  add column if not exists provider_synced_at timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'library_holidays_source_check'
+      and conrelid = 'public.library_holidays'::regclass
+  ) then
+    alter table public.library_holidays
+      add constraint library_holidays_source_check check (source in ('manual', 'nager'));
+  end if;
+end;
+$$;
+
+create or replace function public.sync_library_holidays(p_year integer, p_holidays jsonb)
+returns table (synced_count integer, preserved_manual_count integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  holiday_count integer;
+begin
+  if not public.is_admin() then
+    raise exception 'Administrator access required';
+  end if;
+  if p_year is null or p_year < 2000 or p_year > 2100 or p_holidays is null or jsonb_typeof(p_holidays) <> 'array' then
+    raise exception 'Invalid holiday calendar';
+  end if;
+
+  holiday_count := jsonb_array_length(p_holidays);
+  if holiday_count = 0 or holiday_count > 100 then
+    raise exception 'Holiday calendar must contain between 1 and 100 dates';
+  end if;
+  if exists (
+    select 1
+    from jsonb_to_recordset(p_holidays) as item(holiday_date date, name text)
+    where item.holiday_date is null
+      or extract(year from item.holiday_date)::integer <> p_year
+      or item.name is null
+      or char_length(trim(item.name)) not between 1 and 120
+  ) then
+    raise exception 'Holiday dates or names are invalid';
+  end if;
+  if (
+    select count(distinct item.holiday_date)
+    from jsonb_to_recordset(p_holidays) as item(holiday_date date, name text)
+  ) <> holiday_count then
+    raise exception 'Holiday dates must be unique';
+  end if;
+
+  delete from public.library_holidays existing
+  where existing.source = 'nager'
+    and existing.holiday_date >= make_date(p_year, 1, 1)
+    and existing.holiday_date < make_date(p_year + 1, 1, 1)
+    and not exists (
+      select 1
+      from jsonb_to_recordset(p_holidays) as item(holiday_date date, name text)
+      where item.holiday_date = existing.holiday_date
+    );
+
+  select count(*) into preserved_manual_count
+  from public.library_holidays existing
+  join jsonb_to_recordset(p_holidays) as item(holiday_date date, name text)
+    on item.holiday_date = existing.holiday_date
+  where existing.source = 'manual';
+
+  insert into public.library_holidays (holiday_date, name, source, provider_synced_at, created_by)
+  select item.holiday_date, trim(item.name), 'nager', now(), auth.uid()
+  from jsonb_to_recordset(p_holidays) as item(holiday_date date, name text)
+  on conflict (holiday_date) do update
+    set name = excluded.name,
+        provider_synced_at = excluded.provider_synced_at,
+        created_by = excluded.created_by
+    where public.library_holidays.source = 'nager';
+  get diagnostics synced_count = row_count;
+
+  return next;
+end;
+$$;
+
+create or replace function public.set_manual_library_holiday(p_holiday_date date, p_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Administrator access required';
+  end if;
+  if p_holiday_date is null or p_name is null or char_length(trim(p_name)) not between 1 and 120 then
+    raise exception 'Holiday date and a name of 1 to 120 characters are required';
+  end if;
+
+  insert into public.library_holidays (holiday_date, name, source, provider_synced_at, created_by)
+  values (p_holiday_date, trim(p_name), 'manual', null, auth.uid())
+  on conflict (holiday_date) do update
+    set name = excluded.name,
+        source = 'manual',
+        provider_synced_at = null,
+        created_by = excluded.created_by;
+end;
+$$;
+
+revoke all on function public.sync_library_holidays(integer, jsonb) from public;
+revoke all on function public.set_manual_library_holiday(date, text) from public;
+grant execute on function public.sync_library_holidays(integer, jsonb) to authenticated;
+grant execute on function public.set_manual_library_holiday(date, text) to authenticated;
+
+commit;
+-- <<< END MIGRATION: 20261112090000_automatic_ph_holiday_calendar.sql
+
+-- >>> BEGIN MIGRATION: 20261113090000_institutional_id_digits_only.sql
+begin;
+
+alter table public.profiles
+  drop constraint if exists profiles_institutional_id_format;
+
+create or replace function public.validate_institutional_id_digits_only()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.institutional_id is null then
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE' and new.institutional_id is not distinct from old.institutional_id then
+    return new;
+  end if;
+
+  if new.institutional_id !~ '^[0-9]{5,8}$' then
+    raise exception 'Institutional ID must contain 5 to 8 digits only';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_validate_institutional_id on public.profiles;
+create trigger profiles_validate_institutional_id
+before insert or update of institutional_id on public.profiles
+for each row execute function public.validate_institutional_id_digits_only();
+
+create or replace function public.admin_update_member_academics(
+  target_user_id uuid, new_role text, new_school text, new_department text,
+  new_course text, new_student_year text, new_faculty_rank_id bigint,
+  new_institutional_id text
+) returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare updated_profile public.profiles;
+begin
+  if not public.is_admin() then raise exception 'Administrator access required'; end if;
+  if new_role in ('student', 'faculty') and coalesce(new_institutional_id, '') !~ '^[0-9]{5,8}$' then
+    raise exception 'Institutional ID must contain 5 to 8 digits only';
+  end if;
+  if new_role = 'librarian' and nullif(trim(coalesce(new_institutional_id, '')), '') is not null then
+    raise exception 'Librarian accounts do not use borrower institutional IDs';
+  end if;
+  updated_profile := public.admin_update_member_academics(
+    target_user_id, new_role, new_school, new_department, new_course,
+    new_student_year, new_faculty_rank_id
+  );
+  update public.profiles
+  set institutional_id = case when new_role = 'librarian' then null else trim(new_institutional_id) end
+  where id = target_user_id returning * into updated_profile;
+  insert into public.audit_logs(actor_id, action, target_type, details)
+  values (auth.uid(), 'member_institutional_id_updated', 'profile',
+    jsonb_build_object('target_user_id', target_user_id, 'institutional_id', updated_profile.institutional_id));
+  return updated_profile;
+end;
+$$;
+
+revoke all on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint, text) from public, anon;
+grant execute on function public.admin_update_member_academics(uuid, text, text, text, text, text, bigint, text) to authenticated;
+
+commit;
+-- <<< END MIGRATION: 20261113090000_institutional_id_digits_only.sql

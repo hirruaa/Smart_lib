@@ -19,7 +19,7 @@ Used for role-aware auth routing and member profile details.
 | `department` | `text` | Backing field for the controlled faculty choice on faculty profiles |
 | `course` | `text` | Student course program; faculty profiles use their department |
 | `student_year` | `text` | Student year level |
-| `institutional_id` | `text` | Optional unique `NNNN-NNNNN` member ID used by the circulation desk. |
+| `institutional_id` | `text` | Optional unique member ID containing 5–8 digits, with no separators. |
 | `student_photo_path` | `text` | Path in the private `student-headshots` bucket; staff view it through short-lived signed URLs. |
 | `faculty_rank_id` | `bigint` | Legacy compatibility field; not used in the current account flow |
 | `created_at` | `timestamptz` | Default timestamp |
@@ -70,7 +70,7 @@ Workflow:
 - Only the librarian checkout action marks the selected copy borrowed and the payment paid. It issues a receipt number; borrowers can view and print the digital receipt from their account.
 - Members can join a FIFO notification queue when no copy is available. A waitlist notification does not reserve a copy. The member must submit a normal borrow request, and a copy is assigned only when library staff confirms checkout. If availability changes before checkout, the request remains pending and staff must retry after checking inventory.
 - Pending physical requests have no `copy_id` and do not change copy availability. At checkout, the database validates and locks the explicitly selected copy transactionally; concurrent checkouts cannot assign the same copy.
-- Physical checkout and return RPCs require an explicit staff attestation that the borrower presented their institutional ID. The desk accepts 9-digit IDs and formats them as `NNNN-NNNNN`; `/` and `Ctrl+K` focus the member search. Student photos are stored in the private `student-headshots` bucket and served through short-lived staff-only URLs.
+- Physical checkout and return RPCs require an explicit staff attestation that the borrower presented their institutional ID. New and changed IDs must contain 5–8 digits with no separators; existing IDs are preserved until changed. `/` and `Ctrl+K` focus the member search. Student photos are stored in the private `student-headshots` bucket and served through short-lived staff-only URLs.
 - Physical-loan renewals are performed by library staff at the desk and require the same institutional-ID/photo verification. Staff choose from the title's active loan durations and configured fees; the exact fee is collected for every renewal, there is no renewal-count limit, and the new due date is calculated from the renewal timestamp. Overdue/lost loans, open incidents, and unpaid physical fines above PHP 100 block renewal. Each renewal has a separate receipt and audit record while preserving the original checkout fee and receipt.
 - A member may have at most three active physical loans by default. `checked_out` and `return_pending` count until staff completes return inspection. A database trigger serializes member checkout transitions and rejects a fourth active loan; the request control is disabled at the limit. The default cap is pending Head Librarian confirmation.
 - Overdue and lost items prevent new physical requests until resolved. This is a library-only hold and does not affect enrollment, grades, or transcripts.
@@ -83,11 +83,12 @@ Workflow:
 | --- | --- |
 | `public.borrow_requests` | Free or points-based e-book access. `request_digital_loan()` deducts any required points and creates an approved loan in one database transaction. |
 | `public.book_access_grants` | Other explicit, administrator-issued access grants; not required for ordinary free/points e-book unlocks. |
-| Legacy `public.ebook_purchase_requests` | Retained for historical online purchase records; new submissions are disabled. |
 | Contribution AI screening | Gemini scores and summarizes a contributed PDF as an advisory; every result requires a human administrator decision. |
 | Library chat assistant | Gemini answers using matching catalog records and, for a signed-in user's own loan questions, limited loan status details. |
 
-Free and points-based e-books unlock immediately after the database confirms the request; eligible point costs are deducted atomically. E-books do not consume physical stock and do not wait for librarian approval. The current project has no online payment gateway account or verified payment webhook. New online payment submissions are disabled; new premium e-book listings are blocked. Existing premium entries are shown as unavailable until an administrator configures them for free/points access.
+Free and points-based e-books unlock immediately after the database confirms the request; eligible point costs are deducted atomically. E-books do not consume physical stock and do not wait for librarian approval. Digital titles support free or points-based access only; premium purchases and online payment submissions are not supported.
+
+The legacy premium-purchase records, grants, and `books.premium_price` field are removed by `20261110_retire_legacy_premium_ebooks.sql`. Before applying it, run `node scripts/purge-retired-ebook-proofs.mjs` with `CONFIRM_EBOOK_PROOF_PURGE=1` and the Supabase service-role environment configured; it empties and deletes the private proof bucket through the Storage API.
 
 Physical book payments are cash-only and are collected by library staff at checkout. No online payment provider or receipt-upload flow is part of the current system.
 

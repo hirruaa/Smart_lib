@@ -34,7 +34,6 @@ const TABLES = [
   'physical_book_requests',
   'physical_book_waitlist',
   'physical_reminder_events',
-  'ebook_purchase_requests',
 ] as const
 
 const TABLE_ORDER: Record<(typeof TABLES)[number], string[]> = {
@@ -66,7 +65,6 @@ const TABLE_ORDER: Record<(typeof TABLES)[number], string[]> = {
   physical_book_requests: ['id'],
   physical_book_waitlist: ['student_id', 'book_id'],
   physical_reminder_events: ['loan_id', 'reminder_type', 'reminder_date'],
-  ebook_purchase_requests: ['id'],
 }
 
 type BackupStats = {

@@ -26,8 +26,8 @@ export type TestUser = {
 }
 
 export async function setTestInstitutionalId(user: TestUser): Promise<string> {
-  const digits = `7${randomUUID().replace(/\D/g, '').slice(0, 8)}`
-  const institutionalId = `${digits.slice(0, 4)}-${digits.slice(4)}`
+  const digits = `7${randomUUID().replace(/\D/g, '').slice(0, 7)}`
+  const institutionalId = digits
   const { error } = await adminClient.from('profiles').upsert({
     id: user.id,
     email: user.email,

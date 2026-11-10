@@ -33,8 +33,18 @@ export async function middleware(request: NextRequest) {
       },
     })
 
-    // Refresh auth token
-    await supabase.auth.getUser()
+    const { data: { user } } = await supabase.auth.getUser()
+    const pathname = request.nextUrl.pathname
+    const passwordChangeAllowed = pathname === '/reset-password'
+      || pathname === '/api/auth/change-password'
+      || pathname === '/auth/callback'
+      || pathname === '/logout'
+
+    if (user?.app_metadata?.must_change_password === true && !passwordChangeAllowed) {
+      const redirectResponse = NextResponse.redirect(new URL('/reset-password?required=1', request.url))
+      supabaseResponse.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie))
+      return redirectResponse
+    }
   } catch (error) {
     console.error('Middleware execution error:', error)
   }

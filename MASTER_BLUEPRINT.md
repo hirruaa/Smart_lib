@@ -155,7 +155,7 @@ These are **proposed acceptance targets**, not measured current performance:
 |---|---|---|
 | Public | `/`, `/login`, `/register`, `/verify-email`, `/reset-password`, `/privacy`, `/terms` | Landing/auth/legal screens; no public physical-catalog route today |
 | Student and faculty | `/dashboard/student`, `/library`, `/reader/[bookId]`, `/assistant`, `/points`, `/profile`, `/contributions` | Main workspace plus unified digital and physical catalog, library, continuous Study Room with per-book progress and cross-book notes/highlights, assistant, profile, and points surfaces |
-| Administrator | `/dashboard/admin`, `/dashboard/admin/physical`, `/dashboard/admin/ebook-payments` | Admin management, physical circulation, and reconciliation of legacy e-book payment submissions |
+| Administrator | `/dashboard/admin`, `/dashboard/admin/physical` | Admin management and physical circulation |
 | Server/API | `/api/loans`, `/api/reader/[bookId]`, `/api/reader/library`, `/api/storage/upload`, `/api/notifications`, `/api/reading-progress`, `/api/study/*` (reader annotations only), `/api/assistant/sessions`, `/api/recommend`, `/api/cron/physical-reminders`, `/api/ai/extract-payment-reference`, `/api/admin/*` | Session-aware routes and database-backed actions; authorization should also be enforced by RPC/RLS |
 
 ### 3.2 Recommended navigation flow
@@ -180,7 +180,6 @@ Public landing
             ├─ Add title and initial copies → create QR labels
             ├─ Configure fee/loan terms
             ├─ Collect cash at desk → checkout/return/lost resolution
-            ├─ Reconcile historical online-payment records only
             └─ Review contributions (Gemini advisory; admin makes final decision)
 ```
 
@@ -191,8 +190,6 @@ Public landing
 | Physical copy | available → reserved → borrowed → available / damaged / lost / withdrawn | Database RPC called by member request or admin |
 | Physical request | pending → checked_out → returned; pending → rejected/cancelled/expired; checked_out → lost → resolved | Member may cancel own eligible request; admin confirms all circulation decisions |
 | Waitlist offer | waiting → offered → claimed / declined / expired → next member | Database job/transaction, FIFO |
-| Paid e-book checkout | Not currently available; future provider payment confirmation → automatic grant + receipt | Signed, verified provider webhook; no admin approval |
-| Legacy e-book payment submission | Existing submitted/pending → approved (permanent grant + receipt) or rejected | Admin reconciliation only for submissions made before checkout was paused |
 | Contribution | submitted → AI advisory (optional) → admin approved/rejected/revision requested | Admin owns final decision and points |
 
 Treat every transition as a state machine with permitted transition rules, audit event, user-facing result, and safe retry behavior.
@@ -243,7 +240,7 @@ Treat every transition as a state machine with permitted transition rules, audit
 |---|---|---|
 | Identity and academics | `profiles`, `faculty_ranks`, `academic_courses` | Auth user has one profile/role; faculty use a department; student school/course/year fields are stored on profile |
 | Catalog | `books` | Shared bibliographic record; `catalog_type` distinguishes digital, physical, hybrid; optional `cover_image_url`; legacy digital copy-count fields are not authoritative |
-| Digital access | `borrow_requests`, `book_access_grants`, `point_transactions`, legacy `ebook_purchase_requests` | Free/points access is automatically granted in the digital-loan transaction; historical online-purchase rows are retained for reconciliation and new submissions are disabled |
+| Digital access | `borrow_requests`, `book_access_grants`, `point_transactions` | Free/points access is automatically granted in the digital-loan transaction |
 | Physical circulation | `physical_book_copies`, `physical_loan_options`, `physical_book_requests`, `physical_book_waitlist`, `physical_reminder_events` | Each copy belongs to a title; requests bind member/title/copy/fee/payment; waitlist is member/title; reminder event is unique by loan/type/date |
 | Learning | `reading_progress`, `study_notes`, `highlights`, `study_drawings` | Member-owned reading progress and annotations |
 | Engagement/admin | `notifications`, `email_queue`, `audit_logs`, `recognition_awards`, `rewards`, `achievements`, `user_achievements` | User messaging, async outbox, staff audit, points/reward/achievement features |
@@ -254,10 +251,10 @@ Treat every transition as a state machine with permitted transition rules, audit
 
 ```text
 auth.users 1—1 profiles
-profiles 1—N borrow_requests / physical_book_requests / ebook_purchase_requests
+profiles 1—N borrow_requests / physical_book_requests
 profiles 1—N study_notes / highlights / reading_progress / notifications
 books 1—N physical_book_copies / physical_book_requests / physical_book_waitlist
-books 1—N borrow_requests / book_access_grants / ebook_purchase_requests
+books 1—N borrow_requests / book_access_grants
 physical_book_requests 0—1 physical_book_copies (active assignment)
 borrow_requests 0—N fines (legacy digital fine model; policy and UI require review)
 assistant_sessions 1—N assistant_messages
@@ -317,6 +314,5 @@ assistant_sessions 1—N assistant_messages
 - [app/dashboard/page.tsx](./app/dashboard/page.tsx)
 - [components/PhysicalBorrowModal.tsx](./components/PhysicalBorrowModal.tsx)
 - [app/dashboard/admin/physical/page.tsx](./app/dashboard/admin/physical/page.tsx)
-- [app/dashboard/admin/ebook-payments/page.tsx](./app/dashboard/admin/ebook-payments/page.tsx)
 - [app/api/loans/route.ts](./app/api/loans/route.ts)
 - [app/api/reader/[bookId]/route.ts](./app/api/reader/[bookId]/route.ts)

@@ -142,7 +142,7 @@ grant execute on function public.admin_waive_physical_fine(bigint, text, text) t
 alter table public.book_contributions
   add column if not exists rejection_reason text;
 drop function if exists public.admin_review_book_contribution(bigint, text, integer, integer);
-create function public.admin_review_book_contribution(
+create or replace function public.admin_review_book_contribution(
   contribution_id bigint,
   decision text,
   reward_points integer default 25,

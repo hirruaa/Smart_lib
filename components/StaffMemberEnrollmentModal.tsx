@@ -34,7 +34,7 @@ export default function StaffMemberEnrollmentModal({
   const [saving, setSaving] = useState(false)
   const [verified, setVerified] = useState(false)
   const [error, setError] = useState('')
-  const [invitationSent, setInvitationSent] = useState<{ email: string; username: string } | null>(null)
+  const [invitationSent, setInvitationSent] = useState<{ email: string; username: string; temporaryPassword: string } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -85,7 +85,8 @@ export default function StaffMemberEnrollmentModal({
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to send the account invitation.')
-      const invited = { email: String(data.email), username: String(data.username) }
+      if (typeof data.temporaryPassword !== 'string') throw new Error('The account was created, but its one-time password was not returned. Contact an administrator before closing this window.')
+      const invited = { email: String(data.email), username: String(data.username), temporaryPassword: data.temporaryPassword }
       setInvitationSent(invited)
       onCreated(invited.email, invited.username)
     } catch (cause) {
@@ -100,8 +101,8 @@ export default function StaffMemberEnrollmentModal({
     title={invitationSent ? 'Invitation sent' : 'Create member account'}
     eyebrow="Staff-assisted enrollment"
     description={invitationSent
-      ? 'The member will set their own password through the secure invitation link.'
-      : 'Verify the member’s school ID in person. No ID image or staff-created password is collected.'}
+      ? 'Give the one-time password directly to the member. They must change it before using the library.'
+      : 'Verify the member’s school ID in person. A unique temporary password will be shown after the invitation is sent.'}
     onClose={close}
     size="lg"
     layer="foreground"
@@ -110,6 +111,11 @@ export default function StaffMemberEnrollmentModal({
       <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
         Invitation sent to <strong>{invitationSent.email}</strong>. Username: <strong>{invitationSent.username}</strong>.
       </p>
+      <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+        <p className="font-semibold">One-time temporary password</p>
+        <code className="mt-2 block select-all break-all rounded-lg bg-white p-3 font-mono text-base dark:bg-slate-950">{invitationSent.temporaryPassword}</code>
+        <p className="mt-2 text-xs">Share this directly with the member; do not send it in the same email as the invitation. It will not be shown again.</p>
+      </div>
       <button type="button" onClick={close} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Done</button>
     </div> : <form onSubmit={(event) => void submit(event)} className="space-y-4">
       {error ? <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{error}</p> : null}
@@ -130,7 +136,8 @@ export default function StaffMemberEnrollmentModal({
           <input required minLength={3} maxLength={30} pattern="[a-z0-9][a-z0-9._-]{2,29}" autoComplete="off" value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value.toLowerCase() }))} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
         </label>
         <label className="text-sm font-medium">Institutional ID
-          <input required inputMode="numeric" pattern="[0-9]{4}-?[0-9]{5}" maxLength={10} value={form.institutionalId} onChange={(event) => setForm((current) => ({ ...current, institutionalId: event.target.value.replace(/\D/g, '').slice(0, 9).replace(/^(\d{4})(\d)/, '$1-$2') }))} placeholder="2026-01042" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          <input required inputMode="numeric" pattern="[0-9]{5,8}" maxLength={8} value={form.institutionalId} onChange={(event) => setForm((current) => ({ ...current, institutionalId: event.target.value.replace(/\D/g, '').slice(0, 8) }))} placeholder="5–8 digits" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          <span className="mt-1 block text-xs text-slate-500">Enter 5–8 digits only.</span>
         </label>
         {form.role === 'faculty' ? <label className="text-sm font-medium">Faculty / department
           <select required value={form.department} onChange={(event) => setForm((current) => ({ ...current, department: event.target.value }))} disabled={loadingChoices} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950">
