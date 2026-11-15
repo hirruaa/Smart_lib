@@ -119,7 +119,7 @@ export default function ProfileModal({ open, onClose }: ProfileModalProps) {
         </div>
         <div className="profile-field-grid">
           <label className="profile-field-wide"><span>Name</span><input autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name" /></label>
-          {role === 'faculty' ? <label><span>Department</span><select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">Select department</option>{departments.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : null}
+          {role === 'faculty' ? <label><span>Department / program</span><select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">Select department / program</option>{departments.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : null}
           {role === 'student' ? <>
             <label className="profile-field-wide"><span>Course</span><select required value={course} onChange={(event) => setCourse(event.target.value)}><option value="">Select course</option>{courses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <label><span>Year level</span><select required value={studentYear} onChange={(event) => setStudentYear(event.target.value)}><option value="">Select year</option>{['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year'].map((year) => <option key={year} value={year}>{year}</option>)}</select></label>

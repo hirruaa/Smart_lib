@@ -37,7 +37,7 @@ for (const token of ['from public.academic_courses', 'where is_active', 'on conf
 const assistantDirectoryMigrationPath = path.join(root, 'supabase/migrations/20261114100000_library_assistant_current_librarians.sql')
 if (!fs.existsSync(assistantDirectoryMigrationPath)) throw new Error('Missing current librarian directory migration')
 const assistantDirectoryMigration = fs.readFileSync(assistantDirectoryMigrationPath, 'utf8')
-for (const token of ['assistant_current_librarians()', "profile.role = 'librarian'", 'from public, anon', 'to authenticated']) {
+for (const token of ['assistant_current_librarians()', "p.role = 'librarian'", 'from public, anon', 'to authenticated']) {
   if (!assistantDirectoryMigration.includes(token)) throw new Error(`Current librarian directory migration is missing: ${token}`)
 }
 const assistantRoute = fs.readFileSync(path.join(root, 'app/api/recommend/route.ts'), 'utf8')

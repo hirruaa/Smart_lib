@@ -104,22 +104,6 @@ function getCatalogQuery(query: string) {
   return keywords.join(' ') || query
 }
 
-function filterRelevantCatalogRows(query: string, rows: CatalogSearchRow[]) {
-  const terms = [...new Set(getCatalogQuery(query).split(/\s+/).filter(Boolean))]
-  if (!terms.length) return rows.slice(0, 5)
-
-  return rows
-    .map((row) => {
-      const searchableText = `${row.title} ${row.author} ${row.category} ${row.description ?? ''}`.toLowerCase()
-      const matchingTerms = terms.filter((term) => searchableText.includes(term)).length
-      return { row, matchingTerms }
-    })
-    .filter(({ matchingTerms }) => matchingTerms > 0 && matchingTerms / terms.length >= 0.5)
-    .sort((left, right) => right.matchingTerms - left.matchingTerms || right.row.rank - left.row.rank)
-    .slice(0, 5)
-    .map(({ row }) => row)
-}
-
 function parseHistory(value: unknown): RecentMessage[] | null {
   if (value === undefined) return []
   if (!Array.isArray(value)) return null
@@ -226,7 +210,7 @@ export async function POST(req: Request) {
     const shouldSearchCatalog = intent === 'search' || intent === 'research'
     const catalogQuery = getCatalogQuery(catalogQuerySource)
     const catalogPromise = shouldSearchCatalog
-      ? supabase.rpc('search_books', { p_query: catalogQuery, p_limit: 10 })
+      ? supabase.rpc('search_books', { p_query: catalogQuery, p_limit: 20 })
       : Promise.resolve({ data: [], error: null })
     const shouldSearchInventory = needsPhysicalInventory(query)
     const inventoryPromise = shouldSearchInventory
@@ -270,7 +254,7 @@ export async function POST(req: Request) {
         console.error('Library assistant catalog search failed:', rpc.error)
         return NextResponse.json({ error: 'Catalog search is temporarily unavailable. Please try again.' }, { status: 503 })
       }
-      results = filterRelevantCatalogRows(catalogQuerySource, (rpc.data ?? []) as CatalogSearchRow[])
+      results = ((rpc.data ?? []) as CatalogSearchRow[]).slice(0, 8)
     }
     if (shouldSearchInventory && inventoryResult.error) {
       console.error('Library assistant physical inventory search failed:', inventoryResult.error)
@@ -357,6 +341,7 @@ export async function POST(req: Request) {
           'Be concise and practical: answer directly, give ordered next steps, and explain likely consequences. Ask only a necessary follow-up.',
           'Use supplied live data as the only authority for library facts. Never invent fees, dates, eligibility, clearance effects, locations, hours, or contacts. If information is missing, say so and refer the user to the library desk.',
           'Use libraryPolicy for current physical fine and lost-item rules; for an existing physical loan use its policySnapshot. Lost/damage charges are staff-assessed; never make up a replacement cost. Digital access has no overdue fines.',
+          'Explain charges distinctly: digital access is free or uses the displayed points for its chosen duration; physical checkout fees are paid in cash to staff when checkout is confirmed, and a request does not reserve a copy; overdue fines follow the posted policy for general-circulation physical books only, and digital access has none.',
           'Use only currentUserLoans/currentUserFines for the signed-in member; report unpaid fines as outstanding and never infer their account status from chat history.',
           'Recommend only supplied catalog titles. Use physicalInventory results for location and availability. currentLibrarians is a roster, not an on-duty schedule.',
           `For in-person help or physical payments, direct the member to ${frontDeskFallback}.`,

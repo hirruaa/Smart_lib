@@ -30,7 +30,7 @@ type ChatMessage = {
 type ChatSession = { id: string; title: string; updated_at?: string }
 
 const starterPrompts = [
-  'Who is the librarian?',
+  'Find books about biology',
   'What if I lost a book?',
   'How do overdue fines work?',
   'Do digital books get fines?',
@@ -39,7 +39,7 @@ const starterPrompts = [
 const initialMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. I can help with library rules, fines, lost or damaged items, your loans, the librarian roster, and book recommendations. Tell me what happened and I’ll guide you through the next steps.',
+  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. Search the catalog by title, author, or subject, ask about physical-copy availability, or get help with library rules, fines, your loans, and book recommendations.',
 }
 
 function getSessionTitle(message: string) {
@@ -266,7 +266,7 @@ export default function BookAssistant() {
       {open ? <section id="research" className="assistant-panel assistant-chat-panel assistant-floating-window" aria-label="Library assistant chat">
       <div className="assistant-heading">
         <div className="assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M12 3 13.7 9.3 20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z" strokeLinecap="round" strokeLinejoin="round" /><path d="m19 17 .6 2.4L22 20l-2.4.6L19 23l-.6-2.4L16 20l2.4-.6L19 17Z" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
-        <div className="assistant-heading-copy"><p className="assistant-kicker">Research desk</p><h2>Library assistant</h2><p>A focused conversation for discovery, policy, and access.</p></div>
+        <div className="assistant-heading-copy"><p className="assistant-kicker">Research desk</p><h2>Library assistant</h2><p>Search books by title, author, or subject; ask about copy availability, policy, and your loans.</p></div>
         <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 

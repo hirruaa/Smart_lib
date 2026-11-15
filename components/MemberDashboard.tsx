@@ -24,6 +24,9 @@ type Book = {
   title: string
   author: string
   category: string
+  discipline?: string | null
+  genre?: string | null
+  course_code?: string | null
   description: string | null
   isbn: string | null
   cover_image_url?: string | null
@@ -120,9 +123,12 @@ const catalogSearchScore = (book: Book, query: string) => {
   const title = normalizeCatalogSearchText(book.title)
   const author = normalizeCatalogSearchText(book.author)
   const category = normalizeCatalogSearchText(book.category)
+  const discipline = normalizeCatalogSearchText(book.discipline ?? '')
+  const genre = normalizeCatalogSearchText(book.genre ?? '')
+  const courseCode = normalizeCatalogSearchText(book.course_code ?? '')
   const description = normalizeCatalogSearchText(book.description ?? '')
   const isbn = normalizeCatalogSearchText(book.isbn ?? '')
-  const fields = [title, author, category, description, isbn]
+  const fields = [title, author, category, discipline, genre, courseCode, description, isbn]
   if (!terms.every((term) => fields.some((field) => field.includes(term)))) return -1
 
   let score = title === normalizedQuery ? 100 : title.startsWith(normalizedQuery) ? 60 : 0
@@ -130,6 +136,8 @@ const catalogSearchScore = (book: Book, query: string) => {
     if (title.includes(term)) score += 12
     else if (author.includes(term)) score += 7
     else if (category.includes(term)) score += 5
+    else if (discipline.includes(term) || genre.includes(term)) score += 5
+    else if (courseCode.includes(term)) score += 4
     else if (isbn.includes(term)) score += 4
     else if (description.includes(term)) score += 1
   }
@@ -423,7 +431,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       const [booksResult, requestsResult, physicalLoansResult, contributionResult, physicalCatalogResult, availabilityAlertsResult] = await Promise.all([
         supabase
           .from('books')
-          .select('id, created_at, title, author, category, description, isbn, cover_image_url, access_points, access_costs, access_mode, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
+          .select('id, created_at, title, author, category, discipline, genre, course_code, description, isbn, cover_image_url, access_points, access_costs, access_mode, access_duration_days, page_count, pdf_url, catalog_type, is_archived')
           .order('title', { ascending: true }),
         supabase
           .from('borrow_requests')
@@ -473,6 +481,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
         title: book.title ?? '',
         author: book.author ?? '',
         category: book.category ?? '',
+        discipline: book.discipline ?? null,
+        genre: book.genre ?? null,
+        course_code: book.course_code ?? null,
         description: book.description ?? '',
         isbn: book.isbn ?? null,
         access_points: book.access_points ?? 0,
@@ -1320,17 +1331,20 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 <div className="catalog-heading-copy">
                   <p className="catalog-eyebrow">Library collection</p>
                   <h2>Explore the catalog</h2>
-                  <p className="catalog-description">Find print and digital resources selected for your studies.</p>
+                  <p className="catalog-description">Find print and digital resources by title, author, discipline, genre, or subject.</p>
                 </div>
                 <div className="catalog-heading-stat" aria-label={`${catalogBooks.length} titles in the collection`}>
                   <strong>{catalogBooks.length}</strong>
                   <span>titles</span>
                 </div>
               </header>
+              <aside className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100" aria-label="How library charges work">
+                <strong>Costs at a glance:</strong> Digital access is free or uses the points shown for each duration. Physical checkout fees are shown before you request and are paid in cash at the library desk; a request does not reserve a copy. Late fines apply to overdue general-circulation physical books; digital access has no overdue fines. <a href="/terms" className="font-semibold underline underline-offset-2">See the current policy</a>.
+              </aside>
               <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
                 <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
                 <SearchIcon />
-                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search by title, author, ISBN, or subject" />
+                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search title, author, ISBN, discipline, or subject" />
                 {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
                 <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
               </form>
@@ -1432,7 +1446,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           {book.description?.trim() ? <p className="catalog-book-description">{book.description}</p> : null}
                           <div className="catalog-book-footer">
                             {book.catalog_type !== 'digital' ? <span className={`catalog-stock-indicator${(book.physical_available_copies ?? 0) > 0 ? ' is-available' : ''}`}>
-                              <span aria-hidden="true" />{(book.physical_available_copies ?? 0) > 0 ? `${book.physical_available_copies} available` : 'Currently unavailable'}
+                              <span aria-hidden="true" />{(book.physical_registered_copies ?? 0) > 0
+                                ? `${book.physical_available_copies ?? 0} of ${book.physical_registered_copies} copies available`
+                                : 'No physical copies registered'}
                             </span> : <span className="catalog-stock-indicator is-digital"><span aria-hidden="true" />Digital access</span>}
                             <span className="catalog-book-open">{book.catalog_type === 'physical' ? 'Loan options' : 'View details'} <span aria-hidden="true">→</span></span>
                           </div>
@@ -1664,6 +1680,12 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   {catalogDetailsBook.catalog_type !== 'digital' ? <div className="catalog-detail-stock"><dt>Physical copies</dt><dd>{catalogDetailsBook.physical_available_copies ?? 0} available / {catalogDetailsBook.physical_borrowed_copies ?? 0} borrowed / {catalogDetailsBook.physical_registered_copies ?? 0} total</dd><p>{catalogDetailsBook.physical_locations?.length ? `Location: ${catalogDetailsBook.physical_locations.join(', ')}` : 'Location has not been assigned yet.'}</p></div> : null}
                 </dl>
                 {catalogDetailsBook.pdf_url && catalogDetailsBook.catalog_type !== 'physical' ? <p className="catalog-detail-ready">Digital file available</p> : null}
+                {catalogDetailsBook.pdf_url?.startsWith('https://assets.openstax.org/oscms-prodcms/media/documents/') ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                    <a href={catalogDetailsBook.pdf_url} target="_blank" rel="noopener noreferrer" className="font-semibold text-pine-700 underline dark:text-pine-200">Open official OpenStax PDF</a>
+                    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener noreferrer" className="text-slate-600 underline dark:text-slate-300">CC BY-NC-SA 4.0 license</a>
+                  </div>
+                ) : null}
               </div>
             </div>
             {catalogDetailsBook.catalog_type !== 'physical' ? (
