@@ -33,7 +33,7 @@ export default function EbookUploader({
       return
     }
     // 50MB check
-    if (file.size > 50 * 1024 * 1024) {
+    if (file.size <= 0 || file.size > 50 * 1024 * 1024) {
       setFileError(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Max limit is 50 MB.`)
       return
     }

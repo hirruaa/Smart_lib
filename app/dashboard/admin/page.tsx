@@ -16,6 +16,7 @@ import { useDebounce } from '@/utils/useDebounce'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
 import PhysicalCirculationAdminPage from '@/components/PhysicalCirculationAdminPage'
 import StaffCashPointTopUpModal from '@/components/StaffCashPointTopUpModal'
+import PasswordInput from '@/components/PasswordInput'
 import { generateCatalogIsbn } from '@/utils/isbn'
 import { isAdminRole } from '@/utils/roles'
 import { getContributionFileFormat, getContributionFileTypeLabel } from '@/utils/contributionFiles'
@@ -305,6 +306,7 @@ export default function AdminPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditActors, setAuditActors] = useState<AuditActor[]>([])
@@ -1374,6 +1376,7 @@ export default function AdminPage() {
     setSaving(true)
     setError(null)
     setActionMessage(null)
+    setUsernameSuggestions([])
     const response = await fetch('/api/admin/students', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1382,6 +1385,9 @@ export default function AdminPage() {
     const data = await response.json()
     if (!response.ok) {
       setError(data.error || 'Unable to create student account.')
+      setUsernameSuggestions(Array.isArray(data.suggestions)
+        ? data.suggestions.filter((suggestion: unknown): suggestion is string => typeof suggestion === 'string')
+        : [])
       setSaving(false)
       return false
     } else {
@@ -2246,15 +2252,16 @@ export default function AdminPage() {
                         <input type="text" required maxLength={120} autoComplete="name" value={newStudent.fullName} onChange={(event) => setNewStudent({ ...newStudent, fullName: event.target.value })} className={memberInviteInput} />
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Username
-                        <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() })} aria-describedby="member-username-help" className={memberInviteInput} />
+                        <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => current && /username/i.test(current) ? null : current); setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() }) }} aria-describedby="member-username-help" className={memberInviteInput} />
                         <span id="member-username-help" className="mt-1 block text-xs font-normal text-slate-500">3–30 characters; letters, numbers, dots, underscores, or hyphens.</span>
+                        {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs font-normal text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setNewStudent({ ...newStudent, username: suggestion }); setUsernameSuggestions([]); setError(null) }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Email address
-                        <input type="email" required autoComplete="email" value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className={memberInviteInput} />
+                        <input type="email" required maxLength={254} autoComplete="email" value={newStudent.email} onChange={(event) => setNewStudent({ ...newStudent, email: event.target.value })} placeholder="member@example.com" className={memberInviteInput} />
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Initial password
-                        <input type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} className={memberInviteInput} />
-                        <span className="mt-1 block text-xs font-normal text-slate-500">Use 12–128 characters. The member must change it at first sign-in.</span>
+                        <PasswordInput required minLength={8} maxLength={124} autoComplete="new-password" value={newStudent.password} onChange={(event) => setNewStudent({ ...newStudent, password: event.target.value })} className={memberInviteInput} />
+                        <span className="mt-1 block text-xs font-normal text-slate-500">Use 8–124 characters. The member must change it at first sign-in.</span>
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Account type
                         <select required value={newStudent.role} onChange={(event) => setNewStudent({ ...newStudent, role: event.target.value as 'student' | 'faculty' | 'librarian', department: '' })} className={memberInviteInput}>

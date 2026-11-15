@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import BaseModal from '@/components/BaseModal'
+import PasswordInput from '@/components/PasswordInput'
 import { getSupabase } from '@/utils/supabase/client'
 
 type Choice = { id: number; name: string }
@@ -35,6 +36,7 @@ export default function StaffMemberEnrollmentModal({
   const [saving, setSaving] = useState(false)
   const [verified, setVerified] = useState(false)
   const [error, setError] = useState('')
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [invitationSent, setInvitationSent] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
 
   useEffect(() => {
@@ -66,6 +68,7 @@ export default function StaffMemberEnrollmentModal({
     setForm(initialForm)
     setVerified(false)
     setError('')
+    setUsernameSuggestions([])
     setInvitationSent(null)
     onClose()
   }
@@ -78,6 +81,7 @@ export default function StaffMemberEnrollmentModal({
     }
     setSaving(true)
     setError('')
+    setUsernameSuggestions([])
     try {
       const response = await fetch('/api/admin/students', {
         method: 'POST',
@@ -85,7 +89,12 @@ export default function StaffMemberEnrollmentModal({
         body: JSON.stringify({ ...form, identityVerified: verified }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Unable to send the account invitation.')
+      if (!response.ok) {
+        setUsernameSuggestions(Array.isArray(data.suggestions)
+          ? data.suggestions.filter((suggestion: unknown): suggestion is string => typeof suggestion === 'string')
+          : [])
+        throw new Error(data.error || 'Unable to send the account invitation.')
+      }
       const invited = { email: String(data.email), username: String(data.username), initialPassword: form.password }
       setInvitationSent(invited)
       setForm((current) => ({ ...current, password: '' }))
@@ -134,11 +143,12 @@ export default function StaffMemberEnrollmentModal({
           <input required type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
         </label>
         <label className="text-sm font-medium">Username
-          <input required minLength={3} maxLength={30} pattern="[a-z0-9][a-z0-9._-]{2,29}" autoComplete="off" value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value.toLowerCase() }))} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          <input required minLength={3} maxLength={30} pattern="[a-z0-9][a-z0-9._-]{2,29}" autoComplete="off" value={form.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => /username/i.test(current) ? '' : current); setForm((current) => ({ ...current, username: event.target.value.toLowerCase() })) }} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setForm((current) => ({ ...current, username: suggestion })); setUsernameSuggestions([]); setError('') }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
         </label>
         <label className="text-sm font-medium">Initial password
-          <input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
-          <span className="mt-1 block text-xs text-slate-500">Use 12–128 characters. The member will be asked to change it at first sign-in.</span>
+          <PasswordInput required minLength={8} maxLength={124} autoComplete="new-password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          <span className="mt-1 block text-xs text-slate-500">Use 8–124 characters. The member will be asked to change it at first sign-in.</span>
         </label>
         <label className="text-sm font-medium">Institutional ID
           <input required inputMode="numeric" pattern="[0-9]{5,8}" maxLength={8} value={form.institutionalId} onChange={(event) => setForm((current) => ({ ...current, institutionalId: event.target.value.replace(/\D/g, '').slice(0, 8) }))} placeholder="5–8 digits" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />

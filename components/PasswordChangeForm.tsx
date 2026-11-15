@@ -13,8 +13,8 @@ export default function PasswordChangeForm({ onSuccess }: { onSuccess: () => voi
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
-    if (password.length < 12 || password.length > 128) {
-      setError('Use a password between 12 and 128 characters.')
+    if (password.length < 8 || password.length > 124) {
+      setError('Use a password between 8 and 124 characters.')
       return
     }
     if (password !== confirmPassword) {
@@ -48,13 +48,13 @@ export default function PasswordChangeForm({ onSuccess }: { onSuccess: () => voi
     {error ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">{error}</p> : null}
     <label className="block text-sm font-medium">
       New password
-      <PasswordInput required minLength={12} maxLength={128} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+      <PasswordInput required minLength={8} maxLength={124} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
     </label>
     <label className="block text-sm font-medium">
       Confirm new password
-      <PasswordInput required minLength={12} maxLength={128} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+      <PasswordInput required minLength={8} maxLength={124} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
     </label>
-    <p className="text-xs text-slate-500">Use at least 12 characters. Avoid reusing a password from another account.</p>
+    <p className="text-xs text-slate-500">Use 8–124 characters. Avoid reusing a password from another account.</p>
     <button type="submit" disabled={saving} className="password-change-submit rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
       {saving ? 'Updating password…' : 'Update password'}
     </button>

@@ -18,8 +18,8 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null)
   const password = body && typeof body === 'object' && typeof body.password === 'string' ? body.password : ''
-  if (password.length < 12 || password.length > 128) {
-    return NextResponse.json({ error: 'Password must be between 12 and 128 characters.' }, { status: 400 })
+  if (password.length < 8 || password.length > 124) {
+    return NextResponse.json({ error: 'Password must be between 8 and 124 characters.' }, { status: 400 })
   }
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY

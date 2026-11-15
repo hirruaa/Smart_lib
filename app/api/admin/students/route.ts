@@ -5,6 +5,13 @@ import { apiError, boundedText } from '@/utils/api'
 import { bodyTooLarge, rateLimit, sameOrigin, tooManyRequests, originViolation } from '@/utils/requestSecurity'
 import { isAdminRole, isStaffRole } from '@/utils/roles'
 
+function usernameCandidates(username: string) {
+  return Array.from({ length: 100 }, (_, index) => {
+    const suffix = String(index + 2)
+    return `${username.slice(0, 30 - suffix.length)}${suffix}`
+  })
+}
+
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return originViolation()
   if (bodyTooLarge(request, 16_384)) return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 })
@@ -47,7 +54,7 @@ export async function POST(request: Request) {
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: 'Enter a valid member email.' }, { status: 400 })
   if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) return NextResponse.json({ error: 'Username must be 3–30 characters and use letters, numbers, periods, underscores, or hyphens.' }, { status: 400 })
-  if (initialPassword.length < 12 || initialPassword.length > 128) return NextResponse.json({ error: 'Initial password must be between 12 and 128 characters.' }, { status: 400 })
+  if (initialPassword.length < 8 || initialPassword.length > 124) return NextResponse.json({ error: 'Initial password must be between 8 and 124 characters.' }, { status: 400 })
   if (!role) return NextResponse.json({ error: 'Choose a valid member role.' }, { status: 400 })
   if (profile.role === 'librarian' && role === 'librarian') {
     return NextResponse.json({ error: 'Librarians may invite student and faculty members only.' }, { status: 403 })
@@ -70,6 +77,19 @@ export async function POST(request: Request) {
   const adminClient = createSupabaseClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+  const usernameConflictResponse = async (message: string) => {
+    const candidates = usernameCandidates(username)
+    const { data, error } = await adminClient
+      .from('profiles')
+      .select('username')
+      .in('username', candidates)
+
+    if (error) return apiError('Unable to suggest available usernames.', 503, error)
+
+    const taken = new Set((data ?? []).map((member) => member.username))
+    const suggestions = candidates.filter((candidate) => !taken.has(candidate)).slice(0, 3)
+    return NextResponse.json({ error: message, suggestions }, { status: 409 })
+  }
   const { data: usernameMatch, error: usernameLookupError } = await adminClient
     .from('profiles').select('id').eq('username', username).limit(1).maybeSingle()
   if (usernameLookupError) {
@@ -84,7 +104,9 @@ export async function POST(request: Request) {
       usernameLookupError
     )
   }
-  if (usernameMatch) return NextResponse.json({ error: 'That username is already in use.' }, { status: 409 })
+  if (usernameMatch) {
+    return usernameConflictResponse('That username is already in use. Try one of these available alternatives.')
+  }
   if (institutionalId) {
     const { data: idMatch, error: idLookupError } = await adminClient
       .from('profiles').select('id').eq('institutional_id', institutionalId).maybeSingle()
@@ -155,7 +177,7 @@ export async function POST(request: Request) {
       const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
       if (rollbackError) console.error('Unable to roll back member invitation after profile setup failed.', rollbackError)
       if (profileUpdateError.code === '23505' && /username/i.test(profileUpdateError.message)) {
-        return NextResponse.json({ error: 'That username was just claimed. Choose another username and try again.' }, { status: 409 })
+        return usernameConflictResponse('That username was just claimed. Try one of these available alternatives.')
       }
       return apiError('Unable to save the invited member profile.', 500, profileUpdateError)
     }
