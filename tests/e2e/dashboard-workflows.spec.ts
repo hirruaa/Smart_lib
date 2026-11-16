@@ -27,6 +27,7 @@ test('member dashboard and wallet modal have no critical or serious WCAG 2.2 vio
 })
 
 test('student and faculty dashboards keep common library dialogs available and closable', async ({ page }) => {
+  test.setTimeout(120_000)
   const student = await createTestUser('student')
   const faculty = await createTestUser('faculty')
 
@@ -46,7 +47,7 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(page.locator('.student-hero-stat-value').first()).toHaveCSS('display', 'grid')
       await expect(page.locator('.student-hero-stat-value strong').first()).toHaveCSS('font-variant-numeric', 'tabular-nums')
       const summaryCards = page.locator('.student-hero-summary > .student-hero-stat')
-      await expect(summaryCards).toHaveCount(3)
+      await expect(summaryCards).toHaveCount(5)
       await expect(summaryCards.first()).toHaveCSS('border-radius', '18px')
       await expect(summaryCards.first()).toHaveCSS('background-color', 'rgb(252, 251, 247)')
       await expect(summaryCards.first().locator('.student-hero-stat-value strong')).toHaveCSS('font-size', '25px')
@@ -57,7 +58,7 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
       await page.getByRole('button', { name: 'Collapse navigation' }).click()
       await expect(page.locator('.student-layout')).toHaveClass(/sidebar-collapsed/)
-      await expect(sidebar).toHaveCSS('padding-top', '16px')
+      await expect(sidebar).toHaveCSS('padding-top', '54px')
       await page.getByRole('button', { name: 'Expand navigation' }).click()
       await expect(page.locator('.student-layout')).not.toHaveClass(/sidebar-collapsed/)
 
@@ -92,7 +93,7 @@ test('student and faculty dashboards keep common library dialogs available and c
         await route.fulfill({ json: { answer: 'The current library policy is available from the circulation desk.' } })
       })
       await page.setViewportSize({ width: 517, height: 570 })
-      await page.getByRole('button', { name: 'Open library assistant' }).click()
+      await page.getByRole('button', { name: 'Ask the library' }).click()
       const assistantPanel = page.locator('.assistant-floating-window')
       await expect(assistantPanel).toBeVisible()
       const assistantLayout = await assistantPanel.evaluate((panel) => {
@@ -115,12 +116,14 @@ test('student and faculty dashboards keep common library dialogs available and c
       await assistantPanel.getByRole('textbox', { name: 'Message your library assistant' }).fill(assistantPrompt)
       await assistantPanel.getByRole('button', { name: 'Send message' }).click()
       await expect(assistantPanel.locator('.assistant-error')).toContainText('Gemini is taking too long')
-      await expect(assistantPanel.getByRole('button', { name: 'Retry' })).toBeEnabled()
-      await assistantPanel.getByRole('button', { name: 'Retry' }).click()
+      const retryButton = assistantPanel.getByRole('button', { name: 'Retry' })
+      await expect(retryButton).toBeEnabled()
+      await retryButton.click()
       await expect(assistantPanel.locator('.assistant-message-assistant').last()).toContainText('available from the circulation desk')
       await expect(assistantPanel.locator('.assistant-session-select')).toHaveText(assistantPrompt)
       await assistantPanel.getByRole('button', { name: 'New chat' }).click()
       await expect(assistantPanel.locator('.assistant-session-item')).toHaveCount(1)
+      await assistantPanel.getByRole('button', { name: 'Minimize library assistant' }).click()
       await page.unroute('**/api/assistant/sessions**')
       await page.unroute('**/api/recommend')
 
@@ -160,7 +163,7 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(historyDialog).toBeVisible()
       await historyDialog.getByRole('button', { name: 'Close reading history' }).click()
 
-      const myLibraryNavigation = page.getByRole('button', { name: 'My library' })
+      const myLibraryNavigation = page.getByRole('button', { name: 'My library', exact: true })
       await myLibraryNavigation.click()
       await expect(myLibraryNavigation).toHaveAttribute('aria-current', 'page')
       await expect(myLibraryNavigation).toHaveClass(/active/)

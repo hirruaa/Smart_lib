@@ -7398,7 +7398,7 @@ where id = 'ebooks';
 commit;
 -- <<< END MIGRATION: 20261110_faculty_contribution_office_formats.sql
 
--- >>> BEGIN MIGRATION: 20261110_retire_legacy_premium_ebooks.sql
+-- >>> BEGIN MIGRATION: 20261110090000_retire_legacy_premium_ebooks.sql
 -- Permanently retire paid e-book purchases and remove their historical data.
 -- Empty the private proof bucket through the Storage API before applying this
 -- migration; direct SQL deletion from storage.objects does not delete blobs.
@@ -7471,6 +7471,9 @@ $old$;
       summary_value := 'Digital purchase ' || coalesce(source_row->>'status', 'updated') || '.';
 $old$;
 begin
+  old_branch := replace(old_branch, E'\r', '');
+  old_case := replace(old_case, E'\r', '');
+
   if to_regprocedure('public.record_member_activity_event()') is not null then
     function_definition := pg_get_functiondef('public.record_member_activity_event()'::regprocedure);
     function_definition := replace(function_definition, old_branch, '');
@@ -7504,7 +7507,7 @@ where access_mode = 'premium';
 alter table public.books drop column if exists premium_price;
 
 commit;
--- <<< END MIGRATION: 20261110_retire_legacy_premium_ebooks.sql
+-- <<< END MIGRATION: 20261110090000_retire_legacy_premium_ebooks.sql
 
 -- >>> BEGIN MIGRATION: 20261110123000_fix_cash_topup_transaction_check.sql
 begin;

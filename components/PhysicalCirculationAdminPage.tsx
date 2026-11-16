@@ -1142,6 +1142,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         : `${condition === 'damaged' ? 'Recovered copy inspected and damage assessment recorded. ' : ''}Lost-book hold resolved; any unpaid replacement assessment was waived. Separate late charges remain due.${paidReplacement ? ' A previous replacement payment remains on record for cashier review.' : ''}`)
       setRecoveryDamageDrafts((current) => ({ ...current, [loanId]: { amount: '', reason: '' } }))
       setSelectedLostCaseId(null)
+      setLostSearch('')
     }
     setBusy(false)
   }
@@ -1180,7 +1181,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       p_request_id: loanId, p_copy_condition: condition, p_resolution_note: note,
     })
     if (resolveError) setError(resolveError.message)
-    else { await load(); setSelectedLostCaseId(null); setMessage(condition === 'available' ? 'Copy marked repaired and returned to circulation.' : condition === 'withdrawn' ? 'Copy withdrawn from the collection and damage case closed.' : 'Damage review saved; copy remains unavailable pending repair.') }
+    else {
+      await load()
+      setSelectedLostCaseId(null)
+      setLostSearch('')
+      setMessage(condition === 'available' ? 'Copy marked repaired and returned to circulation.' : condition === 'withdrawn' ? 'Copy withdrawn from the collection and damage case closed.' : 'Damage review saved; copy remains unavailable pending repair.')
+    }
     setBusy(false)
   }
 
@@ -1855,7 +1861,12 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
               </div>
               <div className="librarian-dashboard-actions">
                 <button type="button" onClick={() => setMemberEnrollmentOpen(true)} className="librarian-dashboard-secondary-action">Create member account</button>
-                <button type="button" onClick={() => setMemberDeskOpen(true)} className="librarian-dashboard-primary-action">Find a member</button>
+                <button type="button" onClick={() => {
+                  setDeskMemberId('')
+                  setDeskMemberQuery('')
+                  setDeskIdCardPresented(false)
+                  setMemberDeskOpen(true)
+                }} className="librarian-dashboard-primary-action">Find a member</button>
               </div>
             </div>
           </header>

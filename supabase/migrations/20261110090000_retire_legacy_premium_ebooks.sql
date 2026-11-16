@@ -70,6 +70,9 @@ $old$;
       summary_value := 'Digital purchase ' || coalesce(source_row->>'status', 'updated') || '.';
 $old$;
 begin
+  old_branch := replace(old_branch, E'\r', '');
+  old_case := replace(old_case, E'\r', '');
+
   if to_regprocedure('public.record_member_activity_event()') is not null then
     function_definition := pg_get_functiondef('public.record_member_activity_event()'::regprocedure);
     function_definition := replace(function_definition, old_branch, '');

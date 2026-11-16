@@ -1179,7 +1179,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
             <div className="student-nav-group">
               <p className="student-nav-group-label">Your activity</p>
               <button type="button" className={activeSidebarItem === 'library' ? 'active' : ''} aria-current={activeSidebarItem === 'library' ? 'page' : undefined} aria-label="My library" title={sidebarCollapsed ? 'My library' : undefined} onClick={() => { setActiveSidebarItem('library'); setActiveAccessOpen(true); setSidebarOpen(false) }}><BookMarkIcon /><span>My library</span></button>
-              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-current={activeSidebarItem === 'payments' ? 'page' : undefined} aria-label="Loans and charges" title={sidebarCollapsed ? 'Loans and charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
+              <button type="button" className={activeSidebarItem === 'payments' ? 'active' : ''} aria-current={activeSidebarItem === 'payments' ? 'page' : undefined} aria-label="Loans & charges" title={sidebarCollapsed ? 'Loans & charges' : undefined} onClick={() => { setActiveSidebarItem('payments'); setPaymentsOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Loans &amp; charges</span></button>
             </div>
             {memberType === 'faculty' ? <div className="student-nav-group">
               <p className="student-nav-group-label">Tools</p>
@@ -1413,22 +1413,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 {filteredBooks.length > 0 ? (
                   visibleBooks.map((book) => {
                     const memberStatus = getCatalogMemberStatus(book)
-                    const openAction = book.catalog_type === 'physical' ? 'Choose loan options' : 'View details and actions'
+                    const openBook = () => book.catalog_type === 'physical' ? openPhysicalBorrowOptions(book) : openCatalogDetails(book)
                     return <article
                       key={book.id}
                       className="resource-card catalog-book-card rounded-[1.5rem] p-5"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`${openAction} for ${book.title}${memberStatus ? `, ${memberStatus.label}` : ''}`}
-                      aria-haspopup="dialog"
-                      onClick={() => book.catalog_type === 'physical' ? openPhysicalBorrowOptions(book) : openCatalogDetails(book)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          if (book.catalog_type === 'physical') openPhysicalBorrowOptions(book)
-                          else openCatalogDetails(book)
-                        }
-                      }}
+                      onClick={openBook}
                     >
                       <div className="resource-card-layout catalog-book-layout">
                         <div className="resource-cover catalog-book-cover">
@@ -1450,7 +1439,15 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                                 ? `${book.physical_available_copies ?? 0} of ${book.physical_registered_copies} copies available`
                                 : 'No physical copies registered'}
                             </span> : <span className="catalog-stock-indicator is-digital"><span aria-hidden="true" />Digital access</span>}
-                            <span className="catalog-book-open">{book.catalog_type === 'physical' ? 'Loan options' : 'View details'} <span aria-hidden="true">→</span></span>
+                            <button
+                              type="button"
+                              className="catalog-book-open"
+                              aria-label={`${book.catalog_type === 'physical' ? 'Loan options' : 'View details'} for ${book.title}`}
+                              aria-haspopup="dialog"
+                              onClick={(event) => { event.stopPropagation(); openBook() }}
+                            >
+                              {book.catalog_type === 'physical' ? 'Loan options' : 'View details'} <span aria-hidden="true">→</span>
+                            </button>
                           </div>
                         </div>
                       </div>

@@ -70,7 +70,7 @@ test('digital book details show every access duration and points cost without a 
     const catalogSearch = page.getByRole('searchbox', { name: 'Search the library catalog' })
     await expect(catalogSearch).toBeVisible()
     await catalogSearch.fill(title)
-    await page.getByRole('button', { name: `View details and actions for ${title}` }).click()
+    await page.getByRole('button', { name: `View details for ${title}` }).click()
 
     const details = page.getByRole('dialog', { name: title })
     await expect(details.getByRole('heading', { name: 'Choose access duration' })).toBeVisible()
@@ -130,7 +130,7 @@ test('catalog relevance ranks title and subject matches ahead of description-onl
 test('member catalog renders matching books in manageable pages', async ({ page }) => {
   const user = await createTestUser()
   const prefix = `E2E Catalog Paging ${randomUUID()}`
-  const titles = Array.from({ length: 25 }, (_, index) => `${prefix} ${index + 1}`)
+  const titles = Array.from({ length: 25 }, (_, index) => `${prefix} ${String(index + 1).padStart(2, '0')}`)
   const bookIds: number[] = []
 
   try {

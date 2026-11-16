@@ -88,7 +88,7 @@ Workflow:
 
 Free and points-based e-books unlock immediately after the database confirms the request; eligible point costs are deducted atomically. E-books do not consume physical stock and do not wait for librarian approval. Digital titles support free or points-based access only; premium purchases and online payment submissions are not supported.
 
-The legacy premium-purchase records, grants, and `books.premium_price` field are removed by `20261110_retire_legacy_premium_ebooks.sql`. Before applying it, run `node scripts/purge-retired-ebook-proofs.mjs` with `CONFIRM_EBOOK_PROOF_PURGE=1` and the Supabase service-role environment configured; it empties and deletes the private proof bucket through the Storage API.
+The legacy premium-purchase records, grants, and `books.premium_price` field are removed by `20261110090000_retire_legacy_premium_ebooks.sql`. Before applying it, run `node scripts/purge-retired-ebook-proofs.mjs` with `CONFIRM_EBOOK_PROOF_PURGE=1` and the Supabase service-role environment configured; it empties and deletes the private proof bucket through the Storage API.
 
 Physical book payments are cash-only and are collected by library staff at checkout. No online payment provider or receipt-upload flow is part of the current system.
 

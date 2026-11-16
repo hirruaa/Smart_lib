@@ -58,7 +58,7 @@ export default function BookAssistant() {
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const sessionLoadedRef = useRef(false)
-  const endRef = useRef<HTMLDivElement>(null)
+  const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open || sessionLoadedRef.current) return
@@ -105,7 +105,8 @@ export default function BookAssistant() {
     } catch {
       setError((current) => current ?? 'Browser storage is unavailable. This conversation will not be saved on this device.')
     }
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    const thread = threadRef.current
+    thread?.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
   const handleSearch = async (event?: React.FormEvent) => {
@@ -262,7 +263,7 @@ export default function BookAssistant() {
 
   return (
     <>
-      {!open ? <button type="button" className="assistant-launcher" onClick={() => setOpen(true)} aria-label="Open library assistant"><span className="assistant-launcher-mark" aria-hidden="true">✦</span><span className="assistant-launcher-label">Ask the library</span></button> : null}
+      {!open ? <button type="button" className="assistant-launcher" onClick={() => setOpen(true)} aria-label="Ask the library"><span className="assistant-launcher-mark" aria-hidden="true">✦</span><span className="assistant-launcher-label">Ask the library</span></button> : null}
       {open ? <section id="research" className="assistant-panel assistant-chat-panel assistant-floating-window" aria-label="Library assistant chat">
       <div className="assistant-heading">
         <div className="assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M12 3 13.7 9.3 20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z" strokeLinecap="round" strokeLinejoin="round" /><path d="m19 17 .6 2.4L22 20l-2.4.6L19 23l-.6-2.4L16 20l2.4-.6L19 17Z" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
@@ -278,7 +279,7 @@ export default function BookAssistant() {
         })}</div>
       </> : null}
 
-      <div className="assistant-thread" aria-live="polite">
+      <div ref={threadRef} className="assistant-thread" aria-live="polite">
         {messages.map((message) => (
           <div key={message.id} className={`assistant-message assistant-message-${message.role}`}>
             <div className="assistant-avatar" aria-hidden="true">{message.role === 'assistant' ? 'S' : 'You'}</div>
@@ -290,7 +291,6 @@ export default function BookAssistant() {
           </div>
         ))}
         {loading ? <div className="assistant-message assistant-message-assistant" role="status" aria-label="Assistant is responding"><div className="assistant-avatar" aria-hidden="true">S</div><div className="assistant-typing"><span /><span /><span /></div></div> : null}
-        <div ref={endRef} />
       </div>
 
       {messages.length === 1 ? <div className="assistant-suggestions">{starterPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setQuery(prompt)}>{prompt}</button>)}</div> : null}
