@@ -48,6 +48,31 @@ for (const program of ['BSBA', 'BSA', 'BSTM', 'BSHM', 'BSCRIM']) {
     throw new Error(`Additional faculty program is missing: ${program}`)
   }
 }
+const adminPhysicalApprovalMigrationPath = path.join(root, 'supabase/migrations/20261117130000_allow_admin_physical_request_approval.sql')
+if (!fs.existsSync(adminPhysicalApprovalMigrationPath)) throw new Error('Missing admin physical request approval migration')
+const adminPhysicalApprovalMigration = fs.readFileSync(adminPhysicalApprovalMigrationPath, 'utf8')
+for (const token of [
+  "p.proname = 'admin_confirm_physical_checkout'",
+  "p.proargtypes = '20 25 1700 25 16'::oidvector",
+  "public.is_admin() or public.is_librarian()",
+  "raise exception ''Library staff access required''",
+]) {
+  if (!adminPhysicalApprovalMigration.includes(token)) {
+    throw new Error(`Admin physical request approval migration is missing: ${token}`)
+  }
+}
+if (!fs.readFileSync(path.join(schemaDirectory, 'ALL_MIGRATIONS.sql'), 'utf8').includes(adminPhysicalApprovalMigration.trim())) {
+  throw new Error('Admin physical request approval migration is missing from ALL_MIGRATIONS.sql')
+}
+const adminDashboardPath = path.join(root, 'app/dashboard/admin/page.tsx')
+const adminDashboard = fs.readFileSync(adminDashboardPath, 'utf8')
+if (adminDashboard.includes('newBook.access_duration_days') || adminDashboard.includes('Access duration</span>')) {
+  throw new Error('New e-book form should not ask admins to set an access duration')
+}
+const memberDashboard = fs.readFileSync(path.join(root, 'components/MemberDashboard.tsx'), 'utf8')
+if (!memberDashboard.includes('DIGITAL_ACCESS_DURATION_OPTIONS.map')) {
+  throw new Error('Members must still be able to choose a digital access duration')
+}
 const assistantDirectoryMigrationPath = path.join(root, 'supabase/migrations/20261114100000_library_assistant_current_librarians.sql')
 if (!fs.existsSync(assistantDirectoryMigrationPath)) throw new Error('Missing current librarian directory migration')
 const assistantDirectoryMigration = fs.readFileSync(assistantDirectoryMigrationPath, 'utf8')

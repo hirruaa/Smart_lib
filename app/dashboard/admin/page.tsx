@@ -265,7 +265,6 @@ export default function AdminPage() {
     pdf_url: '',
     access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>,
     access_mode: 'free' as 'free' | 'points',
-    access_duration_days: '30',
     description: '',
   })
   const [pdfBookId, setPdfBookId] = useState<number | null>(null)
@@ -1470,7 +1469,6 @@ export default function AdminPage() {
         access_costs: newBook.access_mode === 'points' ? parsedAccessCosts : {},
         access_mode: newBook.access_mode,
         catalog_type: 'digital',
-        access_duration_days: Number(newBook.access_duration_days) || 30,
         total_copies: 0,
         available_copies: 0,
       },
@@ -1480,7 +1478,7 @@ export default function AdminPage() {
       setError(error.message)
     } else {
       setActionMessage('New e-book added to the online catalog.')
-      setNewBook({ title: '', author: '', category: '', source_type: 'staff_added', course_code: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', access_duration_days: '30', description: '' })
+      setNewBook({ title: '', author: '', category: '', source_type: 'staff_added', course_code: '', isbn: '', pdf_url: '', access_costs: Object.fromEntries(DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => [days, '0'])) as Record<string, string>, access_mode: 'free', description: '' })
       setNewBookFile(null)
       setNewBookOpen(false)
       await loadData()
@@ -1976,18 +1974,6 @@ export default function AdminPage() {
                     </div>
                     <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Set the points required for each access period.</span>
                   </fieldset> : <p className="sm:col-span-2 text-sm text-slate-500 dark:text-slate-400">Free access unlocks immediately at no points cost.</p>}
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Access duration</span>
-                    <select
-                      value={newBook.access_duration_days}
-                      onChange={(event) => setNewBook({ ...newBook, access_duration_days: event.target.value })}
-                      required
-                      className="mt-2 w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                    >
-                      {DIGITAL_ACCESS_DURATION_OPTIONS.map((days) => <option key={days} value={days}>{days} {days === 1 ? 'day' : 'days'}</option>)}
-                    </select>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Students receive this duration per unlock.</span>
-                  </label>
                 </div>
                 <label className="mt-4 block">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">ISBN</span>
