@@ -27,7 +27,7 @@ test('admin dashboard keeps circulation processing in the librarian workspace', 
       p_payment_notes: null,
       p_id_card_presented: true,
     })
-    expect(checkoutError?.message).toContain('Librarian access required')
+    expect(checkoutError?.message).toContain('This request is not ready for checkout')
 
     await signInInBrowser(page, admin)
 
@@ -163,6 +163,28 @@ test('admin invitation checks username availability inline', async ({ page }) =>
     await expect(inviteDialog.getByRole('button', { name: 'Send invite' })).toBeEnabled()
   } finally {
     await clearBrowserSession(page)
+    await removeTestUser(admin)
+  }
+})
+
+test('admin can access the resend verification action and confirmed accounts are protected', async ({ page }) => {
+  const admin = await createTestUser('admin')
+  const member = await createTestUser('student')
+  try {
+    await signInInBrowser(page, admin)
+    await page.getByRole('button', { name: 'Member accounts' }).click()
+    const memberRow = page.getByRole('row').filter({ hasText: member.email })
+    await expect(memberRow).toBeVisible()
+    await memberRow.click()
+
+    const memberDialog = page.getByRole('dialog').filter({ hasText: member.email })
+    const resendButton = memberDialog.getByRole('button', { name: 'Resend verification email' })
+    await expect(resendButton).toBeVisible()
+    await resendButton.click()
+    await expect(memberDialog.getByRole('alert')).toContainText('already verified')
+  } finally {
+    await clearBrowserSession(page)
+    await removeTestUser(member)
     await removeTestUser(admin)
   }
 })

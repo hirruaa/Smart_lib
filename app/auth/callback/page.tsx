@@ -34,12 +34,12 @@ export default function AuthCallbackPage() {
         const code = query.get('code')
 
         if (tokenHash) {
-          if (tokenType !== 'invite') {
+          if (tokenType !== 'invite' && tokenType !== 'signup') {
             throw new Error('This verification link is not a valid invitation. Please ask the library staff to send a new one.')
           }
           const { error: verificationError } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
-            type: 'invite',
+            type: tokenType,
           })
           if (verificationError) throw verificationError
         } else if (code) {

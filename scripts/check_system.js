@@ -204,6 +204,30 @@ for (const token of ["query.get('token_hash')", "verifyOtp({", "type: 'invite'",
 }
 const invitationRoute = fs.readFileSync(path.join(root, 'app/api/admin/students/route.ts'), 'utf8')
 if (!invitationRoute.includes("new URL('/auth/callback'")) throw new Error('Member invitations must use the browser auth callback')
+const resendInvitationRoutePath = path.join(root, 'app/api/admin/students/[studentId]/resend-invitation/route.ts')
+if (!fs.existsSync(resendInvitationRoutePath)) throw new Error('Missing member invitation resend endpoint')
+const resendInvitationRoute = fs.readFileSync(resendInvitationRoutePath, 'utf8')
+for (const token of [
+  "adminClient.auth.resend({",
+  "type: 'signup'",
+  'emailRedirectTo: inviteCallback.toString()',
+  'email_confirmed_at',
+  "name: 'admin-resend-member-invitation'",
+  "action: 'member_invitation_resent'",
+]) {
+  if (!resendInvitationRoute.includes(token)) throw new Error(`Member invitation resend endpoint is missing: ${token}`)
+}
+if (!authCallback.includes("tokenType !== 'invite' && tokenType !== 'signup'")) {
+  throw new Error('Auth callback must verify resent signup confirmation tokens')
+}
+const adminDashboard = fs.readFileSync(path.join(root, 'app/dashboard/admin/page.tsx'), 'utf8')
+for (const token of ['resendMemberInvitation(selectedMember)', 'Resend verification email', 'Verification email resent to']) {
+  if (!adminDashboard.includes(token)) throw new Error(`Member invitation resend UI is missing: ${token}`)
+}
+const physicalCirculation = fs.readFileSync(path.join(root, 'components/PhysicalCirculationAdminPage.tsx'), 'utf8')
+for (const token of ['resendDeskMemberInvitation()', "librarianMode && (selectedDeskMember.role === 'student' || selectedDeskMember.role === 'faculty')", 'Resend verification email']) {
+  if (!physicalCirculation.includes(token)) throw new Error(`Librarian invitation resend UI is missing: ${token}`)
+}
 
 const studyRoom = fs.readFileSync(path.join(root, 'components/StudyRoom.tsx'), 'utf8')
 for (const token of ['My digital library', 'Study notebook', 'studyItemsTruncated', 'onDraftChange', 'window.history.replaceState', 'window.confirm']) {

@@ -1183,6 +1183,7 @@ html.dark .password-change-submit:hover:not(:disabled) { border-color: #e4c986; 
 .physical-librarian-workspace #desk-member-verification h2 { font-size: 16px; }
 .physical-librarian-workspace #desk-member-verification > div.relative { max-width: 100%; }
 .base-modal:has(.librarian-member-desk-content) { width: min(100%, 58rem); max-height: min(94dvh, 960px); padding: 22px; }
+.base-modal.member-lookup-modal { width: min(100%, 58rem); min-height: min(22rem, calc(100dvh - 24px)); }
 .base-modal-content:has(.librarian-member-desk-content) { max-height: calc(94dvh - 132px); overflow-y: auto; overscroll-behavior: contain; }
 .librarian-member-desk-content { border: 0 !important; border-radius: 0 !important; background: transparent !important; padding: 0 !important; box-shadow: none !important; }
 

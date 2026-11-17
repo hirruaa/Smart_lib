@@ -114,7 +114,7 @@ type CirculationActionRequest = { panel: CirculationPanel; token: number; caseId
 
 function MemberDeskSurface({ asModal, open, onClose, title, description, children }: { asModal: boolean; open: boolean; onClose: () => void; title: string; description: string; children: ReactNode }) {
   if (!asModal) return children
-  return <BaseModal open={open} title={title} description={description} onClose={onClose} size="lg" layer="background">{children}</BaseModal>
+  return <BaseModal open={open} title={title} description={description} onClose={onClose} size="lg" layer="background" className={title === 'Find a member' ? 'member-lookup-modal' : ''}>{children}</BaseModal>
 }
 
 export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnly = false, overviewOnly = false, catalogOnly = false, policyOnly = false, finesOnly = false, librarianWorkspaceOnly = false, requestedPanel = null, active = true, onClose, onOpenLostCase, onOpenFines }: { initialPanel?: CirculationPanel; requestsOnly?: boolean; overviewOnly?: boolean; catalogOnly?: boolean; policyOnly?: boolean; finesOnly?: boolean; librarianWorkspaceOnly?: boolean; requestedPanel?: CirculationActionRequest; active?: boolean; onClose?: () => void; onOpenLostCase?: (caseId: number) => void; onOpenFines?: () => void }) {
@@ -138,6 +138,8 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [memberActivity, setMemberActivity] = useState<MemberActivityEvent[]>([])
   const [memberActivityLoading, setMemberActivityLoading] = useState(false)
   const [memberActivityError, setMemberActivityError] = useState('')
+  const [resendingInvitationId, setResendingInvitationId] = useState<string | null>(null)
+  const [invitationResendMessage, setInvitationResendMessage] = useState<{ memberId: string; text: string; error: boolean } | null>(null)
   const [deskSuggestionIndex, setDeskSuggestionIndex] = useState(0)
   const [deskIdCardPresented, setDeskIdCardPresented] = useState(false)
   const [deskCopyQuery, setDeskCopyQuery] = useState('')
@@ -1222,6 +1224,37 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setMemberProfileTab('overview')
     setMemberActivity([])
     setMemberActivityError('')
+    setInvitationResendMessage(null)
+  }
+  const resendDeskMemberInvitation = async () => {
+    if (!selectedDeskMember) return
+    setResendingInvitationId(selectedDeskMember.id)
+    setInvitationResendMessage(null)
+    try {
+      const response = await fetch(`/api/admin/students/${selectedDeskMember.id}/resend-invitation`, { method: 'POST' })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) {
+        setInvitationResendMessage({
+          memberId: selectedDeskMember.id,
+          text: result?.error || 'Unable to resend the verification email.',
+          error: true,
+        })
+        return
+      }
+      setInvitationResendMessage({
+        memberId: selectedDeskMember.id,
+        text: `Verification email resent to ${result.email}. Check the inbox and spam folder.`,
+        error: false,
+      })
+    } catch (resendError) {
+      setInvitationResendMessage({
+        memberId: selectedDeskMember.id,
+        text: resendError instanceof Error ? resendError.message : 'Unable to resend the verification email.',
+        error: true,
+      })
+    } finally {
+      setResendingInvitationId(null)
+    }
   }
   const uploadDeskMemberPhoto = async (file: File) => {
     if (!selectedDeskMember) return
@@ -1926,13 +1959,15 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       >
         {!(librarianWorkspaceOnly && !isAdmin && selectedDeskMember) ? <>
         <section id="desk-member-verification" className={`${panel} space-y-4 scroll-mt-6 ${librarianWorkspaceOnly && !isAdmin ? 'librarian-member-desk-content' : ''}`} aria-label="Find a member">
-        <div className="relative max-w-none">
+        <div className="max-w-none">
           <label htmlFor="physical-student-id-search" className="text-sm font-medium">Search members</label>
+          <p id="physical-student-search-help" className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">Search by member name, email, or institutional ID. Matching accounts will appear below.</p>
           <input
             ref={deskSearchRef}
             id="physical-student-id-search"
             autoComplete="off"
             role="combobox"
+            aria-describedby="physical-student-search-help"
             aria-autocomplete="list"
             aria-expanded={!deskMemberId && deskMemberSuggestions.length > 0}
             aria-controls="desk-member-suggestions"
@@ -1964,16 +1999,21 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
               }
             }}
             placeholder="Name or institutional ID"
-            className={`${input} mt-1`}
+            className={`${input} mt-3 min-h-14 text-base`}
           />
-          {!deskMemberId && deskMemberSuggestions.length ? <ul id="desk-member-suggestions" role="listbox" className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          {!deskMemberId && deskMemberSuggestions.length ? <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+            <p className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300" aria-live="polite">
+              Matching members · showing up to {deskMemberSuggestions.length}
+            </p>
+            <ul id="desk-member-suggestions" role="listbox" className="max-h-80 overflow-y-auto p-2">
             {deskMemberSuggestions.map((member, index) => <li key={member.id}>
-              <button type="button" id={`desk-member-option-${member.id}`} role="option" aria-selected={index === deskSuggestionIndex} onMouseEnter={() => setDeskSuggestionIndex(index)} onClick={() => selectDeskMember(member)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left ${index === deskSuggestionIndex ? 'bg-sky-50 dark:bg-slate-800' : ''}`}>
+              <button type="button" id={`desk-member-option-${member.id}`} role="option" aria-selected={index === deskSuggestionIndex} onMouseEnter={() => setDeskSuggestionIndex(index)} onClick={() => selectDeskMember(member)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors ${index === deskSuggestionIndex ? 'bg-sky-50 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/70'}`}>
                 <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-200 text-xs font-semibold dark:bg-slate-700">{member.student_photo_path ? <img src={`/api/admin/students/${member.id}/photo`} alt="" className="h-full w-full object-cover" /> : (member.full_name || member.email).slice(0, 1).toUpperCase()}</span>
-                <span className="min-w-0"><strong className="block truncate text-sm">{member.full_name || member.email}</strong><span className="block truncate text-xs text-slate-500">{member.institutional_id || 'No institutional ID'} · {member.role}</span></span>
+                <span className="min-w-0 flex-1"><strong className="block truncate text-sm">{member.full_name || member.email}</strong><span className="mt-0.5 block truncate text-xs text-slate-600 dark:text-slate-300">{member.institutional_id || 'No institutional ID'} · {member.role}</span><span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">{member.email}</span></span>
               </button>
             </li>)}
-          </ul> : null}
+            </ul>
+          </div> : null}
           {!deskMemberId && deskMemberQuery && deskMemberSuggestions.length === 0 ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">No member matched. Search by a different name or ID.</p> : null}
         </div>
         {selectedDeskMember ? <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/60 sm:grid-cols-[auto_1fr]">
@@ -2124,6 +2164,17 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member account</p>
                 <h2 className="mt-1 break-words text-2xl font-bold tracking-tight text-slate-950 dark:text-white">{selectedDeskMember.full_name || selectedDeskMember.email}</h2>
                 <p className="mt-1 break-all text-sm text-slate-600 dark:text-slate-300">{selectedDeskMember.email}</p>
+                {librarianMode && (selectedDeskMember.role === 'student' || selectedDeskMember.role === 'faculty') ? <div className="mt-3">
+                  <button
+                    type="button"
+                    disabled={resendingInvitationId !== null}
+                    onClick={() => void resendDeskMemberInvitation()}
+                    className="rounded-xl border border-sky-300 px-3 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:text-sky-200 dark:hover:bg-sky-950/30"
+                  >
+                    {resendingInvitationId === selectedDeskMember.id ? 'Resending email…' : 'Resend verification email'}
+                  </button>
+                  {invitationResendMessage?.memberId === selectedDeskMember.id ? <p role={invitationResendMessage.error ? 'alert' : 'status'} className={`mt-2 text-sm ${invitationResendMessage.error ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{invitationResendMessage.text}</p> : null}
+                </div> : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="rounded-lg border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200">ID · {selectedDeskMember.institutional_id || 'Not recorded'}</span>
                   {selectedDeskMember.username ? <span className="rounded-lg border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200">@{selectedDeskMember.username}</span> : null}

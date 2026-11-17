@@ -309,6 +309,8 @@ export default function AdminPage() {
   const { status: usernameAvailability, errorMessage: usernameAvailabilityError, retry: retryUsernameCheck } = useUsernameAvailability(newStudent.username)
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
+  const [resendingInvitationId, setResendingInvitationId] = useState<string | null>(null)
+  const [invitationResendMessage, setInvitationResendMessage] = useState<{ memberId: string; text: string; error: boolean } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditActors, setAuditActors] = useState<AuditActor[]>([])
   const [auditActorError, setAuditActorError] = useState<string | null>(null)
@@ -1400,6 +1402,36 @@ export default function AdminPage() {
     return true
   }
 
+  const resendMemberInvitation = async (member: Profile) => {
+    setResendingInvitationId(member.id)
+    setInvitationResendMessage(null)
+    try {
+      const response = await fetch(`/api/admin/students/${member.id}/resend-invitation`, { method: 'POST' })
+      const result = await response.json().catch(() => null)
+      if (!response.ok) {
+        setInvitationResendMessage({
+          memberId: member.id,
+          text: result?.error || 'Unable to resend the verification email.',
+          error: true,
+        })
+        return
+      }
+      setInvitationResendMessage({
+        memberId: member.id,
+        text: `Verification email resent to ${result.email}. Check the inbox and spam folder.`,
+        error: false,
+      })
+    } catch (resendError) {
+      setInvitationResendMessage({
+        memberId: member.id,
+        text: resendError instanceof Error ? resendError.message : 'Unable to resend the verification email.',
+        error: true,
+      })
+    } finally {
+      setResendingInvitationId(null)
+    }
+  }
+
   const handleAddBook = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!newBook.title.trim() || !newBook.author.trim() || !newBook.category.trim() || !newBook.isbn.trim()) {
@@ -2290,7 +2322,7 @@ export default function AdminPage() {
                 <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="initial-password-title">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Account created</p>
                   <h3 id="initial-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the initial password</h3>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The activation link was emailed to <strong>{createdMemberCredentials.email}</strong>. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Supabase accepted the invitation request for <strong>{createdMemberCredentials.email}</strong>. Email delivery depends on the project’s Auth email settings. If it does not arrive, check spam and the Supabase Auth logs/SMTP configuration. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The member confirms the invitation by opening that email link, then chooses a new password on the page that opens. They can sign in with their username and that new password.</p>
                   <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.initialPassword}</code>
                   <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the activation link. The member must change it before accessing the library. This password will not be shown again.</p>
@@ -2337,6 +2369,17 @@ export default function AdminPage() {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-300">Member profile</p>
                 <h2 id="member-details-title" className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{memberDisplayName(selectedMember, 'Member')}</h2>
                 <p className="mt-1 break-all text-sm text-slate-500 dark:text-slate-400">{selectedMember.email}</p>
+                {profile?.role === 'admin' && selectedMember.email ? <div className="mt-3">
+                  <button
+                    type="button"
+                    disabled={resendingInvitationId !== null}
+                    onClick={() => void resendMemberInvitation(selectedMember)}
+                    className="rounded-xl border border-sky-300 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:text-sky-200 dark:hover:bg-sky-950/30"
+                  >
+                    {resendingInvitationId === selectedMember.id ? 'Resending email…' : 'Resend verification email'}
+                  </button>
+                  {invitationResendMessage?.memberId === selectedMember.id ? <p role={invitationResendMessage.error ? 'alert' : 'status'} className={`mt-2 text-sm ${invitationResendMessage.error ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{invitationResendMessage.text}</p> : null}
+                </div> : null}
                 <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${memberAccountHistoryLoading || !memberFineStatusAvailable ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' : memberAccountHistory?.fines.some((fine) => fine.status === 'unpaid') ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'}`}>
                   {memberAccountHistoryLoading ? 'Fine status loading' : !memberFineStatusAvailable ? 'Fine status unavailable' : memberAccountHistory?.fines.some((fine) => fine.status === 'unpaid') ? `Fined · ${memberAccountHistory.fines.filter((fine) => fine.status === 'unpaid').length} unpaid` : 'Clear · no unpaid fines'}
                 </span>
