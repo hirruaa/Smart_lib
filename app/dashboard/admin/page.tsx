@@ -13,6 +13,7 @@ import ActionModal from '@/components/ActionModal'
 import ResultModal from '@/components/ResultModal'
 import { AdminDashboardSkeleton } from '@/components/skeletons'
 import { useDebounce } from '@/utils/useDebounce'
+import { useUsernameAvailability } from '@/utils/useUsernameAvailability'
 import { DIGITAL_ACCESS_DURATION_OPTIONS, getDigitalAccessCost, normalizeAccessMode, type CanonicalAccessMode, type DigitalAccessCosts } from '@/utils/libraryContracts'
 import PhysicalCirculationAdminPage from '@/components/PhysicalCirculationAdminPage'
 import StaffCashPointTopUpModal from '@/components/StaffCashPointTopUpModal'
@@ -306,6 +307,7 @@ export default function AdminPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
+  const usernameAvailability = useUsernameAvailability(newStudent.username)
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
@@ -2242,7 +2244,7 @@ export default function AdminPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member accounts</p>
                       <h3 id="create-member-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3>
-                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details and set an initial password. We’ll email an activation link; share the password directly.</p>
+                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details and set a temporary password. We’ll email an activation link; the member opens it to confirm the invitation and choose a private password.</p>
                     </div>
                     <button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="shrink-0 rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
                   </div>
@@ -2254,6 +2256,9 @@ export default function AdminPage() {
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Username
                         <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => current && /username/i.test(current) ? null : current); setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() }) }} aria-describedby="member-username-help" className={memberInviteInput} />
                         <span id="member-username-help" className="mt-1 block text-xs font-normal text-slate-500">3–30 characters; letters, numbers, dots, underscores, or hyphens.</span>
+                        <span aria-live="polite" className={`mt-1 block text-xs font-medium ${usernameAvailability === 'available' ? 'text-emerald-700 dark:text-emerald-300' : usernameAvailability === 'taken' || usernameAvailability === 'error' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>
+                          {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? 'Could not check right now; availability will be verified when you send the invite.' : null}
+                        </span>
                         {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs font-normal text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setNewStudent({ ...newStudent, username: suggestion }); setUsernameSuggestions([]); setError(null) }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Email address
@@ -2289,7 +2294,7 @@ export default function AdminPage() {
                     </div>
                     <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
                       <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change this password before entering the library. Share it separately from the email link.</p>
-                      <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
+                      <button type="submit" disabled={saving || usernameAvailability === 'checking' || usernameAvailability === 'taken'} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
                     </div>
                   </form>
                 </section>
@@ -2299,6 +2304,7 @@ export default function AdminPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Account created</p>
                   <h3 id="initial-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the initial password</h3>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The activation link was emailed to <strong>{createdMemberCredentials.email}</strong>. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The member confirms the invitation by opening that email link, then chooses a new password on the page that opens. They can sign in with their username and that new password.</p>
                   <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.initialPassword}</code>
                   <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the activation link. The member must change it before accessing the library. This password will not be shown again.</p>
                   <div className="mt-6 flex justify-end"><button type="button" onClick={() => setCreatedMemberCredentials(null)} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Done</button></div>

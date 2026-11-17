@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import BaseModal from '@/components/BaseModal'
 import PasswordInput from '@/components/PasswordInput'
 import { getSupabase } from '@/utils/supabase/client'
+import { useUsernameAvailability } from '@/utils/useUsernameAvailability'
 
 type Choice = { id: number; name: string }
 type EnrollmentRole = 'student' | 'faculty'
@@ -38,6 +39,7 @@ export default function StaffMemberEnrollmentModal({
   const [error, setError] = useState('')
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [invitationSent, setInvitationSent] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
+  const usernameAvailability = useUsernameAvailability(form.username)
 
   useEffect(() => {
     if (!open) return
@@ -111,8 +113,8 @@ export default function StaffMemberEnrollmentModal({
     title={invitationSent ? 'Invitation sent' : 'Create member account'}
     eyebrow="Staff-assisted enrollment"
     description={invitationSent
-      ? 'Give the initial password directly to the member. They must change it before using the library.'
-      : 'Verify the member’s school ID in person and set an initial password for the member.'}
+      ? 'The member opens the activation link to confirm the invitation and choose a private password.'
+      : 'Verify the member’s school ID in person and set a temporary password for the member.'}
     onClose={close}
     size="lg"
     layer="foreground"
@@ -121,10 +123,11 @@ export default function StaffMemberEnrollmentModal({
       <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
         Invitation sent to <strong>{invitationSent.email}</strong>. Username: <strong>{invitationSent.username}</strong>.
       </p>
+      <p className="text-sm text-slate-600 dark:text-slate-300">The member confirms the invitation by opening the email link, then chooses a new password on the page that opens. They can sign in with their username and that new password.</p>
       <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
         <p className="font-semibold">Initial password</p>
         <code className="mt-2 block select-all break-all rounded-lg bg-white p-3 font-mono text-base dark:bg-slate-950">{invitationSent.initialPassword}</code>
-        <p className="mt-2 text-xs">Share this directly with the member; do not send it in the same email as the invitation. They must change it before accessing the library.</p>
+        <p className="mt-2 text-xs">Keep this separate from the invitation email. The member should use the email link to confirm the invitation and choose a private password before signing in.</p>
       </div>
       <button type="button" onClick={close} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Done</button>
     </div> : <form onSubmit={(event) => void submit(event)} className="space-y-4">
@@ -144,6 +147,9 @@ export default function StaffMemberEnrollmentModal({
         </label>
         <label className="text-sm font-medium">Username
           <input required minLength={3} maxLength={30} pattern="[a-z0-9][a-z0-9._-]{2,29}" autoComplete="off" value={form.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => /username/i.test(current) ? '' : current); setForm((current) => ({ ...current, username: event.target.value.toLowerCase() })) }} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
+          <span aria-live="polite" className={`mt-1 block text-xs font-medium ${usernameAvailability === 'available' ? 'text-emerald-700 dark:text-emerald-300' : usernameAvailability === 'taken' || usernameAvailability === 'error' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>
+            {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? 'Could not check right now; availability will be verified when you send the invite.' : null}
+          </span>
           {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setForm((current) => ({ ...current, username: suggestion })); setUsernameSuggestions([]); setError('') }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
         </label>
         <label className="text-sm font-medium">Initial password
@@ -180,7 +186,7 @@ export default function StaffMemberEnrollmentModal({
       </label>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={saving} onClick={close} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
-        <button type="submit" disabled={saving || loadingChoices} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending invitation…' : 'Verify & send invitation'}</button>
+        <button type="submit" disabled={saving || loadingChoices || usernameAvailability === 'checking' || usernameAvailability === 'taken'} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending invitation…' : 'Verify & send invitation'}</button>
       </div>
     </form>}
   </BaseModal>

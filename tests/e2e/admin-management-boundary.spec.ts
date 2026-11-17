@@ -136,6 +136,37 @@ test('admin navigation sections and primary management dialogs render and close'
   }
 })
 
+test('admin invitation checks username availability inline', async ({ page }) => {
+  const admin = await createTestUser('admin')
+  const usernameSuffix = randomUUID().replace(/-/g, '').slice(0, 10)
+  const takenUsername = `taken-${usernameSuffix}`
+  const availableUsername = `free-${usernameSuffix}`
+  try {
+    const { error } = await adminClient
+      .from('profiles')
+      .update({ username: takenUsername })
+      .eq('id', admin.id)
+    expect(error).toBeNull()
+
+    await signInInBrowser(page, admin)
+    await page.getByRole('button', { name: 'Member accounts' }).click()
+    await page.getByRole('button', { name: 'Invite member' }).click()
+    const inviteDialog = page.getByRole('dialog', { name: 'Invite member' })
+    const usernameInput = inviteDialog.getByRole('textbox', { name: 'Username' })
+
+    await usernameInput.fill(takenUsername)
+    await expect(inviteDialog.getByText('✕ Username already taken')).toBeVisible({ timeout: 10_000 })
+    await expect(inviteDialog.getByRole('button', { name: 'Send invite' })).toBeDisabled()
+
+    await usernameInput.fill(availableUsername)
+    await expect(inviteDialog.getByText('✓ Username available')).toBeVisible({ timeout: 10_000 })
+    await expect(inviteDialog.getByRole('button', { name: 'Send invite' })).toBeEnabled()
+  } finally {
+    await clearBrowserSession(page)
+    await removeTestUser(admin)
+  }
+})
+
 test('admin sees saved digital access mode and point costs without closing book details', async ({ page }) => {
   const admin = await createTestUser('admin')
   const title = `E2E Access Mode ${randomUUID()}`
