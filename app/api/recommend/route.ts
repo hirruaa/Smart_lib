@@ -41,6 +41,10 @@ function needsLibraryPolicy(query: string, intent: AssistantIntent) {
     || /\b(fine|fines|late fee|overdue|lost|damage|damaged|renew|renewal|clearance|restriction|suspend|borrow(?:ing)? rule|policy|eligible|eligibility)\b/i.test(query)
 }
 
+function needsLibraryAssistantFaq(query: string) {
+  return /\b(library|physical|borrow(?:ing)?|checkout|check out|renew(?:al)?|return|loan period|loan term|fine|fees?|cost|price|cash|waitlist|waiting list|librarian|hours?|open|location|floor)\b/i.test(query)
+}
+
 function needsPhysicalInventory(query: string) {
   return /\b(where(?: can i| do i| is| are)?|location|shelf|available|availability|in stock|physical copy|copies)\b/i.test(query)
 }
@@ -73,6 +77,21 @@ function getImmediatePolicyAnswer(
     if (names.length) return `The current librarian${names.length === 1 ? ' is' : 's are'} ${names.join(', ')}.`
     if (librarianLookupFailed) return `I can't verify the current librarian roster right now. Please ask at ${frontDeskFallback}.`
     return `I don't have a current librarian name on file. Please ask at ${frontDeskFallback}.`
+  }
+
+  const asksHours = /\b(hours?|opening|closing|what time|open(?:s|ing)?)\b/i.test(q)
+    && /\b(library|hours?|opening|closing|what time|open(?:s|ing)?)\b/i.test(q)
+  const asksLibraryLocation = /\b(library|registrar|accounting)\b/i.test(q)
+    && /\b(where|location|located|floor|near)\b/i.test(q)
+  if (asksHours || asksLibraryLocation) {
+    const answers = []
+    if (asksHours) {
+      answers.push(`The library hours on file are 8:00 AM to 5:00 PM. Weekday, holiday, and special-closure hours are not specified; please confirm those at ${frontDeskFallback}.`)
+    }
+    if (asksLibraryLocation) {
+      answers.push('The physical library is on the second floor near the Registrar and Accounting offices.')
+    }
+    return answers.join(' ')
   }
 
   if (/\b(?:digital|ebook|e-book)\b/i.test(q) && /\b(overdue|late|fine|fines)\b/i.test(q)) {
@@ -161,11 +180,11 @@ export async function POST(req: Request) {
     let frontDeskFallback = 'the Mary the Queen College Library circulation desk'
     const needsRoster = needsLibrarianRoster(query)
     const needsPolicy = needsLibraryPolicy(query, intent)
-    const needsAssistantSettings = needsRoster || needsPolicy
+    const needsAssistantSettings = needsRoster || needsPolicy || needsLibraryAssistantFaq(query)
     const [assistantSettingsResult, policyResult, librarianResult] = await Promise.all([
       needsAssistantSettings
         ? supabase.from('library_assistant_settings')
-          .select('librarian_name, front_desk_fallback').eq('id', true).maybeSingle()
+          .select('librarian_name, policy_text, front_desk_fallback').eq('id', true).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       needsPolicy
         ? supabase.from('library_policy_settings')
@@ -179,6 +198,7 @@ export async function POST(req: Request) {
     if (policyResult.error) console.error('Live library policy could not be loaded:', policyResult.error)
     if (librarianResult.error) console.error('Current librarian roster could not be loaded:', librarianResult.error)
     if (assistantSettingsResult.data?.front_desk_fallback?.trim()) frontDeskFallback = assistantSettingsResult.data.front_desk_fallback.trim()
+    const assistantPolicyText = assistantSettingsResult.data?.policy_text?.trim() || null
     const currentPolicy = policyResult.data as LibraryPolicy | null
     const currentLibrarians = ((librarianResult.data ?? []) as Array<{ full_name: string | null }>)
       .map((librarian) => librarian.full_name?.trim())
@@ -305,6 +325,7 @@ export async function POST(req: Request) {
       currentUserFines: intent === 'loans' ? (finesResult.data ?? []) : [],
       catalog: catalogContext,
       physicalInventory: shouldSearchInventory ? inventoryResult.data ?? [] : [],
+      libraryAssistantPolicy: assistantPolicyText,
       currentLibrarians: currentLibrarians.length ? currentLibrarians : configuredLibrarian ? [configuredLibrarian] : [],
       ...(needsPolicy ? { circulationGuidance: {
         overdueOrLostPhysicalItem: 'Blocks new physical checkout requests and availability-queue entries; new digital checkouts are also restricted while a physical item is overdue or lost.',
@@ -340,18 +361,19 @@ export async function POST(req: Request) {
           'You are the Smart Lib AI Assistant for Mary the Queen College of Quezon City.',
           'Act as first-line library customer support, not only a catalog search tool. Be concise and practical: answer directly, give ordered next steps, and explain likely consequences. Ask only a necessary follow-up.',
           'Never claim to submit or complete a checkout, return, renewal, payment, or reservation. Physical checkout, return, renewal, and payment are completed by library staff; explain the next step and direct the member to the circulation desk.',
-          'Use supplied live data as the only authority for library facts. Never invent fees, dates, eligibility, clearance effects, locations, hours, or contacts. If information is missing, say so and refer the user to the library desk.',
+          'Use supplied live data and libraryAssistantPolicy as the only authority for library facts. Never invent fees, dates, eligibility, clearance effects, locations, hours, or contacts. If information is missing, say so and refer the user to the library desk.',
           'Use libraryPolicy for current physical fine and lost-item rules; for an existing physical loan use its policySnapshot. Lost/damage charges are staff-assessed; never make up a replacement cost. Digital access has no overdue fines.',
           'Explain charges distinctly: digital access is free or uses the displayed points for its chosen duration; physical checkout fees are paid in cash to staff when checkout is confirmed, and a request does not reserve a copy; overdue fines follow the posted policy for general-circulation physical books only, and digital access has none.',
           'Use only currentUserLoans/currentUserFines for the signed-in member; report unpaid fines as outstanding and never infer their account status from chat history.',
           'Recommend only supplied catalog titles. Use physicalInventory results for location and availability. currentLibrarians is a roster, not an on-duty schedule.',
+          'If libraryAssistantPolicy is unavailable, do not infer general FAQ facts; say the information is not available and refer the user to the library desk.',
           `For in-person help or physical payments, direct the member to ${frontDeskFallback}.`,
-          currentPolicy ? `Current policy: ${JSON.stringify({
+          currentPolicy ? `Current overdue-fine policy: ${JSON.stringify({
             fineGraceDays: currentPolicy.fine_grace_days,
             lateFeePerChargeableDay: currentPolicy.late_fee_per_day,
             lateFeeCapPerItem: currentPolicy.late_fee_cap,
             lostAfterDays: currentPolicy.lost_after_days,
-          })}` : 'Live structured library policy is unavailable; do not state policy-specific facts.',
+          })}` : 'Live overdue-fine policy is unavailable; do not state current fine amounts, lost-item timing, or personalized eligibility. You may still answer using libraryAssistantPolicy.',
         ].join('\n'),
       )
     } catch (error: unknown) {

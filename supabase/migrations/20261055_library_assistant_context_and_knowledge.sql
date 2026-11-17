@@ -87,8 +87,8 @@ as $$
   order by k.embedding <=> p_embedding
   limit least(greatest(coalesce(p_match_count, 5), 1), 8);
 $$;
-revoke all on function public.match_library_assistant_knowledge(extensions.vector, integer) from public, anon;
-grant execute on function public.match_library_assistant_knowledge(extensions.vector, integer) to authenticated;
+revoke all on function public.match_library_assistant_knowledge(extensions.vector, integer) from public, anon, authenticated;
+grant execute on function public.match_library_assistant_knowledge(extensions.vector, integer) to service_role;
 
 create or replace function public.admin_replace_library_assistant_knowledge(
   p_document_title text, p_chunks jsonb

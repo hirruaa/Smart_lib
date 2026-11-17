@@ -41,7 +41,7 @@ Typical app behavior:
 | `public.faculty_ranks` | Legacy schema table; not exposed or used by the current account flow. |
 | `public.academic_courses` | Administrator-managed courses. Students select a course from this catalog when an administrator creates or edits an account. |
 
-Authenticated users can read active choices; only administrators can manage catalogs. Faculty course assignments have been removed. Rank data is retained only for legacy profile compatibility.
+Authenticated users can read active choices; only administrators can manage catalogs. The faculty department/program dropdown includes BSBA, BSA, BSTM, BSHM, and BSCRIM alongside the active academic programs. The catalog migration drops legacy fixed-choice department constraints before seeding these values. Faculty course assignments have been removed. Rank data is retained only for legacy profile compatibility.
 
 ## 2. Library catalog and lending flow
 
@@ -173,7 +173,7 @@ The singleton row contains editable physical fine grace days, daily fine, per-it
 
 Each new `physical_book_requests` row snapshots `policy_grace_days`, `policy_daily_fine`, `policy_fine_cap`, and `policy_lost_days`. Fine calculation and lost classification use those saved values, so later policy edits do not rewrite terms for existing loans. Existing rows retain the historic defaults when these columns are first introduced.
 
-The assistant reads these live settings rather than relying on the older free-text policy defaults. Its authenticated-only `assistant_current_librarians()` function exposes librarian display names from current profile roles without exposing their email addresses or other profile data. Personal loan and fine lookups remain scoped to the signed-in member.
+The assistant uses `library_assistant_settings.policy_text` for approved FAQ facts and the live `library_policy_settings` row for current overdue-fine rules. The FAQ states that the physical library is on the second floor near the Registrar and Accounting offices and is open 8:00 AM to 5:00 PM; it does not assert weekdays or holiday hours. It also explains the request/checkout distinction, title-specific cash fees, ID checks, renewals, waitlists, and the difference between physical and digital access. The authenticated-only `assistant_current_librarians()` function exposes librarian display names from current profile roles without exposing their email addresses or other profile data. The vector knowledge table is not directly readable, and `match_library_assistant_knowledge()` is executable only by the server-side `service_role`; no user-facing route currently calls it. Personal loan and fine lookups remain scoped to the signed-in member.
 
 ## 3. Student features
 

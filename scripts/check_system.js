@@ -20,6 +20,7 @@ const requiredSchemaObjects = [
   'academic_departments',
   'provision_profile',
   'assistant_current_librarians',
+  'library_assistant_settings',
   'api_rate_limit_buckets',
   'consume_api_rate_limit',
 ]
@@ -34,14 +35,69 @@ const departmentMigration = fs.readFileSync(departmentMigrationPath, 'utf8')
 for (const token of ['from public.academic_courses', 'where is_active', 'on conflict (lower(name))']) {
   if (!departmentMigration.includes(token)) throw new Error(`Program-based departments migration is missing: ${token}`)
 }
+const additionalFacultyProgramsMigrationPath = path.join(root, 'supabase/migrations/20261117120000_seed_additional_faculty_programs.sql')
+if (!fs.existsSync(additionalFacultyProgramsMigrationPath)) throw new Error('Missing additional faculty program seed migration')
+const additionalFacultyProgramsMigration = fs.readFileSync(additionalFacultyProgramsMigrationPath, 'utf8')
+for (const token of ['drop constraint if exists academic_departments_school_choices', 'drop constraint if exists profiles_school_department_choices']) {
+  if (!additionalFacultyProgramsMigration.includes(token)) {
+    throw new Error(`Additional faculty programs migration must remove obsolete fixed-choice constraints: ${token}`)
+  }
+}
+for (const program of ['BSBA', 'BSA', 'BSTM', 'BSHM', 'BSCRIM']) {
+  if (!additionalFacultyProgramsMigration.includes(`('${program}', true)`)) {
+    throw new Error(`Additional faculty program is missing: ${program}`)
+  }
+}
 const assistantDirectoryMigrationPath = path.join(root, 'supabase/migrations/20261114100000_library_assistant_current_librarians.sql')
 if (!fs.existsSync(assistantDirectoryMigrationPath)) throw new Error('Missing current librarian directory migration')
 const assistantDirectoryMigration = fs.readFileSync(assistantDirectoryMigrationPath, 'utf8')
 for (const token of ['assistant_current_librarians()', "p.role = 'librarian'", 'from public, anon', 'to authenticated']) {
   if (!assistantDirectoryMigration.includes(token)) throw new Error(`Current librarian directory migration is missing: ${token}`)
 }
+const assistantContextMigrationPath = path.join(root, 'supabase/migrations/20261055_library_assistant_context_and_knowledge.sql')
+const assistantContextMigration = fs.readFileSync(assistantContextMigrationPath, 'utf8')
+for (const token of [
+  'revoke all on function public.match_library_assistant_knowledge(extensions.vector, integer) from public, anon, authenticated',
+  'grant execute on function public.match_library_assistant_knowledge(extensions.vector, integer) to service_role',
+]) {
+  if (!assistantContextMigration.includes(token)) throw new Error(`Assistant knowledge RPC is not server-only: ${token}`)
+}
+if (/grant execute on function public\.match_library_assistant_knowledge\(extensions\.vector, integer\) to authenticated/i.test(assistantContextMigration)) {
+  throw new Error('Authenticated users must not execute the assistant knowledge RPC')
+}
+const assistantFaqMigrationPath = path.join(root, 'supabase/migrations/20261117100000_library_assistant_faq_policy.sql')
+if (!fs.existsSync(assistantFaqMigrationPath)) throw new Error('Missing library assistant FAQ policy migration')
+const assistantFaqMigration = fs.readFileSync(assistantFaqMigrationPath, 'utf8')
+for (const token of [
+  'Physical library location and service hours:',
+  'second floor near the Registrar and Accounting offices',
+  '8:00 AM to 5:00 PM',
+  'A request does not reserve a copy',
+  'cash-only',
+]) {
+  if (!assistantFaqMigration.includes(token)) throw new Error(`Library assistant FAQ policy is missing: ${token}`)
+}
+const assistantKnowledgeMigrationPath = path.join(root, 'supabase/migrations/20261117110000_restrict_library_assistant_knowledge_search.sql')
+if (!fs.existsSync(assistantKnowledgeMigrationPath)) throw new Error('Missing assistant knowledge RPC access restriction migration')
+const assistantKnowledgeMigration = fs.readFileSync(assistantKnowledgeMigrationPath, 'utf8')
+for (const token of [
+  'revoke all on function public.match_library_assistant_knowledge(extensions.vector, integer)',
+  'from public, anon, authenticated',
+  'grant execute on function public.match_library_assistant_knowledge(extensions.vector, integer)',
+  'to service_role',
+]) {
+  if (!assistantKnowledgeMigration.includes(token)) throw new Error(`Assistant knowledge RPC access restriction is missing: ${token}`)
+}
 const assistantRoute = fs.readFileSync(path.join(root, 'app/api/recommend/route.ts'), 'utf8')
-for (const token of ["from('library_policy_settings')", "rpc('assistant_current_librarians')", "from('fines')", 'getImmediatePolicyAnswer']) {
+for (const token of [
+  "from('library_policy_settings')",
+  "rpc('assistant_current_librarians')",
+  "from('fines')",
+  "select('librarian_name, policy_text, front_desk_fallback')",
+  'needsLibraryAssistantFaq(query)',
+  'libraryAssistantPolicy: assistantPolicyText',
+  'getImmediatePolicyAnswer',
+]) {
   if (!assistantRoute.includes(token)) throw new Error(`Library assistant live guidance is missing: ${token}`)
 }
 const profileModal = fs.readFileSync(path.join(root, 'components/ProfileModal.tsx'), 'utf8')
@@ -94,6 +150,8 @@ for (const token of ['api_rate_limit_buckets', 'consume_api_rate_limit', 'to ser
 
 const requiredFiles = [
   'app/assistant/page.tsx',
+  'app/auth/callback/page.tsx',
+  'app/auth/confirm/page.tsx',
   'app/api/assistant/sessions/route.ts',
   'components/BookAssistant.tsx',
   'app/dashboard/admin/physical/page.tsx',
@@ -109,6 +167,18 @@ const requiredFiles = [
 for (const file of requiredFiles) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Missing application file: ${file}`)
 }
+const authConfirmation = fs.readFileSync(path.join(root, 'app/auth/confirm/page.tsx'), 'utf8')
+for (const token of ["verifyOtp({", "type: 'invite'", 'window.location.replace(destination)']) {
+  if (!authConfirmation.includes(token)) throw new Error(`Invitation confirmation handling is missing: ${token}`)
+}
+const supabaseBrowserClient = fs.readFileSync(path.join(root, 'utils/supabase/client.ts'), 'utf8')
+if (!supabaseBrowserClient.includes('detectSessionInUrl: true')) throw new Error('Supabase browser client must process invitation URL tokens')
+const authCallback = fs.readFileSync(path.join(root, 'app/auth/callback/page.tsx'), 'utf8')
+for (const token of ["query.get('token_hash')", "verifyOtp({", "type: 'invite'", 'window.location.hash', 'exchangeCodeForSession(code)']) {
+  if (!authCallback.includes(token)) throw new Error(`Auth callback verification handling is missing: ${token}`)
+}
+const invitationRoute = fs.readFileSync(path.join(root, 'app/api/admin/students/route.ts'), 'utf8')
+if (!invitationRoute.includes("new URL('/auth/callback'")) throw new Error('Member invitations must use the browser auth callback')
 
 const studyRoom = fs.readFileSync(path.join(root, 'components/StudyRoom.tsx'), 'utf8')
 for (const token of ['My digital library', 'Study notebook', 'studyItemsTruncated', 'onDraftChange', 'window.history.replaceState', 'window.confirm']) {
