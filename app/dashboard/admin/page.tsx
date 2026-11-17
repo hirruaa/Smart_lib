@@ -2262,7 +2262,7 @@ export default function AdminPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Member accounts</p>
                       <h3 id="create-member-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Invite member</h3>
-                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details and set a temporary password. We’ll email an activation link; the member opens it to confirm the invitation and choose a private password.</p>
+                      <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500 dark:text-slate-400">Enter the member’s details and set a temporary password. We’ll send an email confirmation link. The member can sign in before or after confirming their email.</p>
                     </div>
                     <button type="button" disabled={saving} onClick={() => setMemberToolModal(null)} className="shrink-0 rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Close</button>
                   </div>
@@ -2312,8 +2312,8 @@ export default function AdminPage() {
                       </label> : null}
                     </div>
                     <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
-                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change this password before entering the library. Share it separately from the email link.</p>
-                      <button type="submit" disabled={saving || usernameAvailability !== 'available'} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
+                      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member may sign in with this temporary password before or after confirming their email. Share it separately from the confirmation email.</p>
+                      <button type="submit" disabled={saving || usernameAvailability !== 'available'} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending confirmation...' : 'Create account & send confirmation'}</button>
                     </div>
                   </form>
                 </section>
@@ -2322,10 +2322,10 @@ export default function AdminPage() {
                 <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 sm:p-8" role="dialog" aria-modal="true" aria-labelledby="initial-password-title">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-700 dark:text-sky-300">Account created</p>
                   <h3 id="initial-password-title" className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Share the initial password</h3>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Supabase accepted the invitation request for <strong>{createdMemberCredentials.email}</strong>. Email delivery depends on the project’s Auth email settings. If it does not arrive, check spam and the Supabase Auth logs/SMTP configuration. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The member confirms the invitation by opening that email link, then chooses a new password on the page that opens. They can sign in with their username and that new password.</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">A confirmation email was sent to <strong>{createdMemberCredentials.email}</strong>. The member can sign in before or after confirming. Email delivery depends on the project’s Auth email settings; if it does not arrive, check spam and the Supabase Auth logs/SMTP configuration. Username: <strong>{createdMemberCredentials.username}</strong>.</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">The member can sign in with the temporary password now and will be asked to choose a private password. Opening the confirmation link also lets them choose that password and verifies the email address.</p>
                   <code className="mt-4 block select-all break-all rounded-xl border border-amber-300 bg-amber-50 p-4 font-mono text-lg text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">{createdMemberCredentials.initialPassword}</code>
-                  <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the activation link. The member must change it before accessing the library. This password will not be shown again.</p>
+                  <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">Share this password directly, not in the same email as the confirmation link. The member must change it before accessing the library. This password will not be shown again.</p>
                   <div className="mt-6 flex justify-end"><button type="button" onClick={() => setCreatedMemberCredentials(null)} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white dark:bg-sky-500 dark:text-slate-950">Done</button></div>
                 </section>
               </div> : null}

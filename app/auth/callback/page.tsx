@@ -35,7 +35,7 @@ export default function AuthCallbackPage() {
 
         if (tokenHash) {
           if (tokenType !== 'invite' && tokenType !== 'signup') {
-            throw new Error('This verification link is not a valid invitation. Please ask the library staff to send a new one.')
+            throw new Error('This is not a valid email confirmation link. Please ask the library staff to send a new one.')
           }
           const { error: verificationError } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
@@ -53,13 +53,13 @@ export default function AuthCallbackPage() {
           const { data: { session }, error: sessionError } = await supabase.auth.getSession()
           if (sessionError) throw sessionError
           if (!session) {
-            throw new Error('The verification link is missing or has expired. Please ask the library staff to send a new invitation.')
+            throw new Error('The confirmation link is missing or has expired. Please ask the library staff to send a new email confirmation.')
           }
         }
 
         const { data, error: userError } = await supabase.auth.getUser()
         if (userError) throw userError
-        if (!data.user) throw new Error('We could not verify this link. Please ask the library staff to send a new invitation.')
+        if (!data.user) throw new Error('We could not verify this link. Please ask the library staff to send a new email confirmation.')
 
         if (active) {
           setMessage('Verification complete. Opening your account...')
@@ -70,7 +70,7 @@ export default function AuthCallbackPage() {
         setError(true)
         setMessage(verificationError instanceof Error
           ? verificationError.message
-          : 'We could not verify this link. Please ask the library staff to send a new invitation.')
+          : 'We could not verify this link. Please ask the library staff to send a new email confirmation.')
       }
     }
 

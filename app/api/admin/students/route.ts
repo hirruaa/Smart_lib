@@ -132,11 +132,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Choose a valid year level.' }, { status: 400 })
     }
   }
-  const inviteCallback = new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL || request.url)
-  inviteCallback.searchParams.set('next', '/reset-password?required=1')
-  const { data: created, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
-    redirectTo: inviteCallback.toString(),
-    data: {
+  const confirmationCallback = new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL || request.url)
+  confirmationCallback.searchParams.set('next', '/reset-password?required=1')
+  const { data: created, error } = await adminClient.auth.admin.createUser({
+    email,
+    password: initialPassword,
+    email_confirm: false,
+    app_metadata: { must_change_password: true },
+    user_metadata: {
       full_name: fullName,
       username,
       member_type: role,
@@ -148,19 +151,9 @@ export async function POST(request: Request) {
     },
   })
 
-  if (error) return apiError('Unable to send the account invitation. The email may already be registered or Auth email delivery may be unavailable.', 409, error)
+  if (error) return apiError('Unable to create the member account. The email may already be registered.', 409, error)
 
-  if (!created.user) return NextResponse.json({ error: 'The invitation was created without a member account. Contact an administrator.' }, { status: 500 })
-
-  const { error: passwordSetupError } = await adminClient.auth.admin.updateUserById(created.user.id, {
-    password: initialPassword,
-    app_metadata: { ...created.user.app_metadata, must_change_password: true },
-  })
-  if (passwordSetupError) {
-    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-    if (rollbackError) console.error('Unable to roll back member invitation after initial password setup failed.', rollbackError)
-    return apiError('Unable to set up the temporary account password.', 500, passwordSetupError)
-  }
+  if (!created.user) return NextResponse.json({ error: 'The member account was created without a user record. Contact an administrator.' }, { status: 500 })
 
   {
     const { error: profileUpdateError } = await adminClient.from('profiles').update({
@@ -175,17 +168,28 @@ export async function POST(request: Request) {
     }).eq('id', created.user.id)
     if (profileUpdateError) {
       const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-      if (rollbackError) console.error('Unable to roll back member invitation after profile setup failed.', rollbackError)
+      if (rollbackError) console.error('Unable to roll back member account after profile setup failed.', rollbackError)
       if (profileUpdateError.code === '23505' && /username/i.test(profileUpdateError.message)) {
         return usernameConflictResponse('That username was just claimed. Try one of these available alternatives.')
       }
-      return apiError('Unable to save the invited member profile.', 500, profileUpdateError)
+      return apiError('Unable to save the new member profile.', 500, profileUpdateError)
     }
+  }
+
+  const { error: confirmationError } = await adminClient.auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: confirmationCallback.toString() },
+  })
+  if (confirmationError) {
+    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
+    if (rollbackError) console.error('Unable to roll back member account after confirmation email delivery failed.', rollbackError)
+    return apiError('Unable to send the email confirmation. Check Supabase Auth email delivery settings and try again.', 502, confirmationError)
   }
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: user.id,
-    action: 'member_invited',
+    action: 'member_confirmation_sent',
     target_type: 'profile',
     details: {
       target_user_id: created.user.id,
@@ -195,7 +199,7 @@ export async function POST(request: Request) {
     },
   })
   if (auditError) {
-    console.warn('Member invitation audit logging failed; continuing without blocking the invite.', auditError)
+    console.warn('Member confirmation audit logging failed; continuing without blocking enrollment.', auditError)
   }
 
   return NextResponse.json({ success: true, email, username, userId: created.user.id })

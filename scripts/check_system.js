@@ -193,8 +193,15 @@ for (const file of requiredFiles) {
   if (!fs.existsSync(path.join(root, file))) throw new Error(`Missing application file: ${file}`)
 }
 const authConfirmation = fs.readFileSync(path.join(root, 'app/auth/confirm/page.tsx'), 'utf8')
-for (const token of ["verifyOtp({", "type: 'invite'", 'window.location.replace(destination)']) {
-  if (!authConfirmation.includes(token)) throw new Error(`Invitation confirmation handling is missing: ${token}`)
+for (const token of ["verifyOtp({", "tokenType !== 'invite' && tokenType !== 'signup'", 'type: tokenType', 'window.location.replace(destination)']) {
+  if (!authConfirmation.includes(token)) throw new Error(`Email confirmation handling is missing: ${token}`)
+}
+const supabaseAuthConfig = fs.readFileSync(path.join(schemaDirectory, 'config.toml'), 'utf8')
+if (!/^\s*enable_signup\s*=\s*false\s*$/m.test(supabaseAuthConfig)) {
+  throw new Error('Public Supabase Auth sign-ups must remain disabled')
+}
+if (!/^\s*enable_confirmations\s*=\s*false\s*$/m.test(supabaseAuthConfig)) {
+  throw new Error('Email confirmation must remain optional for sign-in')
 }
 const supabaseBrowserClient = fs.readFileSync(path.join(root, 'utils/supabase/client.ts'), 'utf8')
 if (!supabaseBrowserClient.includes('detectSessionInUrl: true')) throw new Error('Supabase browser client must process invitation URL tokens')
@@ -204,16 +211,29 @@ for (const token of ["query.get('token_hash')", "verifyOtp({", "type: 'invite'",
 }
 const invitationRoute = fs.readFileSync(path.join(root, 'app/api/admin/students/route.ts'), 'utf8')
 if (!invitationRoute.includes("new URL('/auth/callback'")) throw new Error('Member invitations must use the browser auth callback')
+for (const token of [
+  'auth.admin.createUser({',
+  'email_confirm: false',
+  "adminClient.auth.resend({",
+  "type: 'signup'",
+  'emailRedirectTo: confirmationCallback.toString()',
+  "action: 'member_confirmation_sent'",
+]) {
+  if (!invitationRoute.includes(token)) throw new Error(`Member confirmation enrollment is missing: ${token}`)
+}
+if (invitationRoute.includes('inviteUserByEmail')) {
+  throw new Error('Staff member enrollment must send confirmation email instead of an invitation email')
+}
 const resendInvitationRoutePath = path.join(root, 'app/api/admin/students/[studentId]/resend-invitation/route.ts')
 if (!fs.existsSync(resendInvitationRoutePath)) throw new Error('Missing member invitation resend endpoint')
 const resendInvitationRoute = fs.readFileSync(resendInvitationRoutePath, 'utf8')
 for (const token of [
   "adminClient.auth.resend({",
   "type: 'signup'",
-  'emailRedirectTo: inviteCallback.toString()',
+  'emailRedirectTo: confirmationCallback.toString()',
   'email_confirmed_at',
   "name: 'admin-resend-member-invitation'",
-  "action: 'member_invitation_resent'",
+  "action: 'member_confirmation_resent'",
 ]) {
   if (!resendInvitationRoute.includes(token)) throw new Error(`Member invitation resend endpoint is missing: ${token}`)
 }

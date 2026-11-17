@@ -1762,7 +1762,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     else closeLoan(loan.id)
   }
   const onMemberInvited = async (email: string, username: string) => {
-    setMessage(`Invitation sent to ${email}. Username: ${username}.`)
+    setMessage(`Confirmation email sent to ${email}. The member can sign in before or after confirming. Username: ${username}.`)
     await load()
   }
   const handleLogout = async () => {

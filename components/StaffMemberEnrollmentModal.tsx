@@ -38,7 +38,7 @@ export default function StaffMemberEnrollmentModal({
   const [verified, setVerified] = useState(false)
   const [error, setError] = useState('')
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
-  const [invitationSent, setInvitationSent] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
+  const [confirmationSent, setConfirmationSent] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
   const { status: usernameAvailability, errorMessage: usernameAvailabilityError, retry: retryUsernameCheck } = useUsernameAvailability(form.username)
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function StaffMemberEnrollmentModal({
     setVerified(false)
     setError('')
     setUsernameSuggestions([])
-    setInvitationSent(null)
+    setConfirmationSent(null)
     onClose()
   }
 
@@ -97,12 +97,12 @@ export default function StaffMemberEnrollmentModal({
           : [])
         throw new Error(data.error || 'Unable to send the account invitation.')
       }
-      const invited = { email: String(data.email), username: String(data.username), initialPassword: form.password }
-      setInvitationSent(invited)
+      const confirmed = { email: String(data.email), username: String(data.username), initialPassword: form.password }
+      setConfirmationSent(confirmed)
       setForm((current) => ({ ...current, password: '' }))
-      onCreated(invited.email, invited.username)
+      onCreated(confirmed.email, confirmed.username)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to send the account invitation.')
+      setError(cause instanceof Error ? cause.message : 'Unable to send the confirmation email.')
     } finally {
       setSaving(false)
     }
@@ -110,24 +110,24 @@ export default function StaffMemberEnrollmentModal({
 
   return <BaseModal
     open={open}
-    title={invitationSent ? 'Invitation sent' : 'Create member account'}
+    title={confirmationSent ? 'Confirmation email sent' : 'Create member account'}
     eyebrow="Staff-assisted enrollment"
-    description={invitationSent
-      ? 'The member opens the activation link to confirm the invitation and choose a private password.'
+    description={confirmationSent
+      ? 'The member can sign in now. Opening the confirmation link verifies the email and takes them to password setup.'
       : 'Verify the member’s school ID in person and set a temporary password for the member.'}
     onClose={close}
     size="lg"
     layer="foreground"
   >
-    {invitationSent ? <div className="space-y-4">
+    {confirmationSent ? <div className="space-y-4">
       <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-        Invitation sent to <strong>{invitationSent.email}</strong>. Username: <strong>{invitationSent.username}</strong>.
+        Confirmation email sent to <strong>{confirmationSent.email}</strong>. The member can sign in before or after confirming. Username: <strong>{confirmationSent.username}</strong>.
       </p>
-      <p className="text-sm text-slate-600 dark:text-slate-300">The member confirms the invitation by opening the email link, then chooses a new password on the page that opens. They can sign in with their username and that new password.</p>
+      <p className="text-sm text-slate-600 dark:text-slate-300">Opening the email link verifies the address and lets the member choose a private password. Email confirmation is not required to sign in.</p>
       <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
         <p className="font-semibold">Initial password</p>
-        <code className="mt-2 block select-all break-all rounded-lg bg-white p-3 font-mono text-base dark:bg-slate-950">{invitationSent.initialPassword}</code>
-        <p className="mt-2 text-xs">Keep this separate from the invitation email. The member should use the email link to confirm the invitation and choose a private password before signing in.</p>
+        <code className="mt-2 block select-all break-all rounded-lg bg-white p-3 font-mono text-base dark:bg-slate-950">{confirmationSent.initialPassword}</code>
+        <p className="mt-2 text-xs">Keep this separate from the confirmation email. The member may sign in with it and will be asked to choose a private password.</p>
       </div>
       <button type="button" onClick={close} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-emerald-700">Done</button>
     </div> : <form onSubmit={(event) => void submit(event)} className="space-y-4">
@@ -187,7 +187,7 @@ export default function StaffMemberEnrollmentModal({
       </label>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={saving} onClick={close} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
-        <button type="submit" disabled={saving || loadingChoices || usernameAvailability !== 'available'} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending invitation…' : 'Verify & send invitation'}</button>
+        <button type="submit" disabled={saving || loadingChoices || usernameAvailability !== 'available'} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending confirmation…' : 'Verify & send confirmation'}</button>
       </div>
     </form>}
   </BaseModal>

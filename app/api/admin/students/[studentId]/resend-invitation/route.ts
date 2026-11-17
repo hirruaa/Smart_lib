@@ -53,18 +53,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ stu
   }
   if (!authMember.user.email) return NextResponse.json({ error: 'This member account has no email address.' }, { status: 409 })
 
-  const inviteCallback = new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL || request.url)
-  inviteCallback.searchParams.set('next', '/reset-password?required=1')
+  const confirmationCallback = new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL || request.url)
+  confirmationCallback.searchParams.set('next', '/reset-password?required=1')
   const { error: resendError } = await adminClient.auth.resend({
     type: 'signup',
     email: authMember.user.email,
-    options: { emailRedirectTo: inviteCallback.toString() },
+    options: { emailRedirectTo: confirmationCallback.toString() },
   })
   if (resendError) return apiError('Unable to resend the verification email. Check Supabase Auth email delivery settings and try again.', 502, resendError)
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: user.id,
-    action: 'member_invitation_resent',
+    action: 'member_confirmation_resent',
     target_type: 'profile',
     details: { target_user_id: studentId, target_role: memberProfile.role },
   })
