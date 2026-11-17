@@ -39,7 +39,7 @@ export default function StaffMemberEnrollmentModal({
   const [error, setError] = useState('')
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [invitationSent, setInvitationSent] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
-  const usernameAvailability = useUsernameAvailability(form.username)
+  const { status: usernameAvailability, errorMessage: usernameAvailabilityError, retry: retryUsernameCheck } = useUsernameAvailability(form.username)
 
   useEffect(() => {
     if (!open) return
@@ -148,8 +148,9 @@ export default function StaffMemberEnrollmentModal({
         <label className="text-sm font-medium">Username
           <input required minLength={3} maxLength={30} pattern="[a-z0-9][a-z0-9._-]{2,29}" autoComplete="off" value={form.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => /username/i.test(current) ? '' : current); setForm((current) => ({ ...current, username: event.target.value.toLowerCase() })) }} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950" />
           <span aria-live="polite" className={`mt-1 block text-xs font-medium ${usernameAvailability === 'available' ? 'text-emerald-700 dark:text-emerald-300' : usernameAvailability === 'taken' || usernameAvailability === 'error' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>
-            {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? 'Could not check right now; availability will be verified when you send the invite.' : null}
+            {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? usernameAvailabilityError : null}
           </span>
+          {usernameAvailability === 'error' ? <button type="button" onClick={retryUsernameCheck} className="mt-1 text-xs font-semibold text-pine-700 underline dark:text-pine-200">Check again</button> : null}
           {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setForm((current) => ({ ...current, username: suggestion })); setUsernameSuggestions([]); setError('') }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
         </label>
         <label className="text-sm font-medium">Initial password
@@ -186,7 +187,7 @@ export default function StaffMemberEnrollmentModal({
       </label>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={saving} onClick={close} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
-        <button type="submit" disabled={saving || loadingChoices || usernameAvailability === 'checking' || usernameAvailability === 'taken'} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending invitation…' : 'Verify & send invitation'}</button>
+        <button type="submit" disabled={saving || loadingChoices || usernameAvailability !== 'available'} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-emerald-700">{saving ? 'Sending invitation…' : 'Verify & send invitation'}</button>
       </div>
     </form>}
   </BaseModal>

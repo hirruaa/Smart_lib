@@ -307,7 +307,7 @@ export default function AdminPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newStudent, setNewStudent] = useState({ username: '', email: '', password: '', fullName: '', role: 'student' as 'student' | 'faculty' | 'librarian', school: '', department: '', course: '', studentYear: '', institutionalId: '' })
-  const usernameAvailability = useUsernameAvailability(newStudent.username)
+  const { status: usernameAvailability, errorMessage: usernameAvailabilityError, retry: retryUsernameCheck } = useUsernameAvailability(newStudent.username)
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
   const [createdMemberCredentials, setCreatedMemberCredentials] = useState<{ email: string; username: string; initialPassword: string } | null>(null)
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
@@ -2257,8 +2257,9 @@ export default function AdminPage() {
                         <input type="text" required minLength={3} maxLength={30} pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,29}" autoComplete="off" value={newStudent.username} onChange={(event) => { setUsernameSuggestions([]); setError((current) => current && /username/i.test(current) ? null : current); setNewStudent({ ...newStudent, username: event.target.value.toLowerCase() }) }} aria-describedby="member-username-help" className={memberInviteInput} />
                         <span id="member-username-help" className="mt-1 block text-xs font-normal text-slate-500">3–30 characters; letters, numbers, dots, underscores, or hyphens.</span>
                         <span aria-live="polite" className={`mt-1 block text-xs font-medium ${usernameAvailability === 'available' ? 'text-emerald-700 dark:text-emerald-300' : usernameAvailability === 'taken' || usernameAvailability === 'error' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-500'}`}>
-                          {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? 'Could not check right now; availability will be verified when you send the invite.' : null}
+                          {usernameAvailability === 'checking' ? 'Checking availability…' : usernameAvailability === 'available' ? '✓ Username available' : usernameAvailability === 'taken' ? '✕ Username already taken' : usernameAvailability === 'error' ? usernameAvailabilityError : null}
                         </span>
+                        {usernameAvailability === 'error' ? <button type="button" onClick={retryUsernameCheck} className="mt-1 text-xs font-semibold text-sky-700 underline dark:text-sky-300">Check again</button> : null}
                         {usernameSuggestions.length > 0 ? <span className="mt-2 block text-xs font-normal text-slate-600 dark:text-slate-300">Available options: {usernameSuggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => { setNewStudent({ ...newStudent, username: suggestion }); setUsernameSuggestions([]); setError(null) }} className="ml-1 rounded-md border border-slate-300 px-2 py-1 font-semibold text-pine-700 hover:bg-slate-100 dark:border-slate-600 dark:text-pine-200 dark:hover:bg-slate-800">{suggestion}</button>)}</span> : null}
                       </label>
                       <label className="block min-w-0 text-sm font-medium text-slate-700 dark:text-slate-200">Email address
@@ -2294,7 +2295,7 @@ export default function AdminPage() {
                     </div>
                     <div className="mt-6 flex flex-col-reverse justify-between gap-4 border-t border-slate-200 pt-5 dark:border-slate-700 sm:flex-row sm:items-center">
                       <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">The member must change this password before entering the library. Share it separately from the email link.</p>
-                      <button type="submit" disabled={saving || usernameAvailability === 'checking' || usernameAvailability === 'taken'} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
+                      <button type="submit" disabled={saving || usernameAvailability !== 'available'} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400">{saving ? 'Sending invite...' : 'Send invite'}</button>
                     </div>
                   </form>
                 </section>
