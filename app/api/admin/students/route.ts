@@ -195,9 +195,7 @@ export async function POST(request: Request) {
     },
   })
   if (auditError) {
-    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(created.user.id)
-    if (rollbackError) console.error('Unable to roll back member invitation after audit logging failed.', rollbackError)
-    return apiError('Unable to record the member invitation audit event.', 500, auditError)
+    console.warn('Member invitation audit logging failed; continuing without blocking the invite.', auditError)
   }
 
   return NextResponse.json({ success: true, email, username, userId: created.user.id })
