@@ -115,6 +115,8 @@ const physicalTitleGroupKey = (book: Pick<Book, 'title' | 'author'>) =>
 const normalizeCatalogSearchText = (value: string) =>
   value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const catalogPageSize = 24
+const digitalRenewalDays = 14
+const digitalRenewalLimit = 2
 const catalogSearchScore = (book: Book, query: string) => {
   const normalizedQuery = normalizeCatalogSearchText(query)
   const terms = normalizedQuery.split(/\s+/).filter(Boolean)
@@ -685,16 +687,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
   const activePhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'checked_out' || loan.status === 'return_pending').length
   const pendingPhysicalLoanCount = physicalLoans.filter((loan) => loan.status === 'pending').length
   const unpaidFineCount = clearanceFines.filter((fine) => fine.status === 'unpaid').length
-  const overduePhysicalLoanCount = physicalLoans.filter((loan) =>
-    loan.status === 'checked_out' && Boolean(loan.due_date && new Date(loan.due_date).getTime() < clock)
-  ).length
-  const pendingDigitalRequestCount = borrowRequests.filter((request) => request.status === 'pending').length
-  const returnConfirmationCount = physicalLoans.filter((loan) => loan.status === 'return_pending').length
-  const dueSoonPhysicalLoanCount = physicalLoans.filter((loan) => {
-    if (loan.status !== 'checked_out' || !loan.due_date) return false
-    const daysRemaining = Math.ceil((new Date(loan.due_date).getTime() - clock) / (1000 * 60 * 60 * 24))
-    return daysRemaining >= 0 && daysRemaining <= 3
-  }).length
 
   const matchesActivity = (kind: 'loans' | 'charges' | 'alerts', status: string, text: string) => {
     const filterMatches = activityTypeFilter === 'all'
@@ -788,21 +780,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     const diffDays = Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24))
     return diffDays <= 3
   }).length
-
-  const urgentLoans = useMemo(() => {
-    return activeLoans
-      .map((loan) => {
-        if (!loan.due_date) return null
-        const dueDate = new Date(loan.due_date)
-        const diffDays = Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24))
-        return {
-          ...loan,
-          diffDays,
-          isDueSoon: diffDays >= 0 && diffDays <= 2,
-        }
-      })
-      .filter((item): item is NonNullable<typeof item> => Boolean(item && item.isDueSoon))
-  }, [activeLoans, clock])
 
   // Realtime updates for loans & profile points
   useEffect(() => {
@@ -1003,10 +980,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
     setLoanActionId(loanId)
     setRequestStatus(null)
     try {
-      const { data, error } = await getSupabase().rpc('renew_digital_loan', { request_id: loanId, extension_days: 14 })
+      const { data, error } = await getSupabase().rpc('renew_digital_loan', { request_id: loanId, extension_days: digitalRenewalDays })
       if (error) throw new Error(error.message)
       setBorrowRequests((current) => current.map((request) => request.id === loanId ? { ...request, ...data } : request))
-      setFeedbackModal({ title: 'Access renewed', message: `Access to ${loan.title ?? 'this e-book'} was renewed for 14 more days.`, tone: 'success' })
+      setFeedbackModal({ title: 'Access renewed', message: `Access to ${loan.title ?? 'this e-book'} was renewed for ${digitalRenewalDays} more days.`, tone: 'success' })
     } catch (error) {
       setFeedbackModal({
         title: 'Renewal not completed',
@@ -1185,6 +1162,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               <p className="student-nav-group-label">Tools</p>
               <button type="button" className={activeSidebarItem === 'materials' ? 'active' : ''} aria-current={activeSidebarItem === 'materials' ? 'page' : undefined} aria-label="Course materials" title={sidebarCollapsed ? 'Course materials' : undefined} onClick={() => { setActiveSidebarItem('materials'); setContributionOpen(true); setSidebarOpen(false) }}><RequestIcon /><span>Course materials</span></button>
             </div> : null}
+            <div className="student-nav-group">
+              <p className="student-nav-group-label">Help</p>
+              <a href="/terms" aria-label="Policy" title={sidebarCollapsed ? 'Policy' : undefined} onClick={() => setSidebarOpen(false)}><RequestIcon /><span>Policy</span></a>
+              <a href="/user-manual" aria-label="User manual" title={sidebarCollapsed ? 'User manual' : undefined} onClick={() => setSidebarOpen(false)}><BookIcon /><span>User manual</span></a>
+            </div>
           </nav>
           <div className="student-sidebar-footer">
             <p className="student-nav-group-label">Account</p>
@@ -1271,57 +1253,6 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
           </div>
         </header>
 
-        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-labelledby="member-next-actions-title">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-pine-700 dark:text-pine-200">Your account</p>
-              <h2 id="member-next-actions-title" className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">What needs your attention</h2>
-            </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400" aria-live="polite">
-              {overduePhysicalLoanCount + unpaidFineCount + pendingPhysicalLoanCount + pendingDigitalRequestCount + returnConfirmationCount + dueSoonPhysicalLoanCount + urgentLoans.length > 0
-                ? 'Your next steps, all in one place.'
-                : 'No urgent account tasks right now.'}
-            </p>
-          </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {overduePhysicalLoanCount > 0 ? <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30">
-              <h3 className="font-semibold text-rose-900 dark:text-rose-100">{overduePhysicalLoanCount} overdue physical book{overduePhysicalLoanCount === 1 ? '' : 's'}</h3>
-              <p className="mt-1 text-sm text-rose-800 dark:text-rose-200">Please return the book or contact library staff about your loan.</p>
-              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-rose-800 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-900">Review physical loans</button>
-            </article> : null}
-            {unpaidFineCount > 0 ? <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-              <h3 className="font-semibold text-amber-950 dark:text-amber-100">{unpaidFineCount} unpaid charge{unpaidFineCount === 1 ? '' : 's'}</h3>
-              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">Review the charge details and resolve payment with library staff.</p>
-              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-amber-800 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-900">Review charges</button>
-            </article> : null}
-            {pendingPhysicalLoanCount + pendingDigitalRequestCount > 0 ? <article className="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-              <h3 className="font-semibold text-sky-950 dark:text-sky-100">{pendingPhysicalLoanCount + pendingDigitalRequestCount} request{pendingPhysicalLoanCount + pendingDigitalRequestCount === 1 ? '' : 's'} awaiting review</h3>
-              <p className="mt-1 text-sm text-sky-900 dark:text-sky-200">Check the status of your digital and physical borrowing requests.</p>
-              <button type="button" onClick={() => setRequestsOpen(true)} className="mt-3 min-h-11 rounded-lg bg-sky-900 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-950 dark:bg-sky-300 dark:text-slate-950">View requests</button>
-            </article> : null}
-            {returnConfirmationCount > 0 ? <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
-              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{returnConfirmationCount} return{ returnConfirmationCount === 1 ? '' : 's'} awaiting confirmation</h3>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Library staff will update your loan once the return is checked.</p>
-              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-700">View loan status</button>
-            </article> : null}
-            {dueSoonPhysicalLoanCount > 0 ? <article className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-              <h3 className="font-semibold text-amber-950 dark:text-amber-100">{dueSoonPhysicalLoanCount} physical loan{dueSoonPhysicalLoanCount === 1 ? '' : 's'} due soon</h3>
-              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">Check the due date and return the book on time.</p>
-              <button type="button" onClick={() => setPaymentsOpen(true)} className="mt-3 min-h-11 rounded-lg border border-amber-700 px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 dark:border-amber-300 dark:text-amber-100 dark:hover:bg-amber-900">Review due dates</button>
-            </article> : null}
-            {urgentLoans.map((loan) => <article key={`urgent-${loan.id}`} className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-              <h3 className="font-semibold text-amber-950 dark:text-amber-100">Digital access expires {loan.diffDays === 0 ? 'today' : `in ${loan.diffDays} day${loan.diffDays === 1 ? '' : 's'}`}</h3>
-              <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">{loan.title}</p>
-              <button type="button" disabled={loanActionId === loan.id} onClick={() => void handleLoanAction(loan.id)} className="mt-3 min-h-11 rounded-lg bg-amber-800 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-900 disabled:opacity-50 dark:bg-amber-300 dark:text-slate-950">{loanActionId === loan.id ? 'Renewing…' : 'Renew access'}</button>
-            </article>)}
-            {overduePhysicalLoanCount + unpaidFineCount + pendingPhysicalLoanCount + pendingDigitalRequestCount + returnConfirmationCount + dueSoonPhysicalLoanCount + urgentLoans.length === 0 ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
-              <h3 className="font-semibold text-emerald-950 dark:text-emerald-100">You’re all caught up</h3>
-              <p className="mt-1 text-sm text-emerald-900 dark:text-emerald-200">Browse the catalog whenever you’re ready to find your next resource.</p>
-              <button type="button" onClick={() => document.getElementById('explore')?.scrollIntoView({ behavior: 'smooth' })} className="mt-3 min-h-11 rounded-lg bg-emerald-800 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-900">Explore catalog</button>
-            </div> : null}
-          </div>
-        </section>
-
         <BookAssistant />
 
         <section className="student-content-grid grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
@@ -1333,74 +1264,69 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                   <h2>Explore the catalog</h2>
                   <p className="catalog-description">Find print and digital resources by title, author, discipline, genre, or subject.</p>
                 </div>
-                <div className="catalog-heading-stat" aria-label={`${catalogBooks.length} titles in the collection`}>
-                  <strong>{catalogBooks.length}</strong>
-                  <span>titles</span>
-                </div>
               </header>
-              <aside className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100" aria-label="How library charges work">
-                <strong>Costs at a glance:</strong> Digital access is free or uses the points shown for each duration. Physical checkout fees are shown before you request and are paid in cash at the library desk; a request does not reserve a copy. Late fines apply to overdue general-circulation physical books; digital access has no overdue fines. <a href="/terms" className="font-semibold underline underline-offset-2">See the current policy</a>.
-              </aside>
-              <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
-                <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
-                <SearchIcon />
-                <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search title, author, ISBN, discipline, or subject" />
-                {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
-                <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
-              </form>
-              <div className="catalog-tools">
-                <form id="catalog-controls" className="catalog-toolbar" onSubmit={(event) => event.preventDefault()}>
-                  <label className="catalog-sort-box">
-                    <span className="sr-only">Sort by</span>
-                    <SortIcon />
-                    <select
-                      value={catalogSort}
-                      onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
-                      aria-label="Sort by"
-                    >
-                      <option value="relevance">Relevance</option>
-                      <option value="title">Title A-Z</option>
-                      <option value="author">Author A-Z</option>
-                      <option value="newest">Recently added</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className={`catalog-filter-toggle${selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? ' has-active-filters' : ''}`}
-                    onClick={() => setCatalogControlsOpen((current) => !current)}
-                    aria-expanded={catalogControlsOpen}
-                    aria-controls="catalog-filter-menu"
-                  >
-                    <FilterIcon />
-                    <span>Filters</span>
-                    {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? <span className="catalog-filter-count">{Number(selectedCategory !== 'All') + Number(selectedFormat !== 'all') + Number(availablePhysicalOnly)}</span> : null}
-                  </button>
+              <div className="catalog-command-row">
+                <form className="dashboard-catalog-search" role="search" onSubmit={(event) => { event.preventDefault(); document.getElementById('catalog-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>
+                  <label htmlFor="dashboard-catalog-search" className="sr-only">Search the library catalog</label>
+                  <SearchIcon />
+                  <input id="dashboard-catalog-search" type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search title, author, ISBN, discipline, or subject" />
+                  {searchInput ? <button type="button" onClick={() => setSearchInput('')} aria-label="Clear catalog search">×</button> : null}
+                  <button type="submit" className="dashboard-catalog-search-submit">Search catalog</button>
                 </form>
-                {catalogControlsOpen ? (
-                  <div id="catalog-filter-menu" className="catalog-filter-menu">
-                    <label>
-                      <span>Category</span>
-                      <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
-                        {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                <div className="catalog-tools">
+                  <form id="catalog-controls" className="catalog-toolbar" onSubmit={(event) => event.preventDefault()}>
+                    <label className="catalog-sort-box">
+                      <span className="sr-only">Sort by</span>
+                      <SortIcon />
+                      <select
+                        value={catalogSort}
+                        onChange={(event) => setCatalogSort(event.target.value as typeof catalogSort)}
+                        aria-label="Sort by"
+                      >
+                        <option value="relevance">Relevance</option>
+                        <option value="title">Title A-Z</option>
+                        <option value="author">Author A-Z</option>
+                        <option value="newest">Recently added</option>
                       </select>
                     </label>
-                    <label>
-                      <span>Format</span>
-                      <select value={selectedFormat} onChange={(event) => setSelectedFormat(event.target.value as typeof selectedFormat)}>
-                        <option value="all">All materials</option>
-                        <option value="digital">Digital</option>
-                        <option value="physical">Physical</option>
-                      </select>
-                    </label>
-                    {selectedFormat !== 'digital' ? <label className="catalog-availability-filter">
-                      <input type="checkbox" checked={availablePhysicalOnly} onChange={(event) => setAvailablePhysicalOnly(event.target.checked)} />
-                      <span>Physical copies available now</span>
-                    </label> : null}
-                    {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? (
-                      <button type="button" className="catalog-clear-filters" onClick={() => { setSelectedCategory('All'); setSelectedFormat('all'); setAvailablePhysicalOnly(false) }}>Clear filters</button>
-                    ) : null}
-                  </div>
-                ) : null}
+                    <button
+                      type="button"
+                      className={`catalog-filter-toggle${selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? ' has-active-filters' : ''}`}
+                      onClick={() => setCatalogControlsOpen((current) => !current)}
+                      aria-expanded={catalogControlsOpen}
+                      aria-controls="catalog-filter-menu"
+                    >
+                      <FilterIcon />
+                      <span>Filters</span>
+                      {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? <span className="catalog-filter-count">{Number(selectedCategory !== 'All') + Number(selectedFormat !== 'all') + Number(availablePhysicalOnly)}</span> : null}
+                    </button>
+                  </form>
+                  {catalogControlsOpen ? (
+                    <div id="catalog-filter-menu" className="catalog-filter-menu">
+                      <label>
+                        <span>Category</span>
+                        <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+                          {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Format</span>
+                        <select value={selectedFormat} onChange={(event) => setSelectedFormat(event.target.value as typeof selectedFormat)}>
+                          <option value="all">All materials</option>
+                          <option value="digital">Digital</option>
+                          <option value="physical">Physical</option>
+                        </select>
+                      </label>
+                      {selectedFormat !== 'digital' ? <label className="catalog-availability-filter">
+                        <input type="checkbox" checked={availablePhysicalOnly} onChange={(event) => setAvailablePhysicalOnly(event.target.checked)} />
+                        <span>Physical copies available now</span>
+                      </label> : null}
+                      {selectedCategory !== 'All' || selectedFormat !== 'all' || availablePhysicalOnly ? (
+                        <button type="button" className="catalog-clear-filters" onClick={() => { setSelectedCategory('All'); setSelectedFormat('all'); setAvailablePhysicalOnly(false) }}>Clear filters</button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div className="mt-4 flex items-center justify-end">
@@ -1413,7 +1339,31 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 {filteredBooks.length > 0 ? (
                   visibleBooks.map((book) => {
                     const memberStatus = getCatalogMemberStatus(book)
-                    const openBook = () => book.catalog_type === 'physical' ? openPhysicalBorrowOptions(book) : openCatalogDetails(book)
+                    const hasActiveDigitalAccess = book.catalog_type !== 'physical' && Boolean(book.pdf_url) && (
+                      book.isOwner || activeLoans.some((loan) => loan.book_id === book.id)
+                    )
+                    const relatedPhysicalBookIds = book.physical_book_ids ?? [book.id]
+                    const hasActivePhysicalLoan = book.catalog_type !== 'digital' && physicalLoans.some((loan) =>
+                      relatedPhysicalBookIds.includes(loan.book_id) && loan.status === 'checked_out'
+                    )
+                    const actionLabel = hasActiveDigitalAccess
+                      ? 'Read now'
+                      : hasActivePhysicalLoan
+                        ? 'View loan'
+                        : book.catalog_type === 'physical'
+                          ? 'Loan options'
+                          : 'View details'
+                    const openBook = () => {
+                      if (hasActiveDigitalAccess) {
+                        router.push(`/reader/${book.id}`)
+                        return
+                      }
+                      if (book.catalog_type === 'physical' || hasActivePhysicalLoan) {
+                        openPhysicalBorrowOptions(book)
+                        return
+                      }
+                      openCatalogDetails(book)
+                    }
                     return <article
                       key={book.id}
                       className="resource-card catalog-book-card rounded-[1.5rem] p-5"
@@ -1428,8 +1378,9 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                           <div className="catalog-book-labels">
                             <span className="catalog-book-category">{book.category}</span>
                             <span className="catalog-format-badge">{book.catalog_type === 'physical' ? 'Print' : book.catalog_type === 'hybrid' ? 'Print + digital' : 'Digital'}</span>
-                            {memberStatus ? <span className={`catalog-member-status is-${memberStatus.kind}`} aria-label={`Your status: ${memberStatus.label}`}>{memberStatus.label}</span> : null}
+                            {memberStatus && memberStatus.kind !== 'borrowed' ? <span className={`catalog-member-status is-${memberStatus.kind}`} aria-label={`Your status: ${memberStatus.label}`}>{memberStatus.label}</span> : null}
                           </div>
+                          {memberStatus?.kind === 'borrowed' ? <span className="catalog-member-ribbon" aria-label={`Your status: ${memberStatus.label}`}>{memberStatus.label}</span> : null}
                           <h3>{book.title}</h3>
                           <p className="catalog-book-author">by {book.author}</p>
                           {book.description?.trim() ? <p className="catalog-book-description">{book.description}</p> : null}
@@ -1442,11 +1393,11 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                             <button
                               type="button"
                               className="catalog-book-open"
-                              aria-label={`${book.catalog_type === 'physical' ? 'Loan options' : 'View details'} for ${book.title}`}
-                              aria-haspopup="dialog"
+                              aria-label={`${actionLabel} for ${book.title}`}
+                              aria-haspopup={actionLabel === 'Read now' ? undefined : 'dialog'}
                               onClick={(event) => { event.stopPropagation(); openBook() }}
                             >
-                              {book.catalog_type === 'physical' ? 'Loan options' : 'View details'} <span aria-hidden="true">→</span>
+                              {actionLabel} <span aria-hidden="true">→</span>
                             </button>
                           </div>
                         </div>
@@ -1531,10 +1482,10 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                             <button
                               type="button"
                               onClick={() => void handleLoanAction(loan.id)}
-                              disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2}
+                              disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= digitalRenewalLimit}
                               className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              {(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}
+                              {(loan.renewal_count ?? 0) >= digitalRenewalLimit ? 'Renewal limit' : 'Renew'}
                             </button>
                           </div>
                         </div>
@@ -1769,6 +1720,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
       <ActionModal
         open={confirmAction !== null}
         title="Renew e-book access?"
+        description={`Adds ${digitalRenewalDays} days to your current access at no extra fee or points. You can renew up to ${digitalRenewalLimit} times while access is active.`}
         confirmLabel="Renew access"
         busy={loanActionId !== null}
         onClose={() => setConfirmAction(null)}
@@ -1838,7 +1790,7 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
                 const dueDate = loan.due_date ? new Date(loan.due_date) : null
                 const diffDays = dueDate ? Math.ceil((dueDate.getTime() - clock) / (1000 * 60 * 60 * 24)) : null
                 const isUrgent = diffDays !== null && diffDays <= 3
-                return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unlocked {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Expires {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}<button type="button" onClick={() => void handleLoanAction(loan.id)} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= 2} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= 2 ? 'Renewal limit' : 'Renew'}</button></div></article>
+                return <article key={loan.id} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{loan.title ?? `Book #${loan.book_id}`}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unlocked {loan.request_date ? new Date(loan.request_date).toLocaleDateString() : 'N/A'} · Expires {dueDate ? dueDate.toLocaleDateString() : 'N/A'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isUrgent ? 'bg-amber-100 text-amber-900' : 'bg-pine-100 text-pine-700'}`}>{diffDays !== null ? `${diffDays} days left` : 'Active'}</span></div><div className="mt-3 flex flex-wrap gap-2">{loan.pdf_url ? <button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${loan.book_id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button> : null}                <button type="button" onClick={() => void handleLoanAction(loan.id)} disabled={loanActionId !== null || (loan.renewal_count ?? 0) >= digitalRenewalLimit} className="secondary-action rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50">{(loan.renewal_count ?? 0) >= digitalRenewalLimit ? 'Renewal limit' : 'Renew'}</button></div></article>
                 })}
                 {ownedContributionBooks.map((book) => <article key={`contribution-${book.id}`} className="active-access-item"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-900 dark:text-slate-100">{book.title}</h3><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Your approved contribution · Permanent access</p></div><span className="rounded-full bg-pine-100 px-2.5 py-1 text-xs font-semibold text-pine-700 dark:bg-forest-700 dark:text-pine-200">Permanent</span></div><div className="mt-3"><button type="button" onClick={() => { setActiveAccessOpen(false); router.push(`/reader/${book.id}`) }} className="pine-action rounded-xl px-3 py-2 text-xs font-semibold">Read now</button></div></article>)}
               </> : <div className="modal-empty-state">You do not have any active digital access yet. Explore the catalog to unlock a resource.</div>}
@@ -1872,7 +1824,41 @@ export default function MemberDashboard({ memberType }: { memberType: 'student' 
               {filteredPhysicalActivity.map((item) => {
                 if (item.kind === 'loans') {
                   const loan = item.loan
-                  return <article key={item.key} className={loan.payment_status === 'paid' ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'modal-record'}><div className="min-w-0"><p className="font-semibold">{loan.title ?? 'Book #' + loan.book_id}</p><p className="mt-1 text-xs capitalize text-slate-500">{loan.status === 'pending' ? 'Waiting for librarian confirmation' : loan.status === 'return_pending' ? 'Return awaiting librarian confirmation' : loan.status.replace('_', ' ')} · {loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'cash' ? 'Cash at the desk' : 'Legacy online payment'} · ₱{Number(loan.fee_amount).toFixed(2)}</p>{loan.payment_method !== 'cash' && loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">This older request cannot be processed. Remove it and submit a new cash request.</p> : null}<p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ' · Due ' + new Date(loan.due_date).toLocaleDateString() : ''}</p>{loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}</div>{loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}</article>
+                  const loanStatusTone = loan.status === 'checked_out'
+                    ? 'active'
+                    : loan.status === 'pending' || loan.status === 'return_pending'
+                      ? 'pending'
+                      : loan.status === 'returned'
+                        ? 'returned'
+                        : loan.status === 'lost'
+                          ? 'attention'
+                          : 'other'
+                  const loanStatusLabel = loan.status === 'checked_out'
+                    ? 'Active · not returned'
+                    : loan.status === 'return_pending'
+                      ? 'Return requested'
+                      : loan.status === 'pending'
+                        ? 'Checkout pending'
+                        : loan.status.replace(/_/g, ' ')
+                  return (
+                    <article
+                      key={item.key}
+                      className={loan.payment_status === 'paid' ? 'modal-record transaction-status-card transaction-status-card--settled border-emerald-200 bg-emerald-50/80 dark:border-emerald-900/70 dark:bg-emerald-950/30' : 'modal-record'}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="transaction-loan-heading">
+                          <p className="font-semibold">{loan.title ?? `Book #${loan.book_id}`}</p>
+                          <span className={`transaction-loan-badge transaction-loan-badge--${loanStatusTone}`}>{loanStatusLabel}</span>
+                        </div>
+                        <p className="mt-1 text-xs capitalize text-slate-500">{loan.payment_status.replace('_', ' ')} · {loan.payment_method === 'cash' ? 'Cash at the desk' : 'Legacy online payment'} · ₱{Number(loan.fee_amount).toFixed(2)}</p>
+                        {loan.payment_method !== 'cash' && loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">This older request cannot be processed. Remove it and submit a new cash request.</p> : null}
+                        {loan.status === 'return_pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The librarian still needs to confirm the return.</p> : null}
+                        <p className="mt-1 text-xs text-slate-500">Requested {new Date(loan.requested_at).toLocaleDateString()}{loan.due_date ? ' · Due ' + new Date(loan.due_date).toLocaleDateString() : ''}</p>
+                        {loan.receipt_number ? <p className="mt-1 font-mono text-xs text-pine-700 dark:text-pine-200">Receipt: {loan.receipt_number}</p> : loan.status === 'pending' ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">The receipt will appear here after the librarian confirms checkout.</p> : null}
+                      </div>
+                      {loan.receipt_number ? <button type="button" onClick={() => setPhysicalReceipt(loan)} className="secondary-action shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold">View receipt</button> : null}
+                    </article>
+                  )
                 }
                 if (item.kind === 'charges') {
                   const fine = item.fine

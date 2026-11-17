@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { adminClient, clearBrowserSession, createDigitalBook, createTestUser, createUserClient, removeTestBook, removeTestUser, signInInBrowser } from './support'
 
-test('free digital access appears in the member transaction view and remains persisted', async ({ page, browser }) => {
+test('active digital access opens from the catalog and remains persisted', async ({ page, browser }) => {
   const user = await createTestUser()
   const title = `E2E Digital ${randomUUID()}`
   let bookId: number | undefined
@@ -17,6 +17,12 @@ test('free digital access appears in the member transaction view and remains per
     })
     expect(signInError).toBeNull()
 
+    const { error: fileUpdateError } = await adminClient
+      .from('books')
+      .update({ pdf_url: '/e2e-reader-test.pdf' })
+      .eq('id', bookId)
+    expect(fileUpdateError).toBeNull()
+
     const { data: loan, error: requestError } = await memberClient.rpc('request_digital_loan', {
       p_book_id: bookId,
       p_duration_days: 7,
@@ -25,6 +31,13 @@ test('free digital access appears in the member transaction view and remains per
     expect(loan?.status).toBe('approved')
 
     await signInInBrowser(page, user)
+    await page.goto('/dashboard/student')
+    const borrowedBook = page.locator('#catalog-results .resource-card').filter({ hasText: title })
+    const readNowButton = borrowedBook.getByRole('button', { name: `Read now for ${title}` })
+    await expect(readNowButton).toBeVisible()
+    await readNowButton.click()
+    await expect(page).toHaveURL(new RegExp(`/reader/${bookId}$`))
+
     await page.goto('/library')
     await expect(page.getByRole('heading', { name: 'Transactions' })).toBeVisible()
     await expect(page.getByText(title, { exact: true })).toBeVisible()
@@ -79,7 +92,10 @@ test('digital book details show every access duration and points cost without a 
     await expect(options.getByRole('button', { name: '1 day 2 points' })).toBeVisible()
     await expect(options.getByRole('button', { name: '7 days 12 points' })).toBeVisible()
     await expect(options.getByRole('button', { name: '30 days 35 points' })).toBeVisible()
-    await options.getByRole('button', { name: '7 days 12 points' }).click()
+    const selectedDuration = options.getByRole('button', { name: '7 days 12 points' })
+    await selectedDuration.click()
+    await expect(selectedDuration).toHaveAttribute('aria-pressed', 'true')
+    await expect(selectedDuration).toHaveCSS('background-color', 'rgb(228, 239, 234)')
     await expect(details.getByRole('button', { name: 'Unlock for 12 points' })).toBeVisible()
     await expect(page.getByRole('dialog', { name: 'Unlock access' })).toHaveCount(0)
   } finally {

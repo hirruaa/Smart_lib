@@ -212,6 +212,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const [checkedOutSearch, setCheckedOutSearch] = useState('')
   const [returnActionRequestId, setReturnActionRequestId] = useState<number | null>(null)
   const [deskActionPurpose, setDeskActionPurpose] = useState<'return' | 'renew'>('return')
+  const [deskRenewalDurationDays, setDeskRenewalDurationDays] = useState<number | null>(null)
   const [copyDetailsBookId, setCopyDetailsBookId] = useState<number | null>(null)
   const [selectedCopyId, setSelectedCopyId] = useState<number | null>(null)
   const [manageBook, setManageBook] = useState<Book | null>(null)
@@ -890,7 +891,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     }
   }
 
-  const openRenewal = (loan: Loan) => {
+  const openRenewal = (loan: Loan, durationDays?: number | null) => {
     if (loan.status !== 'checked_out') {
       setError('Only an active checked-out loan can be renewed.')
       return
@@ -910,7 +911,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
       setError('No active renewal periods and fees are configured for this title.')
       return
     }
-    const option = availableOptions[0]
+    const option = availableOptions.find((entry) => entry.duration_days === durationDays) ?? availableOptions[0]
     setRenewalDraft({
       loanId: loan.id,
       durationDays: option.duration_days,
@@ -1441,6 +1442,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   })()
   const selectedDeskMember = profiles.find((member) => member.id === deskMemberId) ?? null
   const returnActionLoan = returnActionRequestId === null ? null : loans.find((loan) => loan.id === returnActionRequestId) ?? null
+  const returnActionRenewalOptions = returnActionLoan
+    ? options.filter((option) => option.book_id === returnActionLoan.book_id && option.is_active)
+      .sort((a, b) => a.duration_days - b.duration_days)
+    : []
   const deskIdentityMatches = (memberId: string) => Boolean(deskIdCardPresented && selectedDeskMember?.id === memberId)
   const deskCopySuggestions = useMemo(() => {
     const query = deskCopyQuery.trim().toLocaleLowerCase()
@@ -1657,6 +1662,14 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     setDeskIdCardPresented(false)
     setReturnActionRequestId(requestId)
     setDeskActionPurpose(purpose)
+    if (purpose === 'renew') {
+      const renewalOptions = options
+        .filter((option) => option.book_id === loan.book_id && option.is_active)
+        .sort((a, b) => a.duration_days - b.duration_days)
+      setDeskRenewalDurationDays(renewalOptions[0]?.duration_days ?? null)
+    } else {
+      setDeskRenewalDurationDays(null)
+    }
     setReturnConditions((current) => ({ ...current, [requestId]: current[requestId] ?? 'available' }))
     setOpenPanel(null)
     setMemberDeskOpen(false)
@@ -1702,6 +1715,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
   const finishDeskLoanAction = () => {
     setReturnActionRequestId(null)
     setDeskActionPurpose('return')
+    setDeskRenewalDurationDays(null)
   }
   const continueDeskLoanAction = () => {
     if (!returnActionLoan || !deskIdentityMatches(returnActionLoan.student_id)) {
@@ -1711,7 +1725,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
     const loan = returnActionLoan
     const purpose = deskActionPurpose
     finishDeskLoanAction()
-    if (purpose === 'renew') openRenewal(loan)
+    if (purpose === 'renew') openRenewal(loan, deskRenewalDurationDays)
     else closeLoan(loan.id)
   }
   const onMemberInvited = async (email: string, username: string) => {
@@ -2233,7 +2247,7 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
         open={librarianMode && returnActionRequestId !== null}
         title={deskActionPurpose === 'renew' ? 'Verify member ID to renew' : 'Verify ID & inspect return'}
         eyebrow="Circulation desk"
-        description={deskActionPurpose === 'renew' ? 'Confirm the borrower’s identity before reviewing renewal terms.' : 'Confirm the borrower’s identity, inspect the copy, and record its return condition.'}
+        description={deskActionPurpose === 'renew' ? 'Confirm the borrower’s identity and select the renewal period and fee.' : 'Confirm the borrower’s identity, inspect the copy, and record its return condition.'}
         onClose={closeDeskLoanAction}
         size="md"
         layer="background"
@@ -2246,6 +2260,29 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
             <p className="text-sm text-slate-500">Institutional ID: {selectedDeskMember.institutional_id || 'Not recorded'}</p>
             <p className="mt-1 text-xs text-slate-500">Due {returnActionLoan.due_date ? new Date(returnActionLoan.due_date).toLocaleDateString() : 'date unavailable'} · Request #{returnActionLoan.id}</p>
           </div>
+          {deskActionPurpose === 'renew' ? returnActionRenewalOptions.length ? <div>
+            <label className="block text-sm font-semibold">Renewal period and fee
+              <select
+                aria-label="Renewal period and fee"
+                required
+                value={deskRenewalDurationDays === null ? '' : String(deskRenewalDurationDays)}
+                onChange={(event) => setDeskRenewalDurationDays(Number(event.target.value))}
+                className={`${input} mt-1`}
+              >
+                {returnActionRenewalOptions.map((option) => <option key={option.id} value={option.duration_days}>
+                  {option.duration_days} days · PHP {Number(option.fee_amount).toFixed(2)}
+                </option>)}
+              </select>
+            </label>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              The selected duration starts from the renewal date. The exact fee will be confirmed before payment.
+            </p>
+          </div> : <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            No renewal periods or fees are configured for this title. Ask an administrator to configure them before renewing.
+          </p> : null}
+          {deskActionPurpose === 'renew' && !selectedDeskMember.institutional_id ? <p className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            No institutional ID is recorded in this profile. Visually verify the presented card against the member’s profile before continuing.
+          </p> : null}
           <label className="flex items-start gap-2 text-sm font-medium">
             <input type="checkbox" checked={deskIdCardPresented} onChange={(event) => setDeskIdCardPresented(event.target.checked)} className="mt-0.5" />
             <span>I confirm the member presented their physical institutional ID card and I visually matched it to their profile.</span>
@@ -2262,8 +2299,10 @@ export default function PhysicalCirculationAdminPage({ initialPanel, requestsOnl
           </fieldset> : null}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={closeDeskLoanAction} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold dark:border-slate-700">Cancel</button>
-            <button type="button" disabled={busy || !deskIdentityMatches(returnActionLoan.student_id)} onClick={continueDeskLoanAction} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600">
-              {deskActionPurpose === 'renew' ? 'Continue to renewal' : 'Continue to return'}
+            <button type="button" disabled={busy || !deskIdentityMatches(returnActionLoan.student_id)
+              || (deskActionPurpose === 'renew' && !returnActionRenewalOptions.some((option) => option.duration_days === deskRenewalDurationDays))}
+              onClick={continueDeskLoanAction} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600">
+              {deskActionPurpose === 'renew' ? 'Continue with selected renewal' : 'Continue to return'}
             </button>
           </div>
         </div> : null}

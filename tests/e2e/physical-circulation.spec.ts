@@ -50,6 +50,10 @@ test('staff sees a member physical request in circulation and the separate finan
   try {
     const book = await createPhysicalBook(title)
     bookId = book.bookId
+    const { error: renewalOptionError } = await adminClient
+      .from('physical_loan_options')
+      .upsert({ book_id: book.bookId, duration_days: 7, fee_amount: 10, is_active: true }, { onConflict: 'book_id,duration_days' })
+    expect(renewalOptionError).toBeNull()
     const memberClient = createUserClient()
     const { error: signInError } = await memberClient.auth.signInWithPassword({
       email: member.email,
@@ -192,6 +196,23 @@ test('staff sees a member physical request in circulation and the separate finan
       .single()
     expect(persistedCopyError).toBeNull()
     expect(persistedCopy?.status).toBe('borrowed')
+
+    await deskNavigation.getByRole('button', { name: /^Checked out/ }).click()
+    const renewalCheckoutList = page.getByRole('dialog', { name: 'Checked-out copies' })
+    await renewalCheckoutList.getByRole('button', { name: 'Verify ID & renew' }).click()
+    const renewalIdentityDialog = page.getByRole('dialog', { name: 'Verify member ID to renew' })
+    const renewalTerms = renewalIdentityDialog.getByRole('combobox', { name: 'Renewal period and fee' })
+    await expect(renewalTerms).toBeVisible()
+    await expect(renewalTerms).toContainText('7 days · PHP 10.00')
+    await expect(renewalTerms).toContainText('14 days · PHP 0.00')
+    await renewalTerms.selectOption('7')
+    await renewalIdentityDialog.getByRole('checkbox', { name: /I confirm the member presented/ }).check()
+    await renewalIdentityDialog.getByRole('button', { name: 'Continue with selected renewal' }).click()
+    const renewalPaymentDialog = page.getByRole('dialog', { name: 'Renew physical loan?' })
+    await expect(renewalPaymentDialog.getByLabel('Renewal period and fee')).toHaveValue('7')
+    await expect(renewalPaymentDialog.getByLabel('Amount received (PHP)')).toHaveValue('10.00')
+    await renewalPaymentDialog.getByRole('button', { name: 'Confirm renewal and payment' }).click()
+    await expect(page.getByText(/Loan renewed for 7 days\. PHP 10\.00 received/)).toBeVisible()
 
     await deskNavigation.getByRole('button', { name: 'Daily records' }).click()
     await expect(page).toHaveURL(/\/dashboard\/admin\/physical\/finance$/)

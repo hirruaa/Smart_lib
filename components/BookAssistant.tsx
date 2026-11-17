@@ -30,16 +30,17 @@ type ChatMessage = {
 type ChatSession = { id: string; title: string; updated_at?: string }
 
 const starterPrompts = [
+  'Check my loans and due dates',
+  'Check my charges or fines',
+  'Help with a lost or damaged book',
+  'How do I return or renew a physical book?',
   'Find books about biology',
-  'What if I lost a book?',
-  'How do overdue fines work?',
-  'Do digital books get fines?',
 ]
 
 const initialMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Hello! I am your Smart Lib Assistant for Mary the Queen College. Search the catalog by title, author, or subject, ask about physical-copy availability, or get help with library rules, fines, your loans, and book recommendations.',
+  text: 'Hi! I can help with your loans and due dates, charges, returns and renewals, lost or damaged books, and finding books. I can look up your account details, but library staff handle physical checkout, returns, renewals, and payments.',
 }
 
 function getSessionTitle(message: string) {
@@ -109,9 +110,9 @@ export default function BookAssistant() {
     thread?.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
-  const handleSearch = async (event?: React.FormEvent) => {
+  const handleSearch = async (event?: React.FormEvent, prompt?: string) => {
     event?.preventDefault()
-    const trimmedQuery = query.trim()
+    const trimmedQuery = (prompt ?? query).trim()
     if (!trimmedQuery || loading) return
 
     const userMessage = { id: `${Date.now()}-user`, role: 'user' as const, text: trimmedQuery }
@@ -264,10 +265,10 @@ export default function BookAssistant() {
   return (
     <>
       {!open ? <button type="button" className="assistant-launcher" onClick={() => setOpen(true)} aria-label="Ask the library"><span className="assistant-launcher-mark" aria-hidden="true">✦</span><span className="assistant-launcher-label">Ask the library</span></button> : null}
-      {open ? <section id="research" className="assistant-panel assistant-chat-panel assistant-floating-window" aria-label="Library assistant chat">
+      {open ? <section id="research" className="assistant-panel assistant-chat-panel assistant-floating-window" aria-label="Library support chat">
       <div className="assistant-heading">
         <div className="assistant-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M12 3 13.7 9.3 20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3Z" strokeLinecap="round" strokeLinejoin="round" /><path d="m19 17 .6 2.4L22 20l-2.4.6L19 23l-.6-2.4L16 20l2.4-.6L19 17Z" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
-        <div className="assistant-heading-copy"><p className="assistant-kicker">Research desk</p><h2>Library assistant</h2><p>Search books by title, author, or subject; ask about copy availability, policy, and your loans.</p></div>
+        <div className="assistant-heading-copy"><p className="assistant-kicker">Library help</p><h2>How can we help?</h2><p>Get help with loans, charges, returns, or finding a book.</p></div>
         <div className="assistant-window-actions"><button type="button" className="assistant-clear" onClick={clearSession}>New chat</button><button type="button" className="assistant-window-close" onClick={() => setOpen(false)} aria-label="Minimize library assistant">−</button></div>
       </div>
 
@@ -293,14 +294,14 @@ export default function BookAssistant() {
         {loading ? <div className="assistant-message assistant-message-assistant" role="status" aria-label="Assistant is responding"><div className="assistant-avatar" aria-hidden="true">S</div><div className="assistant-typing"><span /><span /><span /></div></div> : null}
       </div>
 
-      {messages.length === 1 ? <div className="assistant-suggestions">{starterPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => setQuery(prompt)}>{prompt}</button>)}</div> : null}
+      {messages.length === 1 ? <div className="assistant-suggestions" role="group" aria-label="Common library requests"><p className="assistant-suggestions-label">Common requests · tap to ask</p>{starterPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => void handleSearch(undefined, prompt)} disabled={loading}>{prompt}</button>)}</div> : null}
       {error ? <div className="assistant-error" role="alert"><span>{error}</span>{query.trim() ? <button type="button" onClick={() => void handleSearch()} disabled={loading}>Retry</button> : null}</div> : null}
 
       <form onSubmit={handleSearch} className="assistant-composer">
-        <textarea value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSearch() } }} placeholder="Message your library assistant..." rows={1} aria-label="Message your library assistant" />
+        <textarea value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSearch() } }} placeholder="Ask about loans, charges, returns, or books..." rows={1} aria-label="Message your library assistant" />
         <button type="submit" className="assistant-submit" disabled={loading || !query.trim()} aria-label="Send message">Send</button>
       </form>
-      <p className="assistant-disclaimer">Answers use current library policy, catalog information, and—when asked—your own loan and fine records. Don’t share sensitive information.</p>
+      <p className="assistant-disclaimer">Uses current policy, catalog, and—when asked—your account records. Staff handle physical transactions. Don’t share sensitive information.</p>
       </section> : null}
     </>
   )

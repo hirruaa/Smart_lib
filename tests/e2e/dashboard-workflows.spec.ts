@@ -37,7 +37,18 @@ test('student and faculty dashboards keep common library dialogs available and c
       await page.goto(route, { waitUntil: 'domcontentloaded' })
       await expect(page.locator('#explore').getByRole('searchbox', { name: 'Search the library catalog' })).toBeVisible()
       await expect(page.locator('#explore').getByRole('heading', { name: 'Explore the catalog' })).toBeVisible()
-      await expect(page.locator('#explore .catalog-heading-stat')).toBeVisible()
+      await expect(page.getByLabel('Catalog pricing')).toHaveCount(0)
+      await expect(page.getByRole('link', { name: 'Policy', exact: true })).toHaveAttribute('href', '/terms')
+      await expect(page.getByRole('link', { name: 'User manual', exact: true })).toHaveAttribute('href', '/user-manual')
+      await expect(page.locator('#explore .catalog-heading-stat')).toHaveCount(0)
+      const controlTops = await page.locator('#explore .catalog-command-row').evaluate((row) =>
+        ['.dashboard-catalog-search', '.catalog-sort-box', '.catalog-filter-toggle'].map((selector) => {
+          const control = row.querySelector<HTMLElement>(selector)
+          if (!control) throw new Error(`Missing catalog control: ${selector}`)
+          return control.getBoundingClientRect().top
+        })
+      )
+      expect(Math.max(...controlTops) - Math.min(...controlTops)).toBeLessThanOrEqual(1)
       await expect(page.locator('#explore .dashboard-catalog-search-submit')).toHaveCSS('color', 'rgb(255, 255, 255)')
       await expect(page.locator('.student-hero-summary')).toBeVisible()
       const walletButton = page.getByRole('button', { name: 'Wallet' })
@@ -96,6 +107,8 @@ test('student and faculty dashboards keep common library dialogs available and c
       await page.getByRole('button', { name: 'Ask the library' }).click()
       const assistantPanel = page.locator('.assistant-floating-window')
       await expect(assistantPanel).toBeVisible()
+      await expect(assistantPanel.getByRole('heading', { name: 'How can we help?' })).toBeVisible()
+      await expect(assistantPanel.getByRole('group', { name: 'Common library requests' }).getByRole('button')).toHaveCount(5)
       const assistantLayout = await assistantPanel.evaluate((panel) => {
         const bounds = (selector: string) => {
           const element = panel.querySelector<HTMLElement>(selector)
@@ -123,6 +136,9 @@ test('student and faculty dashboards keep common library dialogs available and c
       await expect(assistantPanel.locator('.assistant-session-select')).toHaveText(assistantPrompt)
       await assistantPanel.getByRole('button', { name: 'New chat' }).click()
       await expect(assistantPanel.locator('.assistant-session-item')).toHaveCount(1)
+      await assistantPanel.getByRole('group', { name: 'Common library requests' }).getByRole('button', { name: 'Check my loans and due dates' }).click()
+      await expect(assistantPanel.locator('.assistant-message-user').last()).toContainText('Check my loans and due dates')
+      await expect(assistantPanel.locator('.assistant-message-assistant').last()).toContainText('available from the circulation desk')
       await assistantPanel.getByRole('button', { name: 'Minimize library assistant' }).click()
       await page.unroute('**/api/assistant/sessions**')
       await page.unroute('**/api/recommend')
@@ -164,6 +180,8 @@ test('student and faculty dashboards keep common library dialogs available and c
       await historyDialog.getByRole('button', { name: 'Close reading history' }).click()
 
       const myLibraryNavigation = page.getByRole('button', { name: 'My library', exact: true })
+      await expect(page.getByRole('heading', { name: 'What needs your attention' })).toHaveCount(0)
+      await expect(myLibraryNavigation).toBeVisible()
       await myLibraryNavigation.click()
       await expect(myLibraryNavigation).toHaveAttribute('aria-current', 'page')
       await expect(myLibraryNavigation).toHaveClass(/active/)
